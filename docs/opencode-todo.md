@@ -553,3 +553,6 @@ Actualización compartida2026-10-25: T145 corrige la reconstrucción entre limpi
 
 
 Actualización compartida2026-10-25: T146 reserva el arranque antes de publicar su fila y aplaza la retirada extranjera antes de efectos, también en Herdr y canal remoto. La publicación comprueba el registro actual; los permisos de compensación no se heredan en callbacks normales.676 pruebas pasan con PostgreSQL, perfiles, Work, API/MCP y Herdr; arquitectura5/0 y revisión Claude/Luna. Una cancelación con trabajadores sin parada demostrada conserva el propietario hasta reiniciar su proceso; no acredita aceptación nativa actual ni cierra toda T143. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t146.md).
+
+
+Actualización compartida2026-10-25: T147 corrige la reversión de una creación fallida que borraba una fila ajena con el mismo ID. Exige publicación confirmada antes de limpiar por ID, conserva commits ambiguos y marcas previas, retira solo worktrees creados y liquida solo recibos propios.221 regresiones pasan con PostgreSQL; arquitectura5/0 y revisión Claude/Luna. T143 sigue abierto para preasignación KAS/hijos, generación, sidecars, Herdr y alcance distribuido; no acredita inferencia nativa actual. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t147.md).

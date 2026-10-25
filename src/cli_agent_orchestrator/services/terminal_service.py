@@ -629,9 +629,11 @@ _initial_task_pending_ids: set[str] = set()
 _INITIAL_TASK_OWNER = object()
 
 
-def _mark_initial_task_pending(terminal_id: str) -> None:
+def _mark_initial_task_pending(terminal_id: str) -> bool:
     with _active_deferred_init_external_owner_lock:
+        added = terminal_id not in _initial_task_pending_ids
         _initial_task_pending_ids.add(terminal_id)
+        return added
 
 
 def _clear_initial_task_pending(terminal_id: str) -> None:
@@ -639,9 +641,11 @@ def _clear_initial_task_pending(terminal_id: str) -> None:
         _initial_task_pending_ids.discard(terminal_id)
 
 
-def _mark_deferred_init_external_owner_active(terminal_id: str) -> None:
+def _mark_deferred_init_external_owner_active(terminal_id: str) -> bool:
     with _active_deferred_init_external_owner_lock:
+        added = terminal_id not in _active_deferred_init_external_owner_ids
         _active_deferred_init_external_owner_ids.add(terminal_id)
+        return added
 
 
 def _clear_deferred_init_external_owner_active(terminal_id: str) -> None:
@@ -1275,6 +1279,7 @@ def _finish_and_roll_back_cancelled_create(
     terminal_id: str,
     *,
     startup_owner_getter: Callable[[], Any] | None = None,
+    release_startup_marks: Callable[[], None] | None = None,
 ) -> None:
     """Compensate on a real executor worker, independent of asyncio task cancellation."""
     try:
@@ -1291,6 +1296,8 @@ def _finish_and_roll_back_cancelled_create(
                     session_name, terminal_id, window_name, created_session=session_created
                 )
     finally:
+        if release_startup_marks is not None:
+            release_startup_marks()
         finish_startup(owner)
 
 
@@ -1958,9 +1965,25 @@ async def create_terminal(
     # whether there is a worktree to roll back too. Still None if Step 1b never
     # ran (use_worktree=False) or itself failed before create_worktree returned.
     worktree_repo_root: Optional[str] = None
+    row_published = False
+    native_child_planned = False
+    worktree_created = False
+    initial_mark_added = False
+    external_mark_added = False
     startup_owner = None
     startup_transferred = False
     startup_initialize_started = False
+
+    def release_created_init_marks() -> None:
+        nonlocal initial_mark_added, external_mark_added
+        with _active_deferred_init_external_owner_lock:
+            if initial_mark_added:
+                _initial_task_pending_ids.discard(terminal_id)
+                initial_mark_added = False
+            if external_mark_added:
+                _active_deferred_init_external_owner_ids.discard(terminal_id)
+                external_mark_added = False
+
     try:
         # Resolve profile policy and Kiro engine BEFORE allocating any backend
         # resource. A KAS request must probe then fail closed with no window,
@@ -2063,6 +2086,7 @@ async def create_terminal(
                 agent_profile=agent_profile,
                 lease_seconds=native_child_lease_seconds,
             )
+            native_child_planned = True
 
         if not session_name:
             session_name = generate_session_name()
@@ -2104,9 +2128,14 @@ async def create_terminal(
             worktree_repo_root = await asyncio.to_thread(
                 worktree_service.find_repo_root, working_directory or os.getcwd()
             )
-            working_directory = await asyncio.to_thread(
-                worktree_service.create_worktree, worktree_repo_root, terminal_id
-            )
+
+            def create_owned_worktree():
+                nonlocal worktree_created
+                path = worktree_service.create_worktree(worktree_repo_root, terminal_id)
+                worktree_created = True
+                return path
+
+            working_directory = await _await_provider_operation(create_owned_worktree)
             if worktree_subdirectory is not None and worktree_subdirectory not in ("", "."):
                 relative_path = Path(worktree_subdirectory)
                 if relative_path.is_absolute() or ".." in relative_path.parts:
@@ -2252,6 +2281,7 @@ async def create_terminal(
             name goes free -> free with no observable intermediate state.
             """
             nonlocal deferred_delete_on_failure, session_incarnation_id, startup_owner
+            nonlocal row_published, initial_mark_added, external_mark_added
             assert session_name is not None  # narrowed by the caller
             parent_lock = (
                 terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), caller_id)
@@ -2340,22 +2370,6 @@ async def create_terminal(
                     )
                     created_session, created_window = False, True
 
-                if defer_init:
-                    # Fence input before publishing the row. A ready TUI frame
-                    # does not mean initialize() has returned or the assigned
-                    # first task has been sent.
-                    _mark_initial_task_pending(terminal_id)
-                    deferred_delete_on_failure = _deferred_failure_delete_from_creation(
-                        caller_id, effective_env
-                    )
-                    if deferred_delete_on_failure is False:
-                        # Restart recovery may be retried after server startup.
-                        # Fence this external-owner row BEFORE it becomes
-                        # visible in PostgreSQL so a concurrent recovery pass never
-                        # mistakes this process's live initialization for a
-                        # crash-stranded row from the previous process.
-                        _mark_deferred_init_external_owner_active(terminal_id)
-
                 # From here the backend resource EXISTS, so every remaining step
                 # is guarded: on failure the resource is rolled back under this
                 # same lock before the exception leaves the closure. See the
@@ -2383,6 +2397,24 @@ async def create_terminal(
                     # engine), so API reads and snapshots report what was actually
                     # launched.
                     startup_owner = reserve_startup(terminal_id, replace_retired=new_session)
+                    if defer_init:
+                        # Fence input before publishing the row. A ready TUI frame
+                        # does not mean initialize() has returned or the assigned
+                        # first task has been sent.
+                        initial_mark_added = _mark_initial_task_pending(terminal_id)
+                        deferred_delete_on_failure = _deferred_failure_delete_from_creation(
+                            caller_id, effective_env
+                        )
+                        if deferred_delete_on_failure is False:
+                            # Restart recovery may be retried after server startup.
+                            # Fence this external-owner row BEFORE it becomes
+                            # visible in PostgreSQL so a concurrent recovery pass never
+                            # mistakes this process's live initialization for a
+                            # crash-stranded row from the previous process.
+                            external_mark_added = _mark_deferred_init_external_owner_active(
+                                terminal_id
+                            )
+
                     db_create_terminal(
                         terminal_id,
                         session_name,
@@ -2404,9 +2436,10 @@ async def create_terminal(
                         request_fingerprint=request_fingerprint,
                         new_session_incarnation=created_session,
                     )
+                    row_published = True
                 except BaseException:
+                    release_created_init_marks()
                     finish_startup(startup_owner)
-                    _clear_deferred_init_external_owner_active(terminal_id)
                     _roll_back_backend_create_locked(
                         session_name,
                         created_window_name,
@@ -2456,6 +2489,7 @@ async def create_terminal(
                         session_name,
                         terminal_id,
                         startup_owner_getter=lambda: startup_owner,
+                        release_startup_marks=release_created_init_marks,
                     ),
                 )
                 _create_compensations.add(compensator)
@@ -2467,7 +2501,6 @@ async def create_terminal(
                     # the owned executor compensation still completes. The
                     # ORIGINAL cancellation is re-raised below either way.
                     pass
-            _clear_deferred_init_external_owner_active(terminal_id)
             raise
 
         # Step 4/5: Set up the FIFO event-driven output pipeline for pipe-pane
@@ -2668,7 +2701,7 @@ async def create_terminal(
             if isinstance(deferred_task, asyncio.Task):
                 startup_transferred = True
             else:
-                _clear_deferred_init_external_owner_active(terminal_id)
+                release_created_init_marks()
         else:
             startup_initialize_started = True
             await provider_instance.initialize()
@@ -2783,6 +2816,28 @@ async def create_terminal(
             # authority after revocation, or ownership of an ID whose INSERT
             # collided. Preserve evidence and never delete another terminal.
             logger.warning("Managed terminal creation requires reconciliation: %s", terminal_id)
+            raise
+        if not row_published:
+            if native_child_planned:
+                # Successful planning proves receipt insertion by this attempt;
+                # a failed/colliding INSERT provides no such authority.
+                try:
+                    await _await_provider_operation(
+                        transition_native_child,
+                        terminal_id,
+                        "failed",
+                        error_kind="create_error",
+                        error_summary=str(e),
+                    )
+                except Exception:
+                    logger.exception("Could not settle failed planned child %s", terminal_id)
+            # A generated ID and a failed/ambiguous INSERT are not authority
+            # over an existing row or any of its per-terminal resources. The
+            # worker already compensates only the backend objects it allocated.
+            if worktree_created and worktree_repo_root is not None and terminal_id is not None:
+                await _await_provider_operation(
+                    worktree_service.remove_worktree, worktree_repo_root, terminal_id
+                )
             raise
         if isinstance(e, TerminalInputBlockedError) and e.delivery_may_have_occurred:
             # A provider can report this before its first task receipt exists:
@@ -2906,7 +2961,7 @@ async def create_terminal(
                         "Create rollback deferred Grok cleanup for %s; retaining terminal metadata for retry",
                         terminal_id,
                     )
-                if worktree_repo_root is not None and terminal_id is not None:
+                if worktree_created and worktree_repo_root is not None and terminal_id is not None:
                     # A worktree WAS created (Step 1b succeeded) before some later step
                     # failed -- roll it back too, same best-effort posture as everything
                     # else in this block. Without this, a provider-init timeout (or any

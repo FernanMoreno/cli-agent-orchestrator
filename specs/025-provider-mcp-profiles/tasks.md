@@ -605,3 +605,7 @@ T145 aceptado: getter/SQL RED→GREEN,16 casos PostgreSQL y4 controles locales n
 
 
 T146 aceptado: reserva anterior a la fila, retirada lógica sin bloqueo del monitor, validación de registro al publicar, autoridad limitada a compensación explícita y cancelación conservadora. Herdr directo incluido tras3RED;676 regresiones pasan con10 fuentes fijadas, arquitectura5/0 y revisiones Claude/Luna. Los fallos de aislamiento de fixtures se corrigieron y se verificó el orden entre módulos. [Evidencia y límites](validation-t146.md). T143 sigue pendiente en las fronteras enumeradas; no volver a diagnosticar la carrera local ya cerrada como si fuera nueva.
+
+- [x] T147 [US4] [FR125/SC109] Reproduce failed unmanaged create deleting/cleaning an existing same-ID terminal; correct publication/attempt ownership before per-ID compensation. Verify real PG collision, pre-insert/ambiguous failures, own-window compensation and existing successful-insert rollback/managed/cancel controls. Keep full generation/CAS and sidecars/distributed guarantees under T143 until separately demonstrated.
+
+T147 aceptado:2RED de borrado ajeno corregidos; revisión añadió1RED de recibo propio y se corrigió.221 regresiones pasan, PostgreSQL cerrado/identidad verificada, arquitectura5/0 y GO Claude/revisión Luna. Reversión exige publicación confirmada; worktree y marcadores se compensan según propiedad del intento. [Evidencia y límites](validation-t147.md). T143 sigue abierto para preasignación KAS/hijos, generación, sidecars, Herdr y distribución; no es aceptación nativa actual.
