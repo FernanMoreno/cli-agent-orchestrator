@@ -128,6 +128,35 @@ async def test_held_terminal_duplicates_do_not_block_another_terminal_or_lose_ev
         assert c.calls.count("b") == 1
 
 
+async def test_busy_burst_bookkeeping_has_linear_key_operations(monkeypatch):
+    class CountedKey(str):
+        operations = 0
+
+        def __hash__(self):
+            type(self).operations += 1
+            return super().__hash__()
+
+        def __eq__(self, other):
+            type(self).operations += 1
+            return super().__eq__(other)
+
+    parse = module.terminal_id_from_topic
+    monkeypatch.setattr(module, "terminal_id_from_topic", lambda topic: CountedKey(parse(topic)))
+    count = 512
+    async with consumer(monkeypatch, held={"a"}, capacity=1024) as c:
+        await c.queue.put(ready("a"))
+        assert await take(c.started) == "a"
+        CountedKey.operations = 0
+        for _ in range(count):
+            await c.queue.put(ready("a"))
+        await c.queue.wait_reads(count + 1)
+        await c.queue.put(ready("b"))
+        assert await take(c.started) == "b"
+        # Count key work rather than platform-dependent elapsed time. A full
+        # pending scan per duplicate performs >130000 probes for this burst.
+        assert CountedKey.operations < count * 32
+
+
 async def test_dispatch_has_four_slots_and_stops_reading_at_pending_capacity(monkeypatch):
     keys = {f"held-{i}" for i in range(4)}
     async with consumer(monkeypatch, held=keys, capacity=3) as c:
@@ -162,6 +191,17 @@ async def test_delivery_failure_does_not_stop_other_terminals(monkeypatch, caplo
         assert {await take(c.completed), await take(c.completed)} == {"bad", "good"}
         await c.queue.put(ready("later"))
         assert await take(c.completed) == "later"
+        assert not c.task.done()
+
+
+async def test_failed_key_republishes_its_remaining_events(monkeypatch):
+    async with consumer(monkeypatch, failures={"bad"}) as c:
+        for _ in range(3):
+            await c.queue.put(ready("bad"))
+        await c.queue.put(ready("good"))
+        results = [await take(c.completed) for _ in range(4)]
+        assert results.count("bad") == 3
+        assert results.count("good") == 1
         assert not c.task.done()
 
 

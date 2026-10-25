@@ -7,8 +7,10 @@ import asyncio
 import logging
 import math
 import threading
+from collections import deque
 from contextlib import contextmanager
-from itertools import groupby
+from heapq import heappop, heappush
+from itertools import count, groupby
 from typing import Dict, Iterable, Iterator, Set, Tuple
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
@@ -63,6 +65,49 @@ class _DeliveryLockEntry:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.refs = 0
+
+
+class _PendingStatusEvents:
+    """Oldest nonbusy event in O(log Q), with no scans or stale heap heads.
+
+    The consumer owns busy keys. A pop makes its key busy immediately, and
+    completed() publishes its next head before any further scheduling.
+    """
+
+    def __init__(self) -> None:
+        self._events: dict[str, deque[int]] = {}
+        self._ready: list[tuple[int, str]] = []
+        self._ordinals = count()
+        self._size = 0
+
+    def __len__(self) -> int:
+        return self._size
+
+    def append(self, terminal_id: str, *, busy: bool) -> None:
+        ordinal = next(self._ordinals)
+        events = self._events.get(terminal_id)
+        if events is None:
+            events = self._events[terminal_id] = deque()
+            if not busy:
+                heappush(self._ready, (ordinal, terminal_id))
+        events.append(ordinal)
+        self._size += 1
+
+    def pop(self) -> str | None:
+        if not self._ready:
+            return None
+        _ordinal, terminal_id = heappop(self._ready)
+        events = self._events[terminal_id]
+        events.popleft()
+        self._size -= 1
+        if not events:
+            del self._events[terminal_id]
+        return terminal_id
+
+    def completed(self, terminal_id: str) -> None:
+        events = self._events.get(terminal_id)
+        if events:
+            heappush(self._ready, (events[0], terminal_id))
 
 
 class InboxService:
@@ -221,7 +266,7 @@ class InboxService:
 
     async def run(self, registry: PluginRegistry | None = None) -> None:
         queue = bus.subscribe("terminal.*.status")
-        pending: list[str] = []
+        pending = _PendingStatusEvents()
         capacity = max(1, queue.maxsize)
         deliveries: dict[str, asyncio.Task[None]] = {}
         reader: asyncio.Task | None = None
@@ -235,12 +280,9 @@ class InboxService:
                 # Keep every consumed ready event. Skip busy keys without
                 # occupying executor slots waiting for their per-terminal lock.
                 while len(deliveries) < _STATUS_DELIVERY_CONCURRENCY:
-                    index = next(
-                        (i for i, key in enumerate(pending) if key not in deliveries), None
-                    )
-                    if index is None:
+                    terminal_id = pending.pop()
+                    if terminal_id is None:
                         break
-                    terminal_id = pending.pop(index)
                     deliveries[terminal_id] = asyncio.create_task(
                         asyncio.to_thread(
                             self._deliver_status_pending, terminal_id, cancelled, registry=registry
@@ -256,6 +298,7 @@ class InboxService:
                 for terminal_id, delivery in tuple(deliveries.items()):
                     if delivery in done:
                         del deliveries[terminal_id]
+                        pending.completed(terminal_id)
                         try:
                             delivery.result()
                         except InboxServiceStoppingError:
@@ -271,7 +314,8 @@ class InboxService:
                             TerminalStatus.IDLE.value,
                             TerminalStatus.COMPLETED.value,
                         ):
-                            pending.append(terminal_id_from_topic(event["topic"]))
+                            terminal_id = terminal_id_from_topic(event["topic"])
+                            pending.append(terminal_id, busy=terminal_id in deliveries)
                     except Exception as e:
                         logger.error(f"Error in InboxService: {e}")
         finally:

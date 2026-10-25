@@ -1,0 +1,52 @@
+{
+  "schema": "caos.pending-status-scaling-validation.v1",
+  "baseline_source_head": "1bfa31d114bacf5a5cd6493eca50bfe8b8a7667b",
+  "changed_source": "src/cli_agent_orchestrator/services/inbox_service.py",
+  "corrected_source_sha256": "92c75cd3e622f5dbdfeac58bef611939705e7b4200089e8255afc1a9ff34ce78",
+  "baseline_duplicate_events": [
+    512,
+    1024,
+    2048,
+    4096
+  ],
+  "baseline_enumeration_probes": [
+    130817,
+    523777,
+    2096129,
+    8386561
+  ],
+  "public_512_event_key_operation_red": 264717,
+  "public_key_operation_budget": 16384,
+  "public_cost_red_failed": true,
+  "corrected_direct_key_operations": [
+    2059,
+    4107,
+    8203,
+    16395
+  ],
+  "timing_speedup_claimed": false,
+  "oracle_seeds": 8,
+  "actions_per_seed": 10000,
+  "historical_keys_in_churn_control": 10000,
+  "focused_tests_passed": 31,
+  "selected_regression_passed": 119,
+  "selected_regression_warnings": 5,
+  "selected_regression_seconds": 87.88,
+  "configured_focused_coverage_percent": 21,
+  "index_traced_bytes_8192_same_key": 292036,
+  "index_traced_bytes_8192_distinct_keys": 7182100,
+  "list_traced_bytes_8192": 65648,
+  "memory_scope": "incremental Python allocations; keys preallocated; not RSS",
+  "postgres_identity_verified": true,
+  "postgres_owner_closed": true,
+  "exact_owned_container_absent": true,
+  "composition_contracts_kept": 5,
+  "composition_contracts_broken": 0,
+  "claude_code_review": "fc52278984da4894bfd93e129c5b7aeb",
+  "claude_verdict": "no blockers",
+  "oc06_complete_claimed": false,
+  "native_model_run_claimed": false,
+  "obsidian_operation": "save-20261025-caos-indexed-pending-selection",
+  "claude_final_evidence_review": "59c937d7b3904f31a1542ab4318d9b63",
+  "reviewed_patch_sha256": "e4147ea1a5a99f72bb94cc0d8552fab3e01a20099f210841490438b2a04844dc"
+}

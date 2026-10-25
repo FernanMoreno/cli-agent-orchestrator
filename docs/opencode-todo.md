@@ -524,3 +524,10 @@ OC-06 sigue abierto: T138 registra el bloqueo reproducido del consumidor secuenc
 Implementado el despacho de eventos con hasta4 entregas y1lector por consumidor, conservando cada evento pendiente y la exclusión por terminal. A retenido con seis eventos repetidos permite avanzar a B; A conserva sus siete intentos. Añadido cierre por invocación para que un trabajador antiguo no entre después de reabrir la API.20 controles enfocados y108 regresiones pasan, incluida PostgreSQL real con A retenido y B entregado antes de liberar A; arquitectura5/0 y ClaudeGO. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t138.md).
 
 Este resultado sustituye el pendiente de despacho secuencial registrado en T137 dentro de este alcance acotado. OC-06 sigue abierto: dos buffers finitos cambian el punto de saturación, y un buffer lleno de terminales ocupados aún puede retrasar otros eventos. El bloqueo global de restauración de proveedores, presión del ejecutor, hooks concurrentes y perfiles nativos requieren evidencia propia. No se atribuye este código a los recibos nativos anteriores.
+
+
+## Avance2026-10-25: T139 coste del selector pendiente
+
+Eliminado el barrido cuadrático del prefijo ocupado:4096 eventos repetidos provocaban8386561 comprobaciones de candidatos. El selector indexado conserva cada evento y el orden del más antiguo disponible, con O(logQ) por operación y estado O(Q). La prueba pública de512 eventos falla antes con264717 operaciones de claves y pasa después;31 controles enfocados y119 regresiones con PostgreSQL/API pasan, arquitectura5/0 y Claude sin bloqueos. [Medidas, memoria y límites](../specs/025-provider-mcp-profiles/validation-t139.md).
+
+El índice añade memoria: unos6,85MiB de asignaciones Python para8192 claves distintas, excluidas las claves ya creadas; no es una mejora de RSS. OC-06 sigue abierto para equidad bajo saturación, proveedores/ejecutor/hooks y distribución entre instancias. No se acredita escalabilidad global ni se actualizan los recibos de inferencia anteriores.
