@@ -271,6 +271,49 @@ def _preflight_flow_session_ownership(session_name: str) -> None:
         _verified_flow_terminal_rows(session_name, terminal_locks)
 
 
+def _flow_kas_runtimes_absent(terminals: List[Dict[str, Any]]) -> bool:
+    """Require exact KAS stop evidence before provider/private-state retirement.
+
+    Caller holds session, Work dispatch and logical retirement admission. A
+    missing reusable session label alone grants no KAS cleanup authority here.
+    """
+    for terminal in terminals:
+        if terminal.get("engine") != "kas":
+            continue
+        terminal_id = str(terminal["id"])
+        try:
+            proof = get_backend().cleanup_terminal_exact(
+                terminal_id,
+                terminal.get("tmux_session"),
+                terminal.get("tmux_window"),
+                close=False,
+            )
+            if proof.reclaimed:
+                continue
+        except Exception as error:
+            logger.warning("Flow KAS stop proof unavailable for %s: %s", terminal_id, error)
+        logger.warning("Flow KAS retirement deferred for %s; preserving evidence", terminal_id)
+        return False
+    return True
+
+
+def _delete_flow_terminal_rows(terminals: List[Dict[str, Any]]) -> int:
+    """Release selected proofs only after the caller's authorized bulk SQL.
+
+    Session/dispatch/logical and final provider fences remain caller-owned.
+    The earlier KAS absence gate must have passed for every selected KAS row.
+    """
+    deleted = _delete_terminal_rows_with_sidecars(
+        [str(t["id"]) for t in terminals], delete_rows=delete_terminals_by_ids
+    )
+    from cli_agent_orchestrator.services.kiro_profiles import delete_runtime_kas_proof
+
+    for terminal in terminals:
+        if terminal.get("engine") == "kas":
+            delete_runtime_kas_proof(str(terminal["id"]))
+    return deleted
+
+
 def _recycle_flow_session(name: str, session_name: str) -> bool:
     """Guard the current incarnation before changing any of its runtime state."""
     with session_lifecycle_lock(session_name), ExitStack() as terminal_locks:
@@ -304,6 +347,8 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                         "Failed to clear status buffers for %s: %s", terminal["id"], error
                     )
             get_backend().kill_session(session_name)
+            if not _flow_kas_runtimes_absent(terminals):
+                return False
             cleanup_complete = True
             for terminal in terminals:
                 if provider_manager.cleanup_provider(terminal["id"]) is False:
@@ -324,15 +369,15 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                             "Flow %s final provider retirement deferred; retaining rows", name
                         )
                         return False
-                _delete_terminal_rows_with_sidecars(
-                    [str(t["id"]) for t in terminals], delete_rows=delete_terminals_by_ids
-                )
+                _delete_flow_terminal_rows(terminals)
         elif terminals:
             terminals = [
                 t
                 for t in terminals
                 if not should_retain_deferred_failure_tombstone(str(t["id"]), t)
             ]
+            if not _flow_kas_runtimes_absent(terminals):
+                return False
             cleanup_complete = True
             for terminal in terminals:
                 if provider_manager.cleanup_provider(terminal["id"]) is False:
@@ -350,9 +395,7 @@ def _recycle_flow_session(name: str, session_name: str) -> bool:
                             "Flow %s final provider retirement deferred; retaining rows", name
                         )
                         return False
-                _delete_terminal_rows_with_sidecars(
-                    [str(t["id"]) for t in terminals], delete_rows=delete_terminals_by_ids
-                )
+                _delete_flow_terminal_rows(terminals)
         return True
 
 

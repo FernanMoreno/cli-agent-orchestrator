@@ -571,3 +571,6 @@ Actualización compartida2026-10-25: T151 retira fantasmas Herdr solo con ausenc
 
 
 Actualización compartida2026-10-25: T152 reproduce y corrige la inversión de bloqueos entre creación con padre y limpieza Herdr. Creación toma sesión antes de dispatch, mantiene comprobaciones de identidad/generación y rollback bajo ambos; límites intactos.597 regresiones pasan,3 deselecciones configuradas intactas y arquitectura5/0. Claude revisó la corrección de una aserción de prueba y dio GO; auditoría Luna y PostgreSQL cerrado. T143 y aceptación nativa actual siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t152.md).
+
+
+Actualización compartida2026-10-25: T153 reproduce y corrige pares KAS huérfanos y retirada sin prueba nativa en ambas rutas de reciclado Flow. Exige ausencia exacta antes de limpiar proveedores y retira solo pruebas seleccionadas tras SQL confirmado.626 regresiones pasan,29casos nuevos,3 deselecciones configuradas intactas y arquitectura5/0; GO Claude/Luna, PostgreSQL cerrado y Obsidian actualizado. Conserva evidencia ante incertidumbre/error SQL; parada previa y unlink parcial siguen explícitos. T143 y aceptación nativa actual continúan abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t153.md).

@@ -1,0 +1,249 @@
+{
+  "task": "T153",
+  "date": "2026-10-25",
+  "base_commit": "05da979c69e5459bf8117a5581ca3b3cceb60e06",
+  "scope": "FR131/SC115 exact KAS absence before Flow provider retirement and selected proof release after acknowledged bulk SQL",
+  "final": {
+    "initial_available_mib": 12203,
+    "selected_test_files": [
+      "test/services/test_deferred_sidecar_lock_lifecycle.py",
+      "test/integration/test_bulk_deferred_sidecar_retirement.py",
+      "test/services/test_terminal_service_full.py",
+      "test/services/test_session_teardown_atomic.py",
+      "test/services/test_session_service.py",
+      "test/services/test_flow_service.py",
+      "test/integration/test_provider_row_retirement.py",
+      "test/integration/test_provider_startup_retirement.py",
+      "test/services/test_cleanup_service.py",
+      "test/services/test_terminal_tombstone_exact_cleanup.py",
+      "test/services/test_provider_lifecycle.py",
+      "test/runtime_channel/test_remote_services.py",
+      "test/runtime_channel/test_bridge_serve_contracts.py",
+      "test/services/test_integration_008_kas_runtime_profile.py",
+      "test/providers/test_integration_008_kas_launch_review.py",
+      "test/services/test_plugin_event_emission.py::TestTerminalPluginEvents",
+      "test/services/test_plugin_event_emission.py::TestSessionPluginEvents",
+      "test/mcp_server/test_terminal_cleanup.py",
+      "test/api/test_api_endpoints.py::TestDeleteTerminal",
+      "test/api/test_api_endpoints.py::TestDeleteSession",
+      "test/api/test_terminals.py::TestDeleteTerminalEndpoint",
+      "test/integration/test_herdr_ghost_retirement.py",
+      "test/backends/test_herdr_inbox_service.py",
+      "test/backends/test_herdr_exact_cleanup.py",
+      "test/services/test_herdr_inbox_registry.py",
+      "test/providers/test_provider_manager_unit.py",
+      "test/providers/test_provider_publication_cleanup.py",
+      "test/integration/test_provider_publication_cleanup.py",
+      "test/integration/test_parent_creation_lock_order.py",
+      "test/services/test_terminal_service_inbox_registration.py",
+      "test/services/test_integration_008_assignment_intent.py",
+      "test/api/test_integration_008_assignment_http.py",
+      "test/integration/test_flow_kas_retirement.py"
+    ],
+    "source_sha256": {
+      "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+      "src/cli_agent_orchestrator/services/terminal_service.py": "499d3911b8c51d92aa69f15073ce2896973a882d37d467555f5206dd8e8b9a15",
+      "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+      "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+      "src/cli_agent_orchestrator/services/flow_service.py": "81f489f3d5611ce404c845b46fc6b99434c4e47dee8f8568c78a8f9abc3204d0",
+      "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+      "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+      "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+      "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+      "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+      "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+      "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+    },
+    "identity_verified": true,
+    "pytest_returncode": 0,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "elapsed_seconds": 406.036,
+    "sources_unchanged": true
+  },
+  "pytest": {
+    "passed": 626,
+    "deselected": 3,
+    "warnings": 8,
+    "seconds": 386.56,
+    "new_cases": 29
+  },
+  "history": {
+    "initial_red": {
+      "result": "8 failed,4 passed,2 warnings in33.38s",
+      "proof": {
+        "initial_available_mib": 11642,
+        "selected_test_files": [
+          "test/integration/test_flow_kas_retirement.py"
+        ],
+        "source_sha256": {
+          "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+          "src/cli_agent_orchestrator/services/terminal_service.py": "499d3911b8c51d92aa69f15073ce2896973a882d37d467555f5206dd8e8b9a15",
+          "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+          "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+          "src/cli_agent_orchestrator/services/flow_service.py": "2e7fedcb6d0166b5a2b18dc3455fa4de523d4aaa6c2cb5fa7a05895ba0a59278",
+          "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+          "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+          "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+          "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+          "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+          "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+          "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+          "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+          "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+        },
+        "identity_verified": true,
+        "pytest_returncode": 1,
+        "owner_closed": true,
+        "exact_container_absent": true,
+        "elapsed_seconds": 38.506,
+        "sources_unchanged": true
+      },
+      "limitation": "First version explicitly isolated KAS pair; repeated before source fix after explicitly binding temporary sidecar directory and publishing both fallback types"
+    },
+    "isolated_red": {
+      "result": "8 failed,4 passed,2 warnings in37.80s",
+      "proof": {
+        "initial_available_mib": 12034,
+        "selected_test_files": [
+          "test/integration/test_flow_kas_retirement.py"
+        ],
+        "source_sha256": {
+          "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+          "src/cli_agent_orchestrator/services/terminal_service.py": "499d3911b8c51d92aa69f15073ce2896973a882d37d467555f5206dd8e8b9a15",
+          "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+          "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+          "src/cli_agent_orchestrator/services/flow_service.py": "2e7fedcb6d0166b5a2b18dc3455fa4de523d4aaa6c2cb5fa7a05895ba0a59278",
+          "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+          "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+          "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+          "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+          "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+          "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+          "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+          "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+          "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+        },
+        "identity_verified": true,
+        "pytest_returncode": 1,
+        "owner_closed": true,
+        "exact_container_absent": true,
+        "elapsed_seconds": 42.873,
+        "sources_unchanged": true
+      },
+      "failures": "2 orphan KAS pair cases;6 cases deleting row/cache despite UNKNOWN/present/probe exception"
+    },
+    "green": {
+      "result": "12 passed,2 warnings in31.14s",
+      "proof": {
+        "initial_available_mib": 12067,
+        "selected_test_files": [
+          "test/integration/test_flow_kas_retirement.py"
+        ],
+        "source_sha256": {
+          "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+          "src/cli_agent_orchestrator/services/terminal_service.py": "499d3911b8c51d92aa69f15073ce2896973a882d37d467555f5206dd8e8b9a15",
+          "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+          "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+          "src/cli_agent_orchestrator/services/flow_service.py": "81f489f3d5611ce404c845b46fc6b99434c4e47dee8f8568c78a8f9abc3204d0",
+          "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+          "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+          "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+          "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+          "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+          "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+          "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+          "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+          "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+        },
+        "identity_verified": true,
+        "pytest_returncode": 0,
+        "owner_closed": true,
+        "exact_container_absent": true,
+        "elapsed_seconds": 36.494,
+        "sources_unchanged": true
+      }
+    },
+    "focused": {
+      "result": "105 passed,2 warnings in77.97s",
+      "new_cases": 28,
+      "proof": {
+        "initial_available_mib": 12153,
+        "selected_test_files": [
+          "test/integration/test_flow_kas_retirement.py",
+          "test/services/test_flow_service.py",
+          "test/integration/test_bulk_deferred_sidecar_retirement.py",
+          "test/services/test_deferred_sidecar_lock_lifecycle.py"
+        ],
+        "source_sha256": {
+          "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+          "src/cli_agent_orchestrator/services/terminal_service.py": "499d3911b8c51d92aa69f15073ce2896973a882d37d467555f5206dd8e8b9a15",
+          "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+          "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+          "src/cli_agent_orchestrator/services/flow_service.py": "81f489f3d5611ce404c845b46fc6b99434c4e47dee8f8568c78a8f9abc3204d0",
+          "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+          "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+          "src/cli_agent_orchestrator/api/main.py": "c161a41f5cddb0a519c62db72b59c08c4ec4e9981247d5d07ef7e53c22341bde",
+          "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+          "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+          "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+          "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+          "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+          "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52"
+        },
+        "identity_verified": true,
+        "pytest_returncode": 0,
+        "owner_closed": true,
+        "exact_container_absent": true,
+        "elapsed_seconds": 83.554,
+        "sources_unchanged": true
+      },
+      "limitation": "Final mixed-selection case and provider-fence cleanup assertion accepted by final broad run"
+    }
+  },
+  "reviews": {
+    "claude_diagnosis": "b247c309e0194aa99ac110972671a720: source-only candidate and scoped advice before implementation",
+    "claude_review": "ce6d27fb497d4578a67c28d22fdadea9: GO, no blockers; production/test read, peers ran no checks",
+    "luna": "Read audit and final mixed-selection/unlink/fence delta: bounded GO; no tests run",
+    "codex": "Executed actual PG/files RED and final regression, reviewed source/backend contracts/guards/diff and frozen hashes"
+  },
+  "composition": {
+    "contracts_kept": 5,
+    "contracts_broken": 0,
+    "verdict": "PASS WITH RISKS",
+    "graphify": "2 relevant nodes/22 edges read-only; source and private fresh AST map checked. Preserve12 foreign generated files; canonical graph not regenerated. Architecture verifies added dependency.",
+    "contracts": "Internal lifecycle change, no public API/schema/events/permission/config/migration change or new Pact requirement"
+  },
+  "source_ast_check": {
+    "base_commit": "05da979c69e5459bf8117a5581ca3b3cceb60e06",
+    "source_sha256": "81f489f3d5611ce404c845b46fc6b99434c4e47dee8f8568c78a8f9abc3204d0",
+    "same_bulk_callback_expression": true,
+    "unchanged_after_removing_two_kas_gates_and_restoring_original_bulk_calls": true,
+    "gates": 2,
+    "bulk_call_sites": 2
+  },
+  "test_sha256": {
+    "test/integration/test_flow_kas_retirement.py": "7b537775113aff556f9983e5bc610de8bb5996abae23d1d939006c2ef37d2b3d"
+  },
+  "knowledge": {
+    "operation": "save-20261025-caos-flow-kas-retirement",
+    "changed_paths": [
+      "wiki/concepts/Provider reconstruction ownership.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "limitations": [
+    "Native exact proof trusts existing backend scope; not distributed generation ownership",
+    "Live FIFO/monitor/session stop may precede uncertainty refusal; no atomic rollback",
+    "Excluded/all-retained missing-session recycle can still returnTrue without retiring retained rows",
+    "SQL commit then lost result retains files even if row already gone",
+    "KAS unlink per-file logged best-effort can leave partial private pairs",
+    "One exact call per selected KAS; backend can repeat scans, no total linear cost or mass-scale acceptance claimed",
+    "T143 rawSQL/generation/deleteABA/cross-process/worktree/escaped-worker boundaries and current native acceptance remain open"
+  ]
+}
