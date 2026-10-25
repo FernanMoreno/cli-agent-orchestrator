@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Protocol, Tuple
 
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 
@@ -34,12 +34,18 @@ _DROP_STATE_MAX_TOPICS = 1024
 _DROP_STATE_TTL_SECS = 300.0
 
 
+class EventSink(Protocol):
+    def put_nowait(self, event: dict) -> None:
+        """Accept synchronously or raise asyncio.QueueFull; never block."""
+        ...
+
+
 class EventBus:
     """Thread-safe publishing, async consumption via asyncio.Queue."""
 
     def __init__(self):
-        self._exact: Dict[str, List[asyncio.Queue]] = {}
-        self._wildcard: Dict[str, Tuple[re.Pattern, List[asyncio.Queue]]] = {}
+        self._exact: Dict[str, List[EventSink]] = {}
+        self._wildcard: Dict[str, Tuple[re.Pattern, List[EventSink]]] = {}
         self._lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         # Per-topic rate-limit state for queue-full drop reporting.
@@ -73,21 +79,23 @@ class EventBus:
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=get_server_settings()["event_bus_max_queue_size"]
         )
+        self.subscribe_sink(pattern, queue)
+        return queue
 
+    def subscribe_sink(self, pattern: str, sink: EventSink) -> None:
+        """Register an event-loop-owned nonblocking admission sink."""
         with self._lock:
             if "*" in pattern:
                 regex = pattern.replace(".", r"\.").replace("*", "[^.]+")
                 if regex not in self._wildcard:
                     self._wildcard[regex] = (re.compile(f"^{regex}$"), [])
-                self._wildcard[regex][1].append(queue)
+                self._wildcard[regex][1].append(sink)
             else:
                 if pattern not in self._exact:
                     self._exact[pattern] = []
-                self._exact[pattern].append(queue)
+                self._exact[pattern].append(sink)
 
-        return queue
-
-    def unsubscribe(self, pattern: str, queue: asyncio.Queue) -> None:
+    def unsubscribe(self, pattern: str, queue: EventSink) -> None:
         """Remove a queue from a subscription pattern."""
         with self._lock:
             if "*" in pattern:

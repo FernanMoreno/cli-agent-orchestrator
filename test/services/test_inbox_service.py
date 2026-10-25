@@ -604,6 +604,14 @@ class TestReconcileOrphanedMessages:
         assert svc.deliver_pending.call_count == 2
 
 
+def _feed_status_sink(queue):
+    def subscribe(_pattern, sink):
+        while not queue.empty():
+            sink.put_nowait(queue.get_nowait())
+
+    return subscribe
+
+
 class TestRun:
     """Tests for InboxService.run() event loop."""
 
@@ -621,7 +629,7 @@ class TestRun:
         )
 
         with patch("cli_agent_orchestrator.services.inbox_service.bus") as mock_bus:
-            mock_bus.subscribe.return_value = queue
+            mock_bus.subscribe_sink.side_effect = _feed_status_sink(queue)
 
             # Run one iteration then cancel
             async def run_one():
@@ -651,7 +659,7 @@ class TestRun:
         )
 
         with patch("cli_agent_orchestrator.services.inbox_service.bus") as mock_bus:
-            mock_bus.subscribe.return_value = queue
+            mock_bus.subscribe_sink.side_effect = _feed_status_sink(queue)
 
             task = asyncio.create_task(svc.run())
             await asyncio.sleep(0.05)
@@ -677,7 +685,7 @@ class TestRun:
         )
 
         with patch("cli_agent_orchestrator.services.inbox_service.bus") as mock_bus:
-            mock_bus.subscribe.return_value = queue
+            mock_bus.subscribe_sink.side_effect = _feed_status_sink(queue)
 
             task = asyncio.create_task(svc.run())
             await asyncio.sleep(0.05)
@@ -708,7 +716,7 @@ class TestRun:
         )
 
         with patch("cli_agent_orchestrator.services.inbox_service.bus") as mock_bus:
-            mock_bus.subscribe.return_value = queue
+            mock_bus.subscribe_sink.side_effect = _feed_status_sink(queue)
 
             task = asyncio.create_task(svc.run(registry))
             await asyncio.sleep(0.05)
@@ -745,7 +753,7 @@ class TestRun:
                 new_callable=AsyncMock,
             ) as mock_to_thread,
         ):
-            mock_bus.subscribe.return_value = queue
+            mock_bus.subscribe_sink.side_effect = _feed_status_sink(queue)
 
             task = asyncio.create_task(svc.run())
             await asyncio.sleep(0.05)

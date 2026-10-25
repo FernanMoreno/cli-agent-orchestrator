@@ -17,8 +17,8 @@ class TrackingBus(event_bus.EventBus):
         self.subscribed = asyncio.Event()
         self.queues = []
 
-    def subscribe(self, pattern):
-        queue = super().subscribe(pattern)
+    def subscribe_sink(self, pattern, queue):
+        super().subscribe_sink(pattern, queue)
         self.queues.append(queue)
         self.subscribed.set()
         return queue
@@ -49,22 +49,33 @@ async def test_completed_consumer_churn_does_not_retain_or_feed_queues(bus):
     for _ in range(20):
         task, _queue = await start_consumer(module.InboxService(), bus)
         await cancel_consumer(task)
+        assert all(
+            _queue is not registered
+            for _pattern, queues in bus._wildcard.values()
+            for registered in queues
+        )
 
     bus._dispatch("terminal.after.status", {"status": "idle"})
     assert all(queue.empty() for queue in bus.queues)
     assert bus._wildcard == {}
 
 
-async def test_cancel_removes_only_the_exiting_consumers_queue(bus):
+async def test_cancel_removes_only_the_exiting_consumers_queue(bus, monkeypatch):
     observer = bus.subscribe("terminal.*.status")
     other_pattern = bus.subscribe("terminal.*.output")
     service = module.InboxService()
+    monkeypatch.setattr(service, "_deliver_pending_locked", lambda *_args: None)
     task, stopped_queue = await start_consumer(service, bus)
     other_task, live_queue = await start_consumer(service, bus)
     try:
         await cancel_consumer(task)
-        # PROCESSING leaves the live consumer free of delivery/database work.
-        bus._dispatch("terminal.live.status", {"status": "processing"})
+        assert all(
+            stopped_queue is not registered
+            for _pattern, queues in bus._wildcard.values()
+            for registered in queues
+        )
+        # Ready status reaches the live sink; its delivery port is controlled.
+        bus._dispatch("terminal.live.status", {"status": "idle"})
         bus._dispatch("terminal.live.output", {"text": "ready"})
         assert stopped_queue.empty()
         assert observer.qsize() == 1
@@ -75,19 +86,20 @@ async def test_cancel_removes_only_the_exiting_consumers_queue(bus):
     assert sum(len(queues) for _, queues in bus._wildcard.values()) == 2
 
 
-async def test_fatal_queue_read_releases_subscription_and_preserves_error(bus, monkeypatch):
+@pytest.mark.parametrize("ordinary", [False, True])
+async def test_waiter_failure_releases_subscription_and_preserves_error(bus, monkeypatch, ordinary):
     class ConsumerFailure(BaseException):
         pass
 
-    failure = ConsumerFailure("queue failed")
-    queue = bus.subscribe("terminal.*.status")
+    failure = RuntimeError("waiter failed") if ordinary else ConsumerFailure("waiter failed")
+    sink = module._StatusEventSink(4, lambda _key: False)
 
     async def fail_get():
         raise failure
 
-    monkeypatch.setattr(queue, "get", fail_get)
-    monkeypatch.setattr(bus, "subscribe", lambda _pattern: queue)
-    with pytest.raises(ConsumerFailure) as raised:
+    monkeypatch.setattr(sink.ready, "wait", fail_get)
+    monkeypatch.setattr(module, "_StatusEventSink", lambda *_args: sink)
+    with pytest.raises(type(failure)) as raised:
         await module.InboxService().run()
     assert raised.value is failure
     assert bus._wildcard == {}

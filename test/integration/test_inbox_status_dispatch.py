@@ -14,7 +14,7 @@ from cli_agent_orchestrator.services import inbox_service as module
 
 
 @pytest.mark.asyncio
-async def test_postgres_status_delivery_bypasses_held_receiver_and_preserves_order(
+async def test_postgres_status_delivery_bypasses_saturated_busy_prefix_and_preserves_order(
     isolated_memory_db,
     monkeypatch,
 ):
@@ -32,6 +32,7 @@ async def test_postgres_status_delivery_bypasses_held_receiver_and_preserves_ord
     )
     monkeypatch.setattr(module.status_monitor, "get_status", lambda _id: TerminalStatus.IDLE)
     monkeypatch.setattr(event_bus, "get_server_settings", lambda: {"event_bus_max_queue_size": 16})
+    monkeypatch.setattr(module, "get_server_settings", lambda: {"event_bus_max_queue_size": 2})
     bus = event_bus.EventBus()
     service = module.InboxService()
     monkeypatch.setattr(module, "bus", bus)
@@ -40,12 +41,13 @@ async def test_postgres_status_delivery_bypasses_held_receiver_and_preserves_ord
     held_read = asyncio.Event()
     release = threading.Event()
     sent = asyncio.Queue()
-    real_subscribe = bus.subscribe
+    real_subscribe = bus.subscribe_sink
     real_get_pending = module.get_pending_messages
     first = True
 
-    def subscribe(pattern):
-        queue = real_subscribe(pattern)
+    def subscribe(pattern, queue):
+        assert queue.maxsize == 4
+        real_subscribe(pattern, queue)
         subscribed.set()
         return queue
 
@@ -62,7 +64,7 @@ async def test_postgres_status_delivery_bypasses_held_receiver_and_preserves_ord
         assert kwargs == {"task_delivery": True}
         loop.call_soon_threadsafe(sent.put_nowait, (receiver_id, text))
 
-    monkeypatch.setattr(bus, "subscribe", subscribe)
+    monkeypatch.setattr(bus, "subscribe_sink", subscribe)
     monkeypatch.setattr(module, "get_pending_messages", get_pending)
     monkeypatch.setattr(module.terminal_service, "send_input", send_input)
     task = asyncio.create_task(service.run())

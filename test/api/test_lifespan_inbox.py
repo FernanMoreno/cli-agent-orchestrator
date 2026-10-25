@@ -327,15 +327,15 @@ def _patched_real_inbox_lifespan(monkeypatch, *, timeout_override: float | None 
     fifo_shutdown_worker_state: list[bool] = []
     worker_timeout = 5.0
     event_bus = EventBus()
-    real_subscribe = event_bus.subscribe
+    real_subscribe = event_bus.subscribe_sink
 
-    def _tracked_subscribe(pattern: str):
-        queue = real_subscribe(pattern)
+    def _tracked_subscribe(pattern: str, queue):
+        real_subscribe(pattern, queue)
         if pattern == "terminal.*.status":
             inbox_subscribed.set()
         return queue
 
-    event_bus.subscribe = _tracked_subscribe
+    event_bus.subscribe_sink = _tracked_subscribe
     monkeypatch.setattr(main_module, "bus", event_bus)
     monkeypatch.setattr(inbox_module, "bus", event_bus)
 

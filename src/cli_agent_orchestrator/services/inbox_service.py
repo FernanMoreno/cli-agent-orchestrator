@@ -11,7 +11,7 @@ from collections import deque
 from contextlib import contextmanager
 from heapq import heappop, heappush
 from itertools import count, groupby
-from typing import Dict, Iterable, Iterator, Set, Tuple
+from typing import Callable, Dict, Iterable, Iterator, Set, Tuple
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
 from cli_agent_orchestrator.clients.database import (
@@ -33,6 +33,7 @@ from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.runtime_channel.registry import RuntimeUnavailableError
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.services.event_bus import bus
+from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.utils.event import terminal_id_from_topic
 
@@ -108,6 +109,45 @@ class _PendingStatusEvents:
         events = self._events.get(terminal_id)
         if events:
             heappush(self._ready, (events[0], terminal_id))
+
+
+class _StatusEventSink:
+    """One bounded admission buffer; busy keys never hide accepted ready keys."""
+
+    def __init__(self, capacity: int, is_busy: Callable[[str], bool]) -> None:
+        self.maxsize = capacity
+        self.pending = _PendingStatusEvents()
+        self.ready = asyncio.Event()
+        self.closed = False
+        self._is_busy = is_busy
+
+    def qsize(self) -> int:
+        return len(self.pending)
+
+    def empty(self) -> bool:
+        return not len(self.pending)
+
+    def put_nowait(self, event: dict) -> None:
+        if self.closed:
+            return
+        try:
+            if event["data"]["status"] not in (
+                TerminalStatus.IDLE.value,
+                TerminalStatus.COMPLETED.value,
+            ):
+                return
+            terminal_id = terminal_id_from_topic(event["topic"])
+        except Exception as e:
+            logger.error(f"Error in InboxService: {e}")
+            return
+        if len(self.pending) >= self.maxsize:
+            raise asyncio.QueueFull
+        self.pending.append(terminal_id, busy=self._is_busy(terminal_id))
+        self.ready.set()
+
+    def close(self) -> None:
+        self.closed = True
+        self.pending = _PendingStatusEvents()
 
 
 class InboxService:
@@ -265,10 +305,10 @@ class InboxService:
             self.deliver_pending(terminal_id, registry=registry)
 
     async def run(self, registry: PluginRegistry | None = None) -> None:
-        queue = bus.subscribe("terminal.*.status")
-        pending = _PendingStatusEvents()
-        capacity = max(1, queue.maxsize)
         deliveries: dict[str, asyncio.Task[None]] = {}
+        capacity = 2 * max(1, get_server_settings()["event_bus_max_queue_size"])
+        sink = _StatusEventSink(capacity, lambda key: key in deliveries)
+        bus.subscribe_sink("terminal.*.status", sink)
         reader: asyncio.Task | None = None
         cancelled = threading.Event()
         try:
@@ -277,10 +317,11 @@ class InboxService:
                 with self._operations:
                     if not self._accepting_operations:
                         return
+                sink.ready.clear()
                 # Keep every consumed ready event. Skip busy keys without
                 # occupying executor slots waiting for their per-terminal lock.
                 while len(deliveries) < _STATUS_DELIVERY_CONCURRENCY:
-                    terminal_id = pending.pop()
+                    terminal_id = sink.pending.pop()
                     if terminal_id is None:
                         break
                     deliveries[terminal_id] = asyncio.create_task(
@@ -289,8 +330,8 @@ class InboxService:
                         ),
                         name="inbox-status-delivery",
                     )
-                if reader is None and len(pending) < capacity:
-                    reader = asyncio.create_task(queue.get(), name="inbox-status-reader")
+                if reader is None:
+                    reader = asyncio.create_task(sink.ready.wait(), name="inbox-status-reader")
                 waiting = set(deliveries.values())
                 if reader is not None:
                     waiting.add(reader)
@@ -298,7 +339,7 @@ class InboxService:
                 for terminal_id, delivery in tuple(deliveries.items()):
                     if delivery in done:
                         del deliveries[terminal_id]
-                        pending.completed(terminal_id)
+                        sink.pending.completed(terminal_id)
                         try:
                             delivery.result()
                         except InboxServiceStoppingError:
@@ -306,22 +347,13 @@ class InboxService:
                         except Exception as e:
                             logger.error(f"Error in InboxService: {e}")
                 if reader is not None and reader in done:
-                    completed_reader = reader
+                    reader.result()
                     reader = None
-                    try:
-                        event = completed_reader.result()
-                        if event["data"]["status"] in (
-                            TerminalStatus.IDLE.value,
-                            TerminalStatus.COMPLETED.value,
-                        ):
-                            terminal_id = terminal_id_from_topic(event["topic"])
-                            pending.append(terminal_id, busy=terminal_id in deliveries)
-                    except Exception as e:
-                        logger.error(f"Error in InboxService: {e}")
         finally:
             with self._operations:
                 cancelled.set()
-            bus.unsubscribe("terminal.*.status", queue)
+            sink.close()
+            bus.unsubscribe("terminal.*.status", sink)
             children = list(deliveries.values())
             if reader is not None:
                 children.append(reader)

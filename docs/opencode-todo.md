@@ -531,3 +531,10 @@ Este resultado sustituye el pendiente de despacho secuencial registrado en T137 
 Eliminado el barrido cuadrático del prefijo ocupado:4096 eventos repetidos provocaban8386561 comprobaciones de candidatos. El selector indexado conserva cada evento y el orden del más antiguo disponible, con O(logQ) por operación y estado O(Q). La prueba pública de512 eventos falla antes con264717 operaciones de claves y pasa después;31 controles enfocados y119 regresiones con PostgreSQL/API pasan, arquitectura5/0 y Claude sin bloqueos. [Medidas, memoria y límites](../specs/025-provider-mcp-profiles/validation-t139.md).
 
 El índice añade memoria: unos6,85MiB de asignaciones Python para8192 claves distintas, excluidas las claves ya creadas; no es una mejora de RSS. OC-06 sigue abierto para equidad bajo saturación, proveedores/ejecutor/hooks y distribución entre instancias. No se acredita escalabilidad global ni se actualizan los recibos de inferencia anteriores.
+
+
+## Avance2026-10-25: T140 equidad de eventos admitidos
+
+Eliminado el bloqueo entre la antigua cola FIFO y el selector pendiente: ambos pasan a una admisión común de2Q, conservando la capacidad combinada y cada evento aceptado. B avanza con2Q−1 eventos de A esperando; con2Q A, B se rechaza visiblemente y ningún A se expulsa.129 regresiones pasan, incluida PostgreSQL con el antiguo prefijo saturado; arquitectura5/0 y revisión independiente de Claude. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t140.md).
+
+Se sustituye el límite de equidad del prefijo descrito en T138/T139 para trabajo ya admitido. No se promete admisión sin pérdidas cuando se llena toda la capacidad. OC-06 sigue abierto para proveedores/ejecutor/hooks, varias instancias y capacidad global; no se actualizan recibos nativos de fuentes anteriores.
