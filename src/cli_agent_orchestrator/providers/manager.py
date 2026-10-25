@@ -50,6 +50,7 @@ class ProviderManager:
 
     def __init__(self) -> None:
         self._providers: Dict[str, BaseProvider] = {}
+        self._providers_guard = threading.Lock()
         self._restore_locks_guard = threading.Lock()
         self._restore_locks: Dict[str, _RestoreLockEntry] = {}
 
@@ -263,7 +264,12 @@ class ProviderManager:
 
             # Store in direct mapping
             if publish:
-                self._providers[terminal_id] = provider
+                # Explicit launch owns its complete options. Wait for an older
+                # reconstruction/cleanup, then publish this candidate; never
+                # clean a replaced reconstructed adapter's shared private home.
+                with self._restoration_lock(terminal_id):
+                    with self._providers_guard:
+                        self._providers[terminal_id] = provider
             logger.info(f"Created {provider_type} provider for terminal: {terminal_id}")
             return provider
 
@@ -296,7 +302,8 @@ class ProviderManager:
             ValueError: If terminal not found in database or provider creation fails
         """
         # Check if already exists
-        provider = self._providers.get(terminal_id)
+        with self._providers_guard:
+            provider = self._providers.get(terminal_id)
         if provider:
             if (
                 isinstance(provider, KiroCliProvider)
@@ -399,7 +406,8 @@ class ProviderManager:
             provider.shell_baseline = metadata["shell_command"]
             if hasattr(provider, "_initialized"):
                 provider._initialized = True
-        self._providers[terminal_id] = provider
+        with self._providers_guard:
+            self._providers[terminal_id] = provider
         if recovery is not None and recovery["state"] == "verifying":
             # Resume only the observer for a final response already detected
             # before restart. The durable timestamp keeps its original deadline;
@@ -413,6 +421,11 @@ class ProviderManager:
         return provider
 
     def cleanup_provider(self, terminal_id: str) -> bool:
+        """Serialize private cleanup; retain retry state or a superseding owner."""
+        with self._restoration_lock(terminal_id):
+            return self._cleanup_provider_locked(terminal_id)
+
+    def _cleanup_provider_locked(self, terminal_id: str) -> bool:
         """Cleanup a provider, retaining any retryable private state on failure.
 
         A provider returning ``False`` deliberately keeps its map entry and
@@ -421,13 +434,22 @@ class ProviderManager:
         terminal or server restart.
         """
         try:
-            provider = self._providers.get(terminal_id)
+            with self._providers_guard:
+                provider = self._providers.get(terminal_id)
             if provider:
                 cleanup_result = provider.cleanup()
                 if cleanup_result is False:
                     logger.warning("Cleanup deferred for terminal: %s", terminal_id)
                     return False
-                self._providers.pop(terminal_id, None)
+                with self._providers_guard:
+                    still_owned = self._providers.get(terminal_id) is provider
+                    if still_owned:
+                        self._providers.pop(terminal_id)
+                if not still_owned:
+                    logger.warning(
+                        "Cleanup superseded for terminal %s; retaining replacement", terminal_id
+                    )
+                    return False
                 logger.info(f"Cleaned up provider for terminal: {terminal_id}")
                 return True
 
@@ -533,6 +555,14 @@ class ProviderManager:
                     )
                     return False
                 logger.info("Cleaned up restored Gemini CLI provider for terminal: %s", terminal_id)
+            with self._providers_guard:
+                superseded = terminal_id in self._providers
+            if superseded:
+                logger.warning(
+                    "Restored cleanup superseded for terminal %s; retaining replacement",
+                    terminal_id,
+                )
+                return False
             return True
         except Exception as e:
             logger.error(f"Failed to cleanup provider for terminal {terminal_id}: {e}")
@@ -540,10 +570,9 @@ class ProviderManager:
 
     def list_providers(self) -> Dict[str, str]:
         """List all active providers (for debugging)."""
-        return {
-            terminal_id: provider.__class__.__name__
-            for terminal_id, provider in self._providers.items()
-        }
+        with self._providers_guard:
+            snapshot = tuple(self._providers.items())
+        return {terminal_id: provider.__class__.__name__ for terminal_id, provider in snapshot}
 
 
 # Module-level singleton

@@ -541,3 +541,6 @@ Se sustituye el límite de equidad del prefijo descrito en T138/T139 para trabaj
 
 
 Actualización compartida2026-10-25: T141 elimina el bloqueo global de reconstrucción en ProviderManager.get_provider. Las restauraciones de terminales distintos avanzan de forma independiente y los lectores del mismo terminal siguen esperando a su recibo restaurado antes de ver el adaptador.187 regresiones pasan, incluida PostgreSQL con adaptadores Codex reales sin iniciar CLI/modelo; arquitectura5/0 y revisión de Claude/Luna. Esto no cierra las carreras previas de creación/limpieza, OC-06 ni la aceptación nativa actual de este cliente. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t141.md).
+
+
+Actualización compartida2026-10-25: T142 corrige solapamientos del registro de proveedores: la reconstrucción no pisa la creación explícita, una limpieza anterior no elimina al propietario nuevo y el listado usa una instantánea. Se conservan las opciones de lanzamiento y la limpieza reentrante devuelveFalse para retener el reemplazo y sus metadatos.241 regresiones pasan, incluida PostgreSQL/perfiles/recibos; esto no acredita el ciclo completo hasta borrar la fila, varias instancias ni inferencia nativa actual. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t142.md).
