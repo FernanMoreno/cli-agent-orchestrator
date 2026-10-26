@@ -73,11 +73,96 @@ def capture_bytes(argv, stop, max_bytes):
 
 
 class HTTPStatusError(ValueError):
-    """Expose only the numeric HTTP status, never response text or headers."""
+    """Expose the HTTP status and, for 409 only, one safe terminal-state enum."""
 
-    def __init__(self, status_code):
+    def __init__(self, status_code, turn_state=None):
         super().__init__("http_status")
         self.status_code = status_code
+        self.turn_state = (
+            turn_state
+            if status_code == 409
+            and type(turn_state) is str
+            and turn_state in {"verified", "reconcile", "cancelling", "cancelled"}
+            else None
+        )
+
+
+def _strict_http_header_values(lines):
+    values = {}
+    for line in lines:
+        name, separator, value = line.partition(b":")
+        if (
+            not separator
+            or not name
+            or re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) is None
+            or any((byte < 32 and byte != 9) or byte == 127 for byte in value)
+        ):
+            return None
+        key = name.lower()
+        if key in values:
+            return None
+        values[key] = value.strip(b" \t")
+    return values
+
+
+def _strict_json_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("http_json_duplicate_key")
+        value[key] = item
+    return value
+
+
+def _safe_409_turn_state(header_lines, body_prefix, connection, selector, stop, wire_limit):
+    """Read and parse only a small, strictly framed 409 detail, returning an enum."""
+    try:
+        if type(wire_limit) is not int or wire_limit < 0:
+            return None
+        body_limit = min(wire_limit, 4096)
+        headers = _strict_http_header_values(header_lines)
+        if headers is None:
+            return None
+        if (
+            b"transfer-encoding" in headers
+            or headers.get(b"content-encoding", b"identity").lower() != b"identity"
+            or headers.get(b"content-type", b"").split(b";", 1)[0].strip().lower()
+            != b"application/json"
+        ):
+            return None
+        encoded_length = headers.get(b"content-length", b"")
+        if not encoded_length or not encoded_length.isdigit():
+            return None
+        length = int(encoded_length)
+        if length > body_limit or len(body_prefix) > length:
+            return None
+        body = bytearray(body_prefix)
+        while len(body) < length:
+            _remaining(stop)
+            if not selector.select(_remaining(stop)):
+                return None
+            try:
+                part = connection.recv(min(4096, length - len(body)))
+            except BlockingIOError:
+                continue
+            if not part:
+                return None
+            body.extend(part)
+            if len(body) > body_limit:
+                return None
+        value = json.loads(bytes(body).decode("utf-8"), object_pairs_hook=_strict_json_object)
+        detail = value.get("detail") if type(value) is dict else None
+        state = detail.get("state") if type(detail) is dict else None
+        if type(state) is str and state in {
+            "verified",
+            "reconcile",
+            "cancelling",
+            "cancelled",
+        }:
+            return state
+    except Exception:
+        return None
+    return None
 
 
 def http_json_bytes(api, path, stop, wire_limit):
@@ -117,8 +202,11 @@ def http_json_bytes(api, path, stop, wire_limit):
                         selector.modify(connection, selectors.EVENT_READ)
                     continue
                 capacity = 16384 + 4 - len(header) if length is None else length + 1 - len(body)
+                read_limit = min(4096, max(1, capacity))
+                if type(wire_limit) is int and wire_limit < 4096:
+                    read_limit = min(read_limit, max(1, wire_limit))
                 try:
-                    part = connection.recv(min(4096, max(1, capacity)))
+                    part = connection.recv(read_limit)
                 except BlockingIOError:
                     continue
                 if not part:
@@ -142,7 +230,23 @@ def http_json_bytes(api, path, stop, wire_limit):
                     ):
                         raise ValueError("http_status")
                     if status[1] != b"200":
-                        raise HTTPStatusError(int(status[1]))
+                        status_code = int(status[1])
+                        turn_state = None
+                        if status_code == 409:
+                            turn_state = _safe_409_turn_state(
+                                lines[1:],
+                                memoryview(header)[marker + 4 :],
+                                connection,
+                                selector,
+                                stop,
+                                wire_limit,
+                            )
+                            header.clear()
+                            body.clear()
+                            lines.clear()
+                            status.clear()
+                            part = b""
+                        raise HTTPStatusError(status_code, turn_state)
                     values = {}
                     for line in lines[1:]:
                         key, separator, value = line.partition(b":")

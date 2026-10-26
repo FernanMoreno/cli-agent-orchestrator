@@ -84,6 +84,7 @@ class HumanLauncherTests(unittest.TestCase):
                         self.assertEqual(scope["value"]["mode"], "last")
                         self.assertEqual(scope["receipt"]["last_output_http_status"], 200)
                         self.assertEqual(scope["receipt"]["last_output_pending_observations"], 1)
+                        self.assertIsNone(scope["receipt"]["last_output_turn_state"])
                     else:
                         with self.assertRaises(ValueError) as caught:
                             exec(code, scope)
@@ -93,6 +94,7 @@ class HumanLauncherTests(unittest.TestCase):
                         self.assertEqual(calls, statuses)
                         self.assertEqual(str(caught.exception), "http_status")
                         self.assertEqual(scope["receipt"]["last_output_http_status"], statuses[0])
+                        self.assertIsNone(scope["receipt"]["last_output_turn_state"])
                         self.assertNotIn("last_output_pending_observations", scope["receipt"])
                 finally:
                     server.shutdown()

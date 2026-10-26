@@ -54,7 +54,17 @@ def private_json(path):
     return value
 
 
+def _receipt_verification_observer_enabled(manifest):
+    if type(manifest) is not dict:
+        raise RuntimeError("receipt_stage_observer_flag_invalid")
+    enabled = manifest.get("receipt_verification_observer", False)
+    if type(enabled) is not bool:
+        raise RuntimeError("receipt_stage_observer_flag_invalid")
+    return enabled
+
+
 m = private_json(args.manifest)
+receipt_stage_observer_enabled = _receipt_verification_observer_enabled(m)
 mixed = args.case == "collaboration"
 if m.get("case", "interaction") != args.case:
     raise RuntimeError("case_binding_mismatch")
@@ -190,6 +200,13 @@ if case["required_checks"] != {
     raise RuntimeError("native_case_contract_mismatch")
 import native_human_contract as human
 
+receipt_stage_observer = None
+if receipt_stage_observer_enabled:
+    try:
+        from test.live_provider import receipt_verification_observer as receipt_stage_observer
+    except ModuleNotFoundError:
+        raise RuntimeError("receipt_stage_observer_import_missing") from None
+
 if mixed:
     import native_collaboration_contract as mixed_contract
 
@@ -323,12 +340,21 @@ receipt = {
     "source_pin_file_count": len(sourcefiles),
     "generation_gate_bound": True,
     "generation_receipt_sha256": m["generation_receipt_sha256"],
+    "last_output_turn_state": None,
     "Claude": "read review only; no Claude provider execution",
     "raw_output_printed": False,
     "explicit_go_confirmed": args.go,
     "phases": [],
 }
 observer_module = None
+receipt_stage_context = (
+    {
+        "bootstrap_root": root / "receipt-verification-bootstrap",
+        "raw_dir": raw / "receipt-verification",
+    }
+    if receipt_stage_observer is not None
+    else None
+)
 server = None
 servers = []
 server_stop_confirmed = set()
@@ -823,6 +849,167 @@ def _install_guarded_postgres_cleanup(fixtures_module):
     return fixture_sha256, derived_sha256
 
 
+def _create_private_observer_directory(path):
+    path = Path(path)
+    path.mkdir(mode=0o700)
+    path.chmod(0o700)
+    info = path.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) != 0o700
+    ):
+        raise RuntimeError("receipt_stage_private_directory_invalid")
+    return path
+
+
+def _prepare_receipt_stage_api_pythonpath(
+    *, observer, bootstrap_root, raw_dir, repo, source_hashes, role, existing_pythonpath
+):
+    if (
+        type(role) is not str
+        or role not in {"api_a", "api_b"}
+        or type(source_hashes) is not dict
+        or type(existing_pythonpath) is not str
+    ):
+        raise RuntimeError("receipt_stage_bootstrap_context_invalid")
+    source_modules = getattr(observer, "SOURCE_MODULES", None)
+    if type(source_modules) is not dict or not source_modules:
+        raise RuntimeError("receipt_stage_source_set_invalid")
+    source_files = tuple(source_modules.values())
+    if any(
+        type(relative) is not str or Path(relative).is_absolute() or ".." in Path(relative).parts
+        for relative in source_files
+    ) or len(source_files) != len(set(source_files)):
+        raise RuntimeError("receipt_stage_source_set_invalid")
+    hashes = {relative: source_hashes.get(relative) for relative in source_files}
+    if any(
+        type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None
+        for value in hashes.values()
+    ):
+        raise RuntimeError("receipt_stage_source_hash_missing")
+    fixture_paths = [
+        str(repo / "src"),
+        str(repo),
+        str(repo / "specs/025-provider-mcp-profiles/fixtures"),
+    ]
+    if existing_pythonpath != os.pathsep.join(fixture_paths):
+        raise RuntimeError("receipt_stage_existing_pythonpath_mismatch")
+    bootstrap = Path(bootstrap_root) / role
+    value = observer.prepare_api_observer(bootstrap, raw_dir, repo, hashes, role)
+    expected = os.pathsep.join((str(bootstrap), str(repo / "src"), str(repo)))
+    if value != expected:
+        raise RuntimeError("receipt_stage_api_pythonpath_mismatch")
+    return os.pathsep.join((str(bootstrap), existing_pythonpath))
+
+
+def _api_pythonpath_for_receipt_observer(
+    *, observer, bootstrap_root, raw_dir, repo, source_hashes, role, existing_pythonpath
+):
+    if observer is None:
+        return existing_pythonpath
+    return _prepare_receipt_stage_api_pythonpath(
+        observer=observer,
+        bootstrap_root=bootstrap_root,
+        raw_dir=raw_dir,
+        repo=repo,
+        source_hashes=source_hashes,
+        role=role,
+        existing_pythonpath=existing_pythonpath,
+    )
+
+
+def _receipt_stage_api_ready(raw_dir, role):
+    """Reject a healthy API that did not initialize its requested bootstrap."""
+    try:
+        if type(role) is not str or role not in {"api_a", "api_b"}:
+            return False
+        directory = (Path(raw_dir) / role).lstat()
+        event = (Path(raw_dir) / role / "events.jsonl").lstat()
+        return (
+            stat.S_ISDIR(directory.st_mode)
+            and not stat.S_ISLNK(directory.st_mode)
+            and directory.st_uid == os.getuid()
+            and stat.S_IMODE(directory.st_mode) == 0o700
+            and stat.S_ISREG(event.st_mode)
+            and not stat.S_ISLNK(event.st_mode)
+            and event.st_uid == os.getuid()
+            and event.st_nlink == 1
+            and stat.S_IMODE(event.st_mode) == 0o600
+        )
+    except OSError:
+        return False
+
+
+def _receipt_stage_epoch_summary(value, role, observer):
+    unavailable = {
+        "observer_status": "unavailable",
+        "role": role,
+        "event_count": None,
+        "thread_count": None,
+        "failed_event_count": None,
+        "stage_outcome_counts": None,
+    }
+    if type(value) is not dict or set(value) != set(unavailable) or value["role"] != role:
+        return unavailable
+    if value["observer_status"] != "complete":
+        return unavailable
+    for key in ("event_count", "thread_count", "failed_event_count"):
+        if type(value[key]) is not int or not 0 <= value[key] <= 4096:
+            return unavailable
+    if value["failed_event_count"] != 0 or value["thread_count"] > value["event_count"]:
+        return unavailable
+    allowed = getattr(observer, "_ALLOWED_OUTCOMES", None)
+    counts = value["stage_outcome_counts"]
+    if type(allowed) is not dict or type(counts) is not dict or set(counts) != set(allowed):
+        return unavailable
+    safe = {}
+    total = 0
+    for stage, outcomes in allowed.items():
+        row = counts[stage]
+        if type(row) is not dict or set(row) != set(outcomes):
+            return unavailable
+        if any(type(count) is not int or not 0 <= count <= 4096 for count in row.values()):
+            return unavailable
+        safe[stage] = {outcome: row[outcome] for outcome in sorted(outcomes)}
+        total += sum(row.values())
+    if total != value["event_count"]:
+        return unavailable
+    return {**value, "stage_outcome_counts": safe}
+
+
+def _capture_receipt_stage_diagnostic_safely(*, observer, raw_dir, writers_dead, enabled):
+    result = {
+        "schema": "spec025.receipt-verification-stages.v1",
+        "status": "unavailable",
+        "acceptance_input_changed": False,
+    }
+    if enabled is not True:
+        return {**result, "status": "not_enabled"}
+    if writers_dead is not True:
+        return {**result, "reason": "writers_not_confirmed_dead"}
+    try:
+        if observer is None or Path(raw_dir).resolve() != (
+            Path(raw).resolve() / "receipt-verification"
+        ):
+            return {**result, "reason": "context_invalid"}
+        epochs = {
+            role: _receipt_stage_epoch_summary(
+                observer.read_api_observation(raw_dir, role=role, writers_dead=True), role, observer
+            )
+            for role in ("api_a", "api_b")
+        }
+        complete = sum(row["observer_status"] == "complete" for row in epochs.values())
+        return {
+            **result,
+            "status": "complete" if complete == 2 else "partial" if complete else "unavailable",
+            "epochs": epochs,
+        }
+    except BaseException:
+        return {**result, "reason": "observer_unavailable"}
+
+
 def _enter_guarded_postgres_context(context, fixtures_module):
     fixtures_module._cao_private_pg_teardown_permitted = True
     try:
@@ -888,6 +1075,9 @@ barrier_resolved = False
 
 try:
     admit("initial")
+    if receipt_stage_context is not None:
+        _create_private_observer_directory(receipt_stage_context["bootstrap_root"])
+        _create_private_observer_directory(receipt_stage_context["raw_dir"])
     sys.path.insert(0, str(repo))
     sys.path.insert(0, str(repo / "src"))
     import test.fixtures.cao_server as cao_server_fixture
@@ -1167,6 +1357,17 @@ try:
         env = cao_server_fixture._subprocess_env(
             home, api_port, extra=extra, allowed_external_credentials=approved
         )
+        env["PYTHONPATH"] = _api_pythonpath_for_receipt_observer(
+            observer=receipt_stage_observer,
+            bootstrap_root=(
+                receipt_stage_context["bootstrap_root"] if receipt_stage_context else None
+            ),
+            raw_dir=receipt_stage_context["raw_dir"] if receipt_stage_context else None,
+            repo=repo,
+            source_hashes=sourcepins,
+            role=role,
+            existing_pythonpath=env.get("PYTHONPATH", ""),
+        )
         log_path = raw / (role + ".private")
         log = open_private_log(log_path)
         worker = ApiWorkerController(
@@ -1195,6 +1396,10 @@ try:
         if info is None or info[0].uid != os.getuid() or info[2] == "Z":
             raise RuntimeError("api_process_identity_unavailable")
         attempt["identity"] = info[0]
+        if receipt_stage_context is not None and not _receipt_stage_api_ready(
+            receipt_stage_context["raw_dir"], role
+        ):
+            raise RuntimeError("receipt_stage_api_bootstrap_not_ready")
         return wrapped
 
     admit("api_start")
@@ -1992,6 +2197,7 @@ try:
             )
         except HTTPStatusError as exc:
             receipt["last_output_http_status"] = exc.status_code
+            receipt["last_output_turn_state"] = exc.turn_state
             if exc.status_code != 202:
                 raise
             receipt["last_output_pending_observations"] = (
@@ -2417,6 +2623,13 @@ finally:
     )
     receipt["api_launches_confirmed_dead_before_postgres_teardown"] = api_processes_dead
     receipt["api_cleanup"] = api_stop_calls_succeeded and api_processes_dead
+    if receipt_stage_observer is not None:
+        receipt["receipt_verification_diagnostic"] = _capture_receipt_stage_diagnostic_safely(
+            observer=receipt_stage_observer,
+            raw_dir=(receipt_stage_context["raw_dir"] if receipt_stage_context else None),
+            writers_dead=api_processes_dead,
+            enabled=receipt_stage_observer_enabled,
+        )
     if not api_processes_dead:
         failures.add("api_process_identity_unconfirmed")
     for index, candidate in enumerate(distinct_servers):

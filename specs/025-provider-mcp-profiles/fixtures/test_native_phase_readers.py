@@ -16,7 +16,17 @@ SECRET = "private-never-export"
 
 
 @contextmanager
-def api(body, delay=0, drip=False, encoded=False, state=None):
+def api(
+    body,
+    delay=0,
+    drip=False,
+    encoded=False,
+    state=None,
+    status=200,
+    extra_headers=(),
+    send_length=True,
+    content_type="application/json",
+):
     stopped = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
@@ -27,10 +37,15 @@ def api(body, delay=0, drip=False, encoded=False, state=None):
             content = body
             if state is not None and "/output" not in self.path:
                 content = json.dumps(state() if callable(state) else state).encode()
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(content)))
+            self.send_response(status)
+            if send_length:
+                self.send_header("Content-Length", str(len(content)))
+            if content_type is not None:
+                self.send_header("Content-Type", content_type)
             if encoded:
                 self.send_header("Content-Encoding", "gzip")
+            for name, value in extra_headers:
+                self.send_header(name, value)
             self.end_headers()
             try:
                 if drip:
@@ -159,6 +174,142 @@ class ReaderTests(unittest.TestCase):
         with api(b"{}", encoded=True) as url:
             with self.assertRaisesRegex(ValueError, "http_framing"):
                 self.make(url).read_state("abc12345", time.monotonic() + 2)
+
+    def test_http_409_exposes_only_allowlisted_turn_state(self):
+        for state in ("verified", "reconcile", "cancelling", "cancelled"):
+            body = json.dumps(
+                {
+                    "detail": {
+                        "state": state,
+                        "generation": SECRET,
+                        "reason": SECRET,
+                        "unexpected": {"receipt_nonce": SECRET},
+                    }
+                }
+            ).encode()
+            with self.subTest(state=state), api(body, status=409) as url:
+                try:
+                    readers.http_json_bytes(
+                        url,
+                        "/terminals/abc/output?mode=last",
+                        time.monotonic() + 2,
+                        8192,
+                    )
+                except readers.HTTPStatusError as caught:
+                    # unittest.assertRaises clears traceback frames on exit.
+                    # Inspect the actual exception before that can hide data.
+                    error = caught
+                    traceback = error.__traceback__
+                    reader_locals = []
+                    while traceback is not None:
+                        if traceback.tb_frame.f_code.co_name == "http_json_bytes":
+                            reader_locals.append(repr(traceback.tb_frame.f_locals))
+                        traceback = traceback.tb_next
+                else:
+                    self.fail("409 did not raise HTTPStatusError")
+                self.assertEqual(error.status_code, 409)
+                self.assertEqual(error.turn_state, state)
+                self.assertEqual(error.args, ("http_status",))
+                self.assertEqual(str(error), "http_status")
+                self.assertNotIn(SECRET, repr(error) + repr(vars(error)))
+                self.assertIsNone(error.__context__)
+                self.assertIsNone(error.__cause__)
+                self.assertTrue(reader_locals)
+                self.assertNotIn(SECRET, "".join(reader_locals))
+
+    def test_http_409_malformed_unknown_and_unframed_details_keep_status(self):
+        responses = (
+            (b'{"detail":{"state":"unknown"}}', (), True, None, 8192),
+            (
+                b'{"detail":{"state":"reconcile","generation":"' + SECRET.encode() + b'"',
+                (),
+                True,
+                None,
+                8192,
+            ),
+            (
+                b'{"detail":{"state":"verified","state":"reconcile"}}',
+                (),
+                True,
+                None,
+                8192,
+            ),
+            (b"x" * 4097, (), True, None, 8192),
+            (
+                b'{"detail":{"state":"verified"}}',
+                (("X-Receipt", "one"), ("x-receipt", "two")),
+                True,
+                None,
+                8192,
+            ),
+            (
+                b'{"detail":{"state":"verified"}}',
+                (("Transfer-Encoding", "chunked"),),
+                True,
+                None,
+                8192,
+            ),
+            (b'{"detail":{"state":"verified"}}', (), False, None, 8192),
+            (
+                b'{"detail":{"state":"verified"}}',
+                (("Content-Length", "31"),),
+                True,
+                None,
+                8192,
+            ),
+            (b'{"detail":{"state":"verified"}}', (), True, "text/plain", 8192),
+            (b'{"detail":{"state":"verified"}}', (), True, None, 8),
+        )
+        for body, headers, send_length, content_type, wire_limit in responses:
+            with self.subTest(headers=headers, send_length=send_length, wire_limit=wire_limit):
+                with api(
+                    body,
+                    status=409,
+                    extra_headers=headers,
+                    send_length=send_length,
+                    content_type=content_type,
+                ) as url:
+                    with self.assertRaises(readers.HTTPStatusError) as caught:
+                        readers.http_json_bytes(
+                            url,
+                            "/terminals/abc/output?mode=last",
+                            time.monotonic() + 2,
+                            wire_limit,
+                        )
+                self.assertEqual(caught.exception.status_code, 409)
+                self.assertIsNone(caught.exception.turn_state)
+                self.assertEqual(caught.exception.args, ("http_status",))
+                self.assertNotIn(SECRET, repr(caught.exception) + repr(vars(caught.exception)))
+                self.assertIsNone(caught.exception.__context__)
+
+    def test_non_409_http_errors_keep_legacy_status_and_no_turn_state(self):
+        with api(b'{"detail":{"state":"verified"}}', status=202) as url:
+            with self.assertRaises(readers.HTTPStatusError) as caught:
+                readers.http_json_bytes(
+                    url,
+                    "/terminals/abc/output?mode=last",
+                    time.monotonic() + 2,
+                    8192,
+                )
+        self.assertEqual(caught.exception.status_code, 202)
+        self.assertIsNone(caught.exception.turn_state)
+        self.assertEqual(caught.exception.args, ("http_status",))
+
+    def test_409_optional_body_read_keeps_original_deadline(self):
+        body = b'{"detail":{"state":"verified"}}'
+        with api(body, delay=0.5, status=409) as url:
+            started = time.monotonic()
+            with self.assertRaises(readers.HTTPStatusError) as caught:
+                readers.http_json_bytes(
+                    url,
+                    "/terminals/abc/output?mode=last",
+                    started + 0.15,
+                    8192,
+                )
+            elapsed = time.monotonic() - started
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIsNone(caught.exception.turn_state)
+        self.assertLess(elapsed, 0.4)
 
     def test_ownership_and_expired_deadline_prevent_io(self):
         for verify, stop in (

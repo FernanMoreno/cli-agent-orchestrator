@@ -194,3 +194,6 @@ Actualización compartida2026-10-26: T156 registra inicialización cancelada del
 
 
 Diagnóstico compartido2026-10-26: T157 ejecutó v1 mixto real en70c1 con526runtime/11artefactos nuevos: preguntas/respuestas/ACK, mensaje, AG-UI e identidades/reinicio exactos, pero **resultado final FAILED** tras53HTTP202→409.99pruebas/133controles y generación auxiliar real PASS no acreditan ese resultado. Estado concreto del409 y causa sin demostrar; no repetir sin reproducción/observación útil. Limpieza completa y propietario PostgreSQL cerrado, fuentes/credenciales OpenCode intactas, arquitectura5/0. No cierra gates de OpenCode/Codex/Claude/global. [Recibos y siguiente límite](../specs/025-provider-mcp-profiles/validation-t157.md).
+
+
+Actualización compartida2026-10-26: T158 corrige una carrera local pending→verified al leer LAST mediante una sola lectura ligada a la generación; mantiene texto vacío válido, ausencia/sustitución/cancelación cerradas y errores tipados. Añade diagnóstico409por enum y observer API de etapas opt-in/default-off, sin reenvío al modelo.215pruebas finales pasan, arquitectura5/0, PostgreSQL cerrado, GOClaude/Luna y Obsidian. Fallos del lanzador/fixture reproducidos y corregidos sin relajar controles. Causa realT157 y aceptación nativa/global siguen abiertas. [Evidencia y próximo recorrido](../specs/025-provider-mcp-profiles/validation-t158.md).

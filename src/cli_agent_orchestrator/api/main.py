@@ -5401,14 +5401,43 @@ async def get_terminal_output(
         # get_output does a blocking tmux capture-pane plus provider regex
         # extraction over the scrollback — run it off the loop so a large
         # transcript can't stall the whole server.
-        output = await asyncio.to_thread(terminal_service.get_output, terminal_id, mode)
-        return TerminalOutputResponse(output=output, mode=mode)
-    except TurnResultUnavailableError as e:
-        from cli_agent_orchestrator.services.turn_recovery_service import get_turn
+        try:
+            output = await asyncio.to_thread(terminal_service.get_output, terminal_id, mode)
+        except TurnResultUnavailableError as unavailable:
+            from cli_agent_orchestrator.services.turn_recovery_service import get_turn
 
-        turn = await asyncio.to_thread(get_turn, terminal_id)
-        code = 409 if turn["state"] in {"verified", "reconcile", "cancelling", "cancelled"} else 202
-        raise HTTPException(status_code=code, detail=turn) from e
+            turn = await asyncio.to_thread(get_turn, terminal_id)
+            generation = turn.get("generation")
+            if (
+                mode == OutputMode.LAST
+                and turn["state"] == "verified"
+                and type(generation) is str
+                and re.fullmatch(r"[0-9a-f]{32}", generation)
+            ):
+                # A verifier can settle after the first unavailable read. Read
+                # its retained public result once, bound to that generation;
+                # a replacement turn must not satisfy this older observation.
+                try:
+                    output = await asyncio.to_thread(
+                        terminal_service.get_output,
+                        terminal_id,
+                        mode,
+                        expected_generation=generation,
+                    )
+                except TurnResultUnavailableError as latest:
+                    unavailable = latest
+                    turn = await asyncio.to_thread(get_turn, terminal_id)
+                else:
+                    return TerminalOutputResponse(output=output, mode=mode)
+            code = (
+                409
+                if turn["state"] in {"verified", "reconcile", "cancelling", "cancelled"}
+                else 202
+            )
+            raise HTTPException(status_code=code, detail=turn) from unavailable
+        return TerminalOutputResponse(output=output, mode=mode)
+    except HTTPException:
+        raise
     except OutputExtractionError as e:
         # Ordered before the ValueError arm it subclasses, same as run_step: the
         # terminal and the route both resolved -- only the response marker was

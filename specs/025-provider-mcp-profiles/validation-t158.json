@@ -1,0 +1,141 @@
+{
+  "task": "T158",
+  "date": "2026-10-26",
+  "base_head": "1cffee9cdad4266958d16de7f948a74d469ea6f4",
+  "status": "offline_fix_and_diagnostic_instrumentation_validated",
+  "native_acceptance": false,
+  "actual_t157_cause": "unproven",
+  "red": {
+    "failed": 3,
+    "passed": 8,
+    "seconds": 29.73,
+    "first_incorrect_boundary": "first LAST unavailable snapshot followed by a separately committed verified snapshot returns409 despite retained result"
+  },
+  "focused_api": {
+    "passed": 20,
+    "seconds": 30.56
+  },
+  "regression": {
+    "initial_available_mib": 12370,
+    "selected_test_files": [
+      "specs/025-provider-mcp-profiles/fixtures/test_native_phase_readers.py",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_human_receipt_diagnostics.py",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_human_launcher.py",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_collaboration_launcher.py",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_human_worker.py",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_human_contract.py",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_collaboration_contract.py",
+      "test/live_provider/test_receipt_verification_observer.py",
+      "test/api/test_verified_output_publication.py",
+      "test/api/test_turn_recovery_api.py",
+      "test/services/test_turn_recovery.py",
+      "test/services/test_turn_receipt_delivery.py",
+      "test/services/test_turn_receipt_canonicalization.py",
+      "test/api/test_api_endpoints.py::TestGetTerminalOutput"
+    ],
+    "source_sha256": {
+      "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+      "src/cli_agent_orchestrator/services/terminal_service.py": "05f8e8451e2d55927308e972b239b94daae6ce5a48cad495e131509450ed23f9",
+      "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+      "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+      "src/cli_agent_orchestrator/services/flow_service.py": "81f489f3d5611ce404c845b46fc6b99434c4e47dee8f8568c78a8f9abc3204d0",
+      "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+      "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+      "src/cli_agent_orchestrator/api/main.py": "2f13006a92a913a98e5c0efce7fabdcb91c01d6b3cc3304f2afc5ace32dc3eb8",
+      "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+      "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+      "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+      "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52",
+      "specs/025-provider-mcp-profiles/fixtures/native_phase_readers.py": "2e4b6b9b9a82de58dbde3808bac481fe65d6b853075acf872162680de230c731",
+      "specs/025-provider-mcp-profiles/fixtures/run_native_v1_human.py": "8d87c86c9cfc1b137bf88a3d7afea435195f4ca3995694faf4607b74fc98e441",
+      "test/live_provider/receipt_verification_observer.py": "156328015547800c25050e98c64868bb4be81703f3762631f3440eb6ff58e7c8"
+    },
+    "identity_verified": true,
+    "groups": [
+      {
+        "group": "spec",
+        "returncode": 0
+      },
+      {
+        "group": "project",
+        "returncode": 0
+      }
+    ],
+    "pytest_returncode": 0,
+    "bootstrap_targets_closed": true,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "elapsed_seconds": 135.618,
+    "sources_unchanged": true
+  },
+  "changed_files_sha256": {
+    "src/cli_agent_orchestrator/api/main.py": "2f13006a92a913a98e5c0efce7fabdcb91c01d6b3cc3304f2afc5ace32dc3eb8",
+    "test/api/test_verified_output_publication.py": "e7bfaba6df2c2549bce35d0293d4c66a16c82f8bfeb92c6804960b49dc4dc82e",
+    "specs/025-provider-mcp-profiles/fixtures/native_phase_readers.py": "2e4b6b9b9a82de58dbde3808bac481fe65d6b853075acf872162680de230c731",
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v1_human.py": "8d87c86c9cfc1b137bf88a3d7afea435195f4ca3995694faf4607b74fc98e441",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_phase_readers.py": "0f268f432f0b21a394e6257d1d74373b44362702876b9083c86b01bae794c6c8",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_human_launcher.py": "4889cb75251f5995716380f649981406626f489860d54d9fc3bc921d6c9aac03",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_human_receipt_diagnostics.py": "0f10b60511f1cc95b6fc7466ba485dfb9aa1abfb9ce67357f71dec030eb82440"
+  },
+  "groups": [
+    {
+      "scope": "native fixtures",
+      "passed": 102,
+      "warnings": 4,
+      "seconds": 32.17
+    },
+    {
+      "scope": "API/services/receipt observer",
+      "passed": 113,
+      "warnings": 5,
+      "seconds": 86.98
+    }
+  ],
+  "preserved_failed_attempts": [
+    "initial RED collection error: OutputMode import corrected before validRED",
+    "initial GREEN fixture missing parameter decorator corrected; production unchanged",
+    "integrated4subcase failures/102PASS/43setup errors: assertRaises clears traceback; global runtime-only config overrides project migration home",
+    "split diagnostic43projectPASS;4subcase failures preserved, then direct exception-frame inspection corrected"
+  ],
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "composition_review": {
+    "changed_subsystems": [
+      "API LAST output publication",
+      "private native diagnostic HTTP reader",
+      "optional native-human API epoch observation"
+    ],
+    "invariants": [
+      "one read bound to observed verified generation; no native/model retry",
+      "empty retained string valid, missing text and replacement/cancellation closed",
+      "FULL and existing typed status contracts preserved",
+      "409 diagnostics export enum only; body/framing/deadline failures do not become pending",
+      "observer default-off/API-only; collect only after writer death; no native/MCP bootstrap inheritance",
+      "same75/180seconds and6144MiB, immutable receipts/gates"
+    ],
+    "real_dependencies": "PostgreSQL owned parent verified; separate spec runtime bootstrap and project migration fixture subprocesses; all borrowers exit before exact owner cleanup",
+    "source_review": "API -> get_turn -> expected_generation get_output -> retained result; observer integration verified against existing helper +23 tests; structural graph63nodes173edges checked against source",
+    "architecture": "5 contracts kept,0 broken; no migrations/dependency-direction change",
+    "test_result": "102 spec +113 project =215 PASS;9 warnings; source17 and changed7 verified",
+    "review": "Luna API bounded GO; Claude00814fad47a44a65a43c529895f3882e bounded GO; optional coverage/memoryview robustness nits do not block tested observation",
+    "graphify_refresh": "Readonly impact/source verified; preserve12 foreign generated tracked changes; no canonical regeneration",
+    "limits": [
+      "T157 actual409 cause remains unproven",
+      "real native acceptance and global/profile/Work/T143 gates remain open",
+      "retained result fast path still reads monitor/backend history before recovery; no universal zero-I/O claim",
+      "existing observer23 tests and root helper review establish bounded instrumentation, not model HTTP schema coverage"
+    ]
+  },
+  "peer_jobs": [
+    "00814fad47a44a65a43c529895f3882e"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261026-caos-verified-output-publication",
+    "lint_exit": 0
+  },
+  "private_evidence_root": "/home/felni/.cache/caos-git-publish-20261020/t158-output-verification-boundary"
+}
