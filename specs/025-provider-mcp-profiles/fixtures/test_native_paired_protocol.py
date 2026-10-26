@@ -480,3 +480,99 @@ def test_preflight_cannot_admit_models_without_preservation_and_catalog(fault):
     elif fault is not None:
         proof[fault] = False
     assert journey.preflight_acceptance(proof) is (fault is None)
+
+
+def test_confirmed_terminal_delete_is_not_repeated_and_keeps_other_ids(monkeypatch):
+    import run_native_paired_worker as journey
+
+    server = SimpleNamespace(url="http://127.0.0.1:19002")
+    calls = []
+    monkeypatch.setattr(
+        journey, "api", lambda *args, **kwargs: calls.append(args) or {"success": True}
+    )
+    retired = set()
+    journey.retire_terminal(server, "deadbeef", retired)
+    journey.retire_terminal(server, "deadbeef", retired)
+    assert len(calls) == 1
+    journey.retire_terminal(server, "feedbeef", retired)
+    assert len(calls) == 2
+    assert retired == {(server.url, "deadbeef"), (server.url, "feedbeef")}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"success": False}, {"success": 1}, {"success": True, "error": "deferred"}, {}, None],
+)
+def test_terminal_delete_requires_strict_positive_structured_receipt(payload):
+    import run_native_paired_worker as journey
+
+    retired = set()
+    with pytest.raises(protocol.HarnessError, match="terminal_retirement_receipt_invalid"):
+        journey.record_terminal_retirement(
+            SimpleNamespace(url="http://127.0.0.1:19002"), "deadbeef", payload, retired
+        )
+    assert retired == set()
+
+
+@pytest.mark.parametrize("fault", [None, "task", "terminal", "stop"])
+def test_cancel_retirement_is_bound_to_the_stopped_worker(fault):
+    import run_native_paired_worker as journey
+
+    server = SimpleNamespace(url="http://127.0.0.1:19002")
+    payload = {
+        "task_id": "task-1",
+        "state": "cancelled",
+        "result": {"terminal_id": "deadbeef", "worker_stopped": True},
+    }
+    if fault == "task":
+        payload["task_id"] = "foreign-task"
+    elif fault == "terminal":
+        payload["result"]["terminal_id"] = "feedbeef"
+    elif fault == "stop":
+        payload["result"]["worker_stopped"] = False
+    retired = set()
+    if fault is None:
+        journey.record_cancelled_worker(server, "deadbeef", "task-1", payload, retired)
+        assert retired == {(server.url, "deadbeef")}
+    else:
+        with pytest.raises(protocol.HarnessError, match="native_cancel_stop_not_proven"):
+            journey.record_cancelled_worker(server, "deadbeef", "task-1", payload, retired)
+        assert retired == set()
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "ansi", "status", "turn_state", "generation", "identity", "no_model_output"]
+)
+def test_cancellation_reads_status_from_terminal_and_state_from_real_turn_contract(
+    monkeypatch, fault
+):
+    import run_native_paired_worker as journey
+
+    from cli_agent_orchestrator.services import remote_terminal_service as remote
+    from cli_agent_orchestrator.services import turn_recovery_service as recovery
+
+    monkeypatch.setattr(remote, "placement", lambda _: None)
+    monkeypatch.setattr(recovery, "get_terminal_metadata", lambda _: {"provider": "opencode_cli"})
+    monkeypatch.setattr(
+        recovery, "get_terminal_turn_receipt", lambda _: {"generation": "a" * 32, "phase": "sent"}
+    )
+    monkeypatch.setattr(recovery, "get_terminal_turn_recovery", lambda *_: None)
+    turn = recovery.get_turn("deadbeef")
+    assert "status" not in turn and turn["state"] == "pending"
+    metadata = {"id": "deadbeef", "provider": "opencode_cli", "status": "processing"}
+    output = "RESULT: 468911\n1. ..."
+    if fault == "ansi":
+        output = "RES\x1b[31mULT: 468911\x1b[0m\n1. ..."
+    elif fault == "status":
+        metadata["status"] = "completed"
+    elif fault == "turn_state":
+        turn["state"] = "verified"
+    elif fault == "generation":
+        turn["generation"] = None
+    elif fault == "identity":
+        turn["terminal_id"] = "feedbeef"
+    elif fault == "no_model_output":
+        output = "Start with RESULT: plus the sum of 270584 and 198327"
+    assert journey.active_native_cancellation_barrier("deadbeef", metadata, turn, output) is (
+        fault in (None, "ansi")
+    )

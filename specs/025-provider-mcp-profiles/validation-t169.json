@@ -71,6 +71,19 @@
       "model_inference_started": false,
       "owned_cleanup_confirmed": true,
       "historical_timeout_cause": "not_demonstrated"
+    },
+    {
+      "head": "29315bdc26930d42cf2238bce3ca51b680df31a2",
+      "error": "terminal_retirement_not_confirmed",
+      "seconds": 204.085,
+      "production_pairing_verified": true,
+      "native_preflight_passed": true,
+      "mcp_catalog_exact_twelve": true,
+      "model_inference_started": false,
+      "original_success": false,
+      "original_receipt_sha256": "ae9af5629ac072f5353b9ffc4b76b6ca9e64605907abd1a2ac740f413f4d7219",
+      "recovery_scope": "closure_only_not_acceptance",
+      "owned_cleanup_confirmed": true
     }
   ],
   "native_paired_acceptance": "pending",

@@ -96,6 +96,59 @@ def api(server, method, route, *, expected=200, deadline=None, **kwargs):
     )
 
 
+def record_terminal_retirement(server, terminal_id: str, payload, retired: set) -> None:
+    """Only a bound successful DELETE response can retire this operation locally."""
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"success"}
+        or payload["success"] is not True
+    ):
+        raise protocol.HarnessError("terminal_retirement_receipt_invalid")
+    retired.add((server.url, terminal_id))
+
+
+def retire_terminal(server, terminal_id: str, retired: set) -> None:
+    if (server.url, terminal_id) in retired:
+        return
+    payload = api(server, "DELETE", f"/terminals/{terminal_id}")
+    record_terminal_retirement(server, terminal_id, payload, retired)
+
+
+def record_cancelled_worker(server, terminal_id: str, task_id: str, payload, retired: set) -> None:
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if (
+        not isinstance(result, dict)
+        or payload.get("task_id") != task_id
+        or payload.get("state") != "cancelled"
+        or result.get("worker_stopped") is not True
+        or result.get("terminal_id") != terminal_id
+    ):
+        raise protocol.HarnessError("native_cancel_stop_not_proven")
+    retired.add((server.url, terminal_id))
+
+
+def active_native_cancellation_barrier(
+    terminal_id: str, metadata: dict, turn: dict, output
+) -> bool:
+    """Terminal status and durable turn state are distinct production contracts."""
+    from cli_agent_orchestrator.utils.text import strip_terminal_escapes
+
+    output = strip_terminal_escapes(output) if isinstance(output, str) else None
+    generation = turn.get("generation")
+    return (
+        metadata.get("id") == terminal_id
+        and metadata.get("provider") == "opencode_cli"
+        and metadata.get("status") == "processing"
+        and turn.get("terminal_id") == terminal_id
+        and turn.get("provider") == "opencode_cli"
+        and turn.get("state") == "pending"
+        and isinstance(generation, str)
+        and re.fullmatch(r"[0-9a-f]{32}", generation) is not None
+        and isinstance(output, str)
+        and "RESULT: 468911" in output
+    )
+
+
 def runtime_configuration(targets, directory: Path):
     """Serialize the selected runtime targets, including an adopted peer store.
 
@@ -414,7 +467,17 @@ def acceptance(receipt: dict) -> bool:
 
 
 async def _tasks(
-    client, source, target, target_home, project, identity, caller_id, receipt, ids, launch_binding
+    client,
+    source,
+    target,
+    target_home,
+    project,
+    identity,
+    caller_id,
+    receipt,
+    ids,
+    launch_binding,
+    retired,
 ):
     from cli_agent_orchestrator.services.worktree_service import worktree_path_for
 
@@ -472,20 +535,18 @@ async def _tasks(
                 receipt["native_success_exact"] = True
                 break
             if index == 1:
-                turn = await asyncio.to_thread(api, target, "GET", f"/terminals/{terminal_id}/turn")
+                turn = metadata.get("turn")
+                if not isinstance(turn, dict):
+                    raise protocol.HarnessError("native_turn_projection_invalid")
                 output = await asyncio.to_thread(
                     api, target, "GET", f"/terminals/{terminal_id}/output", params={"mode": "full"}
                 )
-                if turn.get("status") == "processing" and "RESULT: 468911" in output.get(
-                    "output", ""
+                if active_native_cancellation_barrier(
+                    terminal_id, metadata, turn, output.get("output")
                 ):
                     receipt["active_native_cancel_observed"] = True
                     cancelled = await client.call("cancel_local_cao_task", {"task_id": task_id})
-                    if (
-                        cancelled.get("state") != "cancelled"
-                        or cancelled.get("result", {}).get("worker_stopped") is not True
-                    ):
-                        raise protocol.HarnessError("native_cancel_stop_not_proven")
+                    record_cancelled_worker(target, terminal_id, task_id, cancelled, retired)
                     receipt["cancelled_worker_stopped"] = True
                     break
             await asyncio.sleep(0.2)
@@ -498,7 +559,7 @@ async def _tasks(
         # Successful workers remain owned terminals; cancelled workers were
         # already retired by the target's production cancellation boundary.
         if index == 0:
-            await asyncio.to_thread(api, target, "DELETE", f"/terminals/{terminal_id}")
+            await asyncio.to_thread(retire_terminal, target, terminal_id, retired)
         if expected_worktree.exists():
             raise protocol.HarnessError("native_worker_worktree_retained")
 
@@ -547,7 +608,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         raise protocol.HarnessError("operator_state_changed_before_run")
     root = journey._private_opencode_root()
     contexts, targets, servers, ids = [], [], [], []
-    failures, owned = set(), set()
+    failures, owned, retired = set(), set(), set()
     sid = socket_id = socket_path = None
     tmux = TmuxClient()
     previous_tmux = tmux.server
@@ -749,7 +810,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
             time.sleep(0.2)
         if not ready:
             raise protocol.HarnessError("native_preflight_not_ready_within_75s")
-        api(target, "DELETE", f'/terminals/{preflight["id"]}')
+        retire_terminal(target, preflight["id"], retired)
         receipt["native_preflight_passed"] = True
 
         async def coordinate():
@@ -774,6 +835,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
                             receipt,
                             ids,
                             launch_binding,
+                            retired,
                         )
                 receipt["mcp_client_closed"] = True
             finally:
@@ -819,12 +881,16 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         except Exception:
             failures.add("owner_context_write_failed")
         for server, terminal_id in reversed(ids):
+            if (server.url, terminal_id) in retired:
+                continue
             try:
                 # Missing means the production cancellation already retired it.
                 import requests
 
                 result = requests.delete(server.url + f"/terminals/{terminal_id}", timeout=60)
-                if result.status_code not in (200, 404):
+                if result.status_code == 200:
+                    record_terminal_retirement(server, terminal_id, result.json(), retired)
+                elif result.status_code != 404:
                     failures.add("terminal_retirement_not_confirmed")
             except Exception:
                 failures.add("terminal_retirement_failed")
@@ -953,6 +1019,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         os.environ.clear()
         os.environ.update(original_env)
         tmux.server = previous_tmux
+        receipt["confirmed_terminal_retirements"] = len(retired)
         receipt["cleanup_failures"] = sorted(failures)
         receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
         receipt["success"] = (
