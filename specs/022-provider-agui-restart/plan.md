@@ -6,6 +6,16 @@
 
 ## Summary
 
+CX-07: add a closed wait_started observation before awaiting the service and
+pair it with an outstanding client call/no wait_returned barrier. First exercise
+real MCP functions over real sockets/PG, record the actual ConnectionError from
+the interrupted request before replacement, then verify same-group recovery and
+unique answer/delivery/ACK events. Add a default-off native Codex restart-during-
+wait case using the same worker and prompt. Exact child crash/reap, original and
+replacement wait entry PIDs and a single native wait invocation attest recovery.
+Graph lacks these current harness nodes; inspect worker→service and
+native-runner→worker→receipt paths directly. No graph rebuild or product change.
+
 2026-10-26 diagnostic increment: the failed current Codex receipt collapsed
 seven waits to `unavailable` and deleted the private transcript after verified
 cleanup. Reproduce that information loss with the production MCP error mapper,

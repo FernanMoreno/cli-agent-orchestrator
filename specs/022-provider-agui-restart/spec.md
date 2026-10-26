@@ -85,6 +85,19 @@ As a maintainer, I need one bounded acceptance journey for each real Codex, Clau
 
 ## Coverage boundary
 
+### CX-07 in-flight HTTP interruption
+
+A separate opt-in Codex case must observe a positive-duration wait entering the
+original owned API worker, with the native wait call still in progress and no
+successful wait return. Crash/reap that exact child and prove the pending
+request did not return before starting its replacement on the same port.
+The same native MCP wait invocation must reach the replacement for the same
+group and return the exact receipts later acknowledged once. Private worker
+observations contain only group ID, worker PID and wait duration. The existing
+75-second provider budget, HTTP wait budget and worker readiness limit remain.
+Model-free real-socket/PostgreSQL fault injection and native evidence remain
+separately scoped; neither closes other providers or global acceptance.
+
 ### Diagnostic distinction after a failed wait (2026-10-26)
 
 The sanitized MCP result must distinguish the existing fixed `unavailable`

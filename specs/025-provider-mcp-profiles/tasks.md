@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T172 [US4] [CX-07] Add private wait-entry/PID observation and exact owned API crash/reap; verify real-socket/PG in-flight interruption with witnessed ConnectionError and no duplicate delivery/ACK. Add default-off native Codex same-invocation recovery acceptance, preserving all budgets, snapshots, source/operator/cleanup gates. See Spec022 T086–T088; record native outcome separately from 143-contract evidence.
+
 - [x] T171 [US4] [FR149/SC133] Reproduce transient explicit-wait connection failure at production MCP boundary; add bounded wait-only reconnect with unchanged overall deadline, frozen capability/group/cursor, decreasing attempt/server waits, no Timeout/HTTP/mutator retry. Validate fake-time controls, real-PG replay idempotency, independent review, composition and fresh native outcome separately.137 contracts pass; Codex CX-06 nativePASS50.23s on9d5ba9f8. Internal retry count/in-flight HTTP interruption not attested by native receipt; CX-07 remains open.
 
 ## Phase 1 — scope and evidence

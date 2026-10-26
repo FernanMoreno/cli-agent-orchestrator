@@ -491,6 +491,142 @@ def test_worker_binding_rejects_wrong_host_or_port_before_importing_application(
         run_worker(43127)
 
 
+def test_inflight_native_mode_is_explicit_and_codex_only():
+    assert journey._parse_args(["codex"]).restart_during_wait is False
+    args = journey._parse_args(["codex", "--agui-restart", "--restart-during-wait"])
+    assert args.restart_during_wait and args.agui_restart
+    for argv in (
+        ["codex", "--restart-during-wait"],
+        ["claude_code", "--agui-restart", "--restart-during-wait"],
+    ):
+        with pytest.raises(SystemExit):
+            journey._parse_args(argv)
+    with pytest.raises(ValueError, match="inflight_wait_requires_codex"):
+        journey.run("codex", restart_during_wait=True)
+
+
+def test_inflight_barrier_and_recovery_require_one_native_wait_and_two_worker_entries(tmp_path):
+    output, audit = tmp_path / "provider.jsonl", tmp_path / "observations.jsonl"
+
+    def native(status):
+        result = {"structuredContent": {"state": "ready"}} if status == "completed" else None
+        output.write_text(
+            json.dumps(
+                {
+                    "type": "item.started" if status == "in_progress" else "item.completed",
+                    "item": {
+                        "id": "private-id",
+                        "type": "mcp_tool_call",
+                        "server": "cao-mcp-server",
+                        "tool": "cao_wait_for_user_answers",
+                        "status": status,
+                        "result": result,
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    native("in_progress")
+    append_observation(
+        audit, {"event": "wait_started", "group_id": "g1", "worker_pid": 1234, "wait_seconds": 20}
+    )
+    assert journey._inflight_wait_entry(output, audit, "g1", 1234)
+    assert not journey._inflight_wait_entry(output, audit, "g1", 5678)
+    assert not journey._inflight_wait_entry(output, audit, "g2", 1234)
+    assert not journey._inflight_wait_recovery(output, audit, "g1", 1234, 5678)
+    append_observation(
+        audit, {"event": "wait_started", "group_id": "g1", "worker_pid": 5678, "wait_seconds": 12}
+    )
+    append_observation(
+        audit,
+        {"event": "wait_returned", "group_id": "g1", "state": "ready", "question_versions": []},
+    )
+    assert not journey._inflight_wait_entry(output, audit, "g1", 1234)
+    native("completed")
+    assert journey._inflight_wait_recovery(output, audit, "g1", 1234, 5678)
+    assert not journey._inflight_wait_recovery(output, audit, "g1", 1234, 1234)
+    with output.open("a") as stream:
+        stream.write(output.read_text().replace("private-id", "second-id"))
+    assert not journey._inflight_wait_recovery(output, audit, "g1", 1234, 5678)
+    safe = journey._safe_provider_receipt(
+        {
+            "inflight_wait_restart_enabled": True,
+            "inflight_wait_interrupted": True,
+            "inflight_wait_recovered": True,
+            "worker_pid": 1234,
+        }
+    )
+    assert safe == {
+        "inflight_wait_restart_enabled": True,
+        "inflight_wait_interrupted": True,
+        "inflight_wait_recovered": True,
+    }
+
+
+def test_wait_started_is_recorded_before_service_returns(tmp_path):
+    import asyncio
+    from test.live_provider.interaction_api_worker import _observe_service
+    from types import SimpleNamespace
+
+    audit = tmp_path / "observations.jsonl"
+
+    async def exercise():
+        release = asyncio.Event()
+
+        async def wait(*args, **kwargs):
+            await release.wait()
+            return SimpleNamespace(group_id="group-1", state="pending", answers=())
+
+        service = SimpleNamespace(
+            create_group=lambda: None, wait_for_answers=wait, acknowledge_answers=lambda: None
+        )
+        _observe_service(service, audit)
+        task = asyncio.create_task(
+            service.wait_for_answers("private-capability", "group-1", timeout_seconds=20)
+        )
+        try:
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert read_observations(audit) == (
+                {
+                    "event": "wait_started",
+                    "group_id": "group-1",
+                    "worker_pid": os.getpid(),
+                    "wait_seconds": 20,
+                },
+            )
+        finally:
+            release.set()
+            await task
+        assert [row["event"] for row in read_observations(audit)] == [
+            "wait_started",
+            "wait_returned",
+        ]
+        assert "private-capability" not in audit.read_text()
+
+    asyncio.run(exercise())
+
+
+def test_wait_started_observation_has_closed_private_shape(tmp_path):
+    path = tmp_path / "observations.jsonl"
+    marker = {
+        "event": "wait_started",
+        "group_id": "group-1",
+        "worker_pid": 1234,
+        "wait_seconds": 20,
+    }
+    append_observation(path, marker)
+    assert read_observations(path) == (marker,)
+    for bad in (
+        {**marker, "receipt": "private"},
+        {**marker, "worker_pid": True},
+        {**marker, "wait_seconds": 31},
+    ):
+        with pytest.raises(ValueError):
+            append_observation(path, bad)
+
+
 def test_api_worker_log_is_created_with_private_permissions(tmp_path: Path) -> None:
     path = tmp_path / "api-worker.log"
     with open_private_log(path) as stream:
@@ -566,6 +702,23 @@ def test_worker_controller_uses_bounded_cold_start_readiness_default(tmp_path: P
     controller = ApiWorkerController(spec, readiness_probe=lambda _process, _timeout: True)
 
     assert controller._readiness_timeout == API_WORKER_READINESS_TIMEOUT_SECONDS == 45.0
+
+
+def test_crash_only_kills_and_reaps_the_live_owned_child(tmp_path):
+    spec = WorkerSpec(command=("python", "-m", "worker"), cwd=tmp_path, env={}, port=43127)
+    events = []
+    process = _FakeProcess(1234, events)
+    controller = ApiWorkerController(
+        spec, popen_factory=lambda *args, **kwargs: process, readiness_probe=lambda *args: True
+    )
+    with pytest.raises(RuntimeError, match="api_worker_not_live"):
+        controller.crash()
+    controller.start()
+    controller.crash()
+    assert events == ["kill:1234", "wait:1234"]
+    assert process.poll() == -9 and controller.process is None
+    with pytest.raises(RuntimeError, match="api_worker_not_live"):
+        controller.crash()
 
 
 def test_http_readiness_rejects_success_received_after_deadline(

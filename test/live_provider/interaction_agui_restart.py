@@ -783,6 +783,17 @@ class ApiWorkerController:
         self.stop()
         self.start()
 
+    def crash(self) -> None:
+        """Inject a crash only into this controller's live Popen child and reap it."""
+        process = self.process
+        if process is None or process.poll() is not None:
+            raise RuntimeError("api_worker_not_live")
+        process.kill()
+        process.wait(timeout=self._stop_timeout)
+        if process.poll() is None:
+            raise RuntimeError("api_worker_cleanup_failed")
+        self.process = None
+
 
 def open_private_log(path: Path) -> TextIO:
     """Open a new private log or append to one created for this run only."""
@@ -900,6 +911,7 @@ def ack_identity_diagnostics(
 
 
 _OBSERVATION_FIELDS = {
+    "wait_started": frozenset({"event", "group_id", "worker_pid", "wait_seconds"}),
     "group_created": frozenset({"event", "group_id", "questions"}),
     "wait_returned": frozenset({"event", "group_id", "state", "question_versions"}),
     "ack_identity": frozenset(
@@ -944,6 +956,16 @@ def _validate_observation(value: object) -> dict[str, object]:
                 or item.get("version", 0) < 1
                 for item in questions
             )
+        ):
+            raise ValueError("invalid_interaction_observation")
+    elif event == "wait_started":
+        if (
+            not isinstance(value.get("group_id"), str)
+            or not value.get("group_id")
+            or type(value.get("worker_pid")) is not int
+            or value["worker_pid"] <= 0
+            or type(value.get("wait_seconds")) is not int
+            or not 0 <= value["wait_seconds"] <= 30
         ):
             raise ValueError("invalid_interaction_observation")
     elif event == "wait_returned":

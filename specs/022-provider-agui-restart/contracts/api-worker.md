@@ -44,4 +44,16 @@ Only production frame names and payload fields are accepted. A parser error, una
 
 ## Ownership and logging
 
+CX-07 adds a private, closed `wait_started` observation with only `event`,
+`group_id`, `worker_pid` and integer `wait_seconds` (0–30), synchronously before
+awaiting the service. It is an entry observation, not proof of successful
+capability validation. Pair it with the matching owned Popen PID, database group,
+an outstanding native wait and no successful return. The opt-in crash method
+kills/reaps only that live Popen child; default stop/restart remain unchanged.
+After reaping, re-read observations to reject a response racing with the crash.
+Recovery requires original/replacement entries, different PIDs, a decreasing
+wait budget, one ready return and one native wait invocation. Public receipts
+retain only interruption/recovery booleans; private observations contain no
+capability, question/answer content or opaque receipt.
+
 The parent records exact child PIDs/process groups at launch and signals only those owned children. It confirms process exit before cleanup. The child writes no prompt, response, database credential, source capability, receipt token, or raw provider output to stdout/stderr. The parent retains detailed logs only under the private run root; sanitized evidence contains bounded status, IDs/identity booleans under the existing receipt policy, and timing/cleanup categories.

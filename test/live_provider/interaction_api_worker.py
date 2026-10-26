@@ -96,6 +96,17 @@ def _observe_service(service: Any, audit_path: Path) -> None:
     wait_for_answers = service.wait_for_answers
 
     async def observed_wait_for_answers(*args: object, **kwargs: object) -> object:
+        group_id = args[1] if len(args) > 1 else kwargs.get("group_id")
+        wait_seconds = kwargs.get("timeout_seconds", args[2] if len(args) > 2 else 0)
+        append_observation(
+            audit_path,
+            {
+                "event": "wait_started",
+                "group_id": group_id,
+                "worker_pid": os.getpid(),
+                "wait_seconds": wait_seconds,
+            },
+        )
         result = await wait_for_answers(*args, **kwargs)
         group_id = _field(result, "group_id")
         result_state = _field(result, "state")

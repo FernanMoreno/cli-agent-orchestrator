@@ -2149,6 +2149,63 @@ def _provider_tool_completed(path: Path, tool_name: str) -> bool:
     )
 
 
+def _inflight_wait_entry(output: Path, audit: Path, group_id: str, worker_pid: int) -> bool:
+    from test.live_provider.interaction_agui_restart import read_observations
+
+    observations = read_observations(audit)
+    calls = [
+        c
+        for c in _provider_event_summary(output)["mcp_tool_calls"]
+        if c["server"] == "cao-mcp-server" and c["tool"] == "cao_wait_for_user_answers"
+    ]
+    entries = [
+        r for r in observations if r["event"] == "wait_started" and r["group_id"] == group_id
+    ]
+    return (
+        len(calls) == 1
+        and calls[0]["status"] == "in_progress"
+        and len(entries) == 1
+        and entries[0]["worker_pid"] == worker_pid
+        and entries[0]["wait_seconds"] > 0
+        and not any(
+            r["event"] == "wait_returned" and r["group_id"] == group_id for r in observations
+        )
+    )
+
+
+def _inflight_wait_recovery(
+    output: Path, audit: Path, group_id: str, original_pid: int, replacement_pid: int
+) -> bool:
+    from test.live_provider.interaction_agui_restart import read_observations
+
+    observations = read_observations(audit)
+    entries = [
+        r for r in observations if r["event"] == "wait_started" and r["group_id"] == group_id
+    ]
+    returned = [
+        r for r in observations if r["event"] == "wait_returned" and r["group_id"] == group_id
+    ]
+    calls = [
+        c
+        for c in _provider_event_summary(output)["mcp_tool_calls"]
+        if c["server"] == "cao-mcp-server" and c["tool"] == "cao_wait_for_user_answers"
+    ]
+    return (
+        original_pid != replacement_pid
+        and len(entries) == 2
+        and [r["worker_pid"] for r in entries] == [original_pid, replacement_pid]
+        and 0 <= entries[1]["wait_seconds"] < entries[0]["wait_seconds"] <= 30
+        and len(returned) == 1
+        and returned[0]["state"] == "ready"
+        and len(calls) == 1
+        and calls[0]["status"] == "completed"
+        and calls[0]["result_present"] is True
+        and calls[0]["error_present"] is False
+        and calls[0].get("mcp_result_error_code") is None
+        and calls[0]["error_code"] is None
+    )
+
+
 def _agui_observation_diagnostics(
     observation_path: Path,
     expected_group_id: str,
@@ -2553,6 +2610,8 @@ def _safe_provider_receipt(result: dict[str, Any]) -> dict[str, Any]:
         "unexpected_question_group",
         "agui_snapshot_identity_mismatch",
         "agui_restart_identity_changed",
+        "inflight_wait_not_pending",
+        "inflight_wait_returned_before_crash",
         "native_provider_not_complete",
         "prompt_not_submitted",
         "model_completed_without_tool",
@@ -2656,6 +2715,9 @@ def _safe_provider_receipt(result: dict[str, Any]) -> dict[str, Any]:
         "agui_identity_stable",
         "agui_projection_redacted",
         "agui_final_acknowledged",
+        "inflight_wait_restart_enabled",
+        "inflight_wait_interrupted",
+        "inflight_wait_recovered",
         "agui_ledger_identity_stable",
         "agui_observation_complete",
         "agui_exact_ack_observed",
@@ -3233,7 +3295,16 @@ def run(
     probe_create_tool: bool = False,
     preserve_unclassified_mcp_error: bool = False,
     agui_restart: bool = False,
+    restart_during_wait: bool = False,
 ) -> dict[str, Any]:
+    if restart_during_wait and (
+        provider_name != "codex"
+        or not agui_restart
+        or diagnose_mcp
+        or probe_create_tool
+        or preserve_unclassified_mcp_error
+    ):
+        raise ValueError("inflight_wait_requires_codex_agui_restart")
     if provider_name == "opencode_cli":
         if not agui_restart or diagnose_mcp or probe_create_tool or preserve_unclassified_mcp_error:
             return {"provider": provider_name, "result": "unsupported_provider"}
@@ -3272,6 +3343,10 @@ def run(
     agui_projection_redacted: bool | None = None
     agui_final_acknowledged: bool | None = None
     agui_restart_completed = False
+    inflight_wait_interrupted = False
+    inflight_wait_recovered = False
+    original_wait_worker_pid = None
+    replacement_wait_worker_pid = None
     expected_agui_questions: dict[str, dict[str, Any]] = {}
     expected_agui_group_id: str | None = None
     changed_environment = (
@@ -3750,6 +3825,18 @@ def run(
                             continue
                         if api_worker is None or api_worker_spec is None:
                             raise RuntimeError("api_worker_not_configured")
+                        if restart_during_wait:
+                            if api_worker.process is None:
+                                raise RuntimeError("api_worker_not_live")
+                            original_wait_worker_pid = api_worker.process.pid
+                            if not _inflight_wait_entry(
+                                output_path,
+                                root / "interaction-observations.jsonl",
+                                expected_agui_group_id,
+                                original_wait_worker_pid,
+                            ):
+                                time.sleep(0.08)
+                                continue
                         forbidden_content = tuple(
                             [question["prompt"] for question in QUESTION_SPECS]
                             + [
@@ -3784,7 +3871,30 @@ def run(
 
                         before_identity = snapshot_identity_map(before_snapshot)
                         phase = "agui_api_restart"
-                        api_worker.restart()
+                        if restart_during_wait:
+                            audit = root / "interaction-observations.jsonl"
+                            if not _inflight_wait_entry(
+                                output_path, audit, expected_agui_group_id, original_wait_worker_pid
+                            ):
+                                shape_error = "inflight_wait_not_pending"
+                                break
+                            api_worker.crash()
+                            from test.live_provider.interaction_agui_restart import (
+                                read_observations,
+                            )
+
+                            if any(
+                                r["event"] == "wait_returned"
+                                and r["group_id"] == expected_agui_group_id
+                                for r in read_observations(audit)
+                            ):
+                                shape_error = "inflight_wait_returned_before_crash"
+                                break
+                            inflight_wait_interrupted = True
+                            api_worker.start()
+                            replacement_wait_worker_pid = api_worker.process.pid
+                        else:
+                            api_worker.restart()
                         agui_restart_count += 1
                         phase = "agui_snapshot_after_restart"
                         after_snapshot = _read_agui_snapshot(
@@ -3951,6 +4061,19 @@ def run(
         else:
             exact_ack_observed = True
             agui_observation_complete = True
+        if (
+            restart_during_wait
+            and inflight_wait_interrupted
+            and expected_agui_group_id is not None
+            and replacement_wait_worker_pid is not None
+        ):
+            inflight_wait_recovered = _inflight_wait_recovery(
+                output_path,
+                root / "interaction-observations.jsonl",
+                expected_agui_group_id,
+                original_wait_worker_pid,
+                replacement_wait_worker_pid,
+            )
         acknowledged = (
             len(rows) == 2
             and {row["client_key"] for row in rows} == set(HUMAN_ANSWERS)
@@ -3959,6 +4082,7 @@ def run(
             and returncode == 0
             and exact_ack_observed
             and agui_observation_complete
+            and (not restart_during_wait or (inflight_wait_interrupted and inflight_wait_recovered))
             and (
                 not agui_restart
                 or (
@@ -4049,6 +4173,9 @@ def run(
                 "raw_provider_output_printed": False,
                 "agent_tool_scope_exact": agent_tool_scope_exact,
                 "agui_restart_enabled": agui_restart,
+                "inflight_wait_restart_enabled": restart_during_wait,
+                "inflight_wait_interrupted": inflight_wait_interrupted,
+                "inflight_wait_recovered": inflight_wait_recovered,
                 "api_worker_restarts": agui_restart_count,
                 "agui_snapshot_count": agui_snapshot_count,
                 "agui_identity_stable": agui_identity_stable,
@@ -4200,10 +4327,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="opt in to production AG-UI snapshots across one owned API-process restart",
     )
+    parser.add_argument(
+        "--restart-during-wait",
+        action="store_true",
+        help="Codex only: crash the owned API while its first native wait is in progress",
+    )
     args = parser.parse_args(argv)
     diagnose_mcp = args.diagnose_mcp or args.diagnose_create_tool
     if diagnose_mcp and args.agui_restart:
         parser.error("--agui-restart cannot be combined with MCP diagnostics")
+    if args.restart_during_wait and (
+        args.provider != "codex"
+        or not args.agui_restart
+        or diagnose_mcp
+        or args.preserve_unclassified_mcp_error
+    ):
+        parser.error("--restart-during-wait requires Codex --agui-restart without diagnostics")
     return args
 
 
@@ -4217,6 +4356,7 @@ def main() -> int:
             probe_create_tool=args.diagnose_create_tool,
             preserve_unclassified_mcp_error=args.preserve_unclassified_mcp_error,
             agui_restart=args.agui_restart,
+            restart_during_wait=args.restart_during_wait,
         )
     )
     if args.provider == "codex" and not diagnose_mcp:
