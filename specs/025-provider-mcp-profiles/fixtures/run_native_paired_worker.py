@@ -94,6 +94,51 @@ def api(server, method, route, *, expected=200, deadline=None, **kwargs):
     )
 
 
+def runtime_configuration(targets, directory: Path):
+    """Serialize the selected runtime targets, including an adopted peer store.
+
+    The general fixture helper returns existing configs for runtime-only targets;
+    replacing a target in that dataclass therefore requires a new descriptor.
+    """
+    selected = {scope: targets[scope] for scope in ("main", "auth", "peer")}
+    if any(
+        target.migration_user is not None or target.migration_secret_file is not None
+        for target in selected.values()
+    ):
+        raise protocol.HarnessError("runtime_targets_required")
+    directory.mkdir(mode=0o700)
+    configuration = directory / "database-config.json"
+    private_json(
+        configuration,
+        {
+            "version": 1,
+            "targets": {
+                scope: {
+                    "host": target.host,
+                    "port": target.port,
+                    "database": target.database,
+                    "user": target.user,
+                    "schema": target.schema,
+                    "store_id": target.store_id,
+                    "secret_file": str(target.secret_file.resolve()),
+                    "sslmode": target.sslmode,
+                }
+                for scope, target in selected.items()
+            },
+        },
+    )
+    return dataclasses.replace(targets, config_file=configuration)
+
+
+def record_mcp_closure(receipt: dict, *, processes_dead: bool) -> None:
+    """Never equate a failed client exit with a client that was not created."""
+    not_created = receipt.get("mcp_client_created") is False
+    receipt["mcp_client_disposition"] = "not_created" if not_created else "created"
+    receipt["mcp_client_closed"] = (
+        not_created or receipt.get("mcp_client_closed") is True
+    ) and processes_dead
+
+
 def worker_profile(environment: dict) -> str:
     import frontmatter
 
@@ -305,7 +350,6 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
     """Execute only after admission; all uncertain teardown remains retained."""
     from test.fixtures.cao_server import (
         _pick_free_port,
-        _runtime_only_database_targets,
         _start_cao_server,
         _subprocess_env,
     )
@@ -352,6 +396,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
     native.PINNED_POSTGRES_FIXTURE_SHA256 = manifest["postgres_fixture_sha256"]
     native.PINNED_POSTGRES_GUARD_DERIVATION_SHA256 = manifest["postgres_guard_sha256"]
     receipt["mcp_client_closed"] = False
+    receipt["mcp_client_created"] = False
     project = root / "project"
     tmux_dir = root / "tmux"
     homes = [root / "profile-0", root / "profile-1"]
@@ -396,7 +441,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         environments = []
         homes = [root / "profile-0", root / "profile-1"]
         for index in range(2):
-            runtime, _ = _runtime_only_database_targets(targets[index], root / f"runtime-{index}")
+            runtime = runtime_configuration(targets[index], root / f"runtime-{index}")
             port = _pick_free_port()
             extra = {
                 **common,
@@ -539,6 +584,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         receipt["native_preflight_passed"] = True
 
         async def coordinate():
+            receipt["mcp_client_created"] = True
             try:
                 async with protocol.open_coordination_client(
                     environments[0], caller["id"]
@@ -659,9 +705,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
             receipt["tmux_processes_dead"] = stopped
         else:
             receipt["tmux_processes_dead"] = not ids
-        receipt["mcp_client_closed"] = (
-            receipt.get("mcp_client_closed") is True and receipt["tmux_processes_dead"]
-        )
+        record_mcp_closure(receipt, processes_dead=receipt["tmux_processes_dead"])
         try:
             receipt["private_provider_roots_removed"] = all(
                 not native._provider_roots(home)

@@ -1,6 +1,7 @@
 """Contracts for production CLI pairing and real MCP result admission."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import native_paired_protocol as protocol
@@ -119,3 +120,65 @@ def test_native_worker_profile_pins_model_and_denies_mcp_tools():
 def test_pairing_environment_cannot_redirect_to_another_endpoint(url):
     with pytest.raises(protocol.HarnessError):
         protocol._check_profile_binding({"CAO_API_PORT": "19001"}, url)
+
+
+def test_shared_peer_is_written_even_when_targets_are_already_runtime_only(tmp_path):
+    import dataclasses
+    from test.postgres.fixtures import PostgresTargets
+
+    import run_native_paired_worker as journey
+
+    def target(name):
+        return SimpleNamespace(
+            host="127.0.0.1",
+            port=15432,
+            database=name,
+            user=name + "_app",
+            schema="private",
+            store_id=name,
+            secret_file=tmp_path / (name + ".json"),
+            sslmode="disable",
+            migration_user=None,
+            migration_secret_file=None,
+        )
+
+    main, auth, private_peer, shared_peer = [
+        target(name) for name in ("main", "auth", "private_peer", "shared_peer")
+    ]
+    original = tmp_path / "original.json"
+    original.write_text(json.dumps({"peer": private_peer.database}))
+    targets = PostgresTargets(main, auth, private_peer, tmp_path, original)
+    adopted = dataclasses.replace(targets, peer=shared_peer)
+    from test.fixtures.cao_server import _runtime_only_database_targets
+
+    old_runtime, old_derivation = _runtime_only_database_targets(adopted, tmp_path / "legacy")
+    assert old_derivation is None
+    assert old_runtime.config_file == original
+    assert json.loads(old_runtime.config_file.read_text())["peer"] == private_peer.database
+    runtime = journey.runtime_configuration(adopted, tmp_path / "runtime")
+    body = json.loads(runtime.config_file.read_text())
+    assert body["targets"]["peer"]["database"] == shared_peer.database
+    assert body["targets"]["main"]["database"] == main.database
+    assert body["targets"]["auth"]["database"] == auth.database
+    assert Path(body["targets"]["peer"]["secret_file"]).is_absolute()
+    assert runtime.config_file != original
+    assert json.loads(original.read_text()) == {"peer": private_peer.database}
+    assert runtime.config_file.stat().st_mode & 0o777 == 0o600
+    assert all("migration_user" not in value for value in body["targets"].values())
+
+
+@pytest.mark.parametrize(
+    "created,exited,dead,expected",
+    [
+        (False, False, True, True),
+        (True, False, True, False),
+        (True, True, True, True),
+        (True, True, False, False),
+    ],
+)
+def test_mcp_closure_distinguishes_not_created_from_failed_exit(created, exited, dead, expected):
+    import run_native_paired_worker as journey
+
+    receipt = {"mcp_client_created": created, "mcp_client_closed": exited}
+    journey.record_mcp_closure(receipt, processes_dead=dead)
+    assert receipt["mcp_client_closed"] is expected

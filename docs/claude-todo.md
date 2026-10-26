@@ -1,6 +1,6 @@
 # Claude Code: análisis y pendientes
 
-Actualización 2026-10-26 · T168: preparado recorrido separado de emparejamiento CLI/API/MCP real a trabajador OpenCode nativo; revisión GO para preflight, **ejecución y aceptación pendientes**. [Alcance](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).
+Actualización 2026-10-26 · T168: preparado recorrido separado de emparejamiento CLI/API/MCP real a trabajador OpenCode nativo; primer preflight fallido antes de inferencia; corregida la configuración del peer compartido y el cierre no creado;20 controles pasan. **Repetición real y aceptación pendientes**. [Alcance](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).
 
 Actualización 2026-10-26 · T167: corregida la clasificación de tareas rechazadas por ocupación y luego no encontradas;118 pruebas pasan, con dos APIs/PostgreSQL reales y trabajadores mock_cli. **Nueva aceptación nativa entre instancias pendiente**; T166 conserva su fuentefda0c1be. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t167.md).
 
