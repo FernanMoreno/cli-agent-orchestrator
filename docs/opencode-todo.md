@@ -1,5 +1,13 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+## Estado específico del proveedor · 2026-10-26
+
+R7 sobre671c9c8f: preflight real PASS229,855s y resultado/replay PASS34,101s. Las167 capturas muestran una ventana processing/pending, pero el marcador textual no aparece antes delcompleted; no se llegó a llamar a cancelar. El ensayo depende de estilo/longitud del modelo y sigue sin aceptar la cancelación activa. Fallo conservado y recursos propios cerrados; nueva sonda determinista solo propuesta, no implementada ni aceptada.
+
+[Revisión cruzada actual](../specs/025-provider-mcp-profiles/validation-all-providers-current.md):141 comprobaciones pasan; distingue contratos offline, diagnóstico nativo y aceptación por proveedor. Las pruebas reales intensivas siguen serializadas; los perfiles y contratos comunes se comprueban para los tres.
+
+## Registro de avances y evidencia compartida
+
 Actualización 2026-10-26 · T168: preflight real PASS; resultado Unicode/replay del trabajador PASS33,403s; cancelación activa agotó75s y sigue pendiente. Recursos cerrados y fallo conservado. Añadidas observaciones estructuradas privadas;74 controles pasan, sin forzar JSON al modelo. [Resultado acotado](../specs/025-provider-mcp-profiles/validation-t168-native.json).
 
 Actualización 2026-10-26 · T168: quinto preflight pasa arranque/catálogo; cierre detectó DELETE repetido. Recuperación propia confirmada, recibo original fallido conservado. Ledger de retiradas y lector de cancelación corregidos;72 controles pasan. **Aceptación real pendiente**. [Evidencia](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).

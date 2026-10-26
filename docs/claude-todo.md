@@ -1,5 +1,13 @@
 # Claude Code: análisis y pendientes
 
+## Estado específico del proveedor · 2026-10-26
+
+La aceptación Claude de la fuente actual sigue pendiente. T031 conserva un diagnóstico Unicode nativo sano (Claude Code2.1.303, modelo solicitado claude-sonnet-4-6), sin explicar el504 histórico ni aceptar perfiles/recorridos ampliados. T168 corresponde al trabajador OpenCode y T169 al CLI de emparejamiento. Próximos gates: diagnóstico actual del504/Unicode; catálogo/autorización MCP con CLI Claude real; interacción/recuperación y mensajes. No renovar ni alterar login; T032 sigue aplazada.
+
+[Revisión cruzada actual](../specs/025-provider-mcp-profiles/validation-all-providers-current.md):141 comprobaciones pasan; distingue contratos offline, diagnóstico nativo y aceptación por proveedor. Las pruebas reales intensivas siguen serializadas; los perfiles y contratos comunes se comprueban para los tres.
+
+## Registro de avances y evidencia compartida
+
 Actualización 2026-10-26 · T168: preflight real PASS; resultado Unicode/replay del trabajador PASS33,403s; cancelación activa agotó75s y sigue pendiente. Recursos cerrados y fallo conservado. Añadidas observaciones estructuradas privadas;74 controles pasan, sin forzar JSON al modelo. [Resultado acotado](../specs/025-provider-mcp-profiles/validation-t168-native.json).
 
 Actualización 2026-10-26 · T168: quinto preflight pasa arranque/catálogo; cierre detectó DELETE repetido. Recuperación propia confirmada, recibo original fallido conservado. Ledger de retiradas y lector de cancelación corregidos;72 controles pasan. **Aceptación real pendiente**. [Evidencia](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).

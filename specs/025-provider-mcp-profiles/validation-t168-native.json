@@ -42,7 +42,39 @@
   "timeout_cause": "unproven_without_poll_observations",
   "closure_recovery_scope": "closure_only_not_acceptance",
   "all_owners_closed_exact_resources_absent": true,
-  "new_instrumentation": "Private bounded versioned cancellation snapshots and nested exception codes; 74 tests pass. No actual execution of instrumented source yet.",
+  "new_instrumentation": "74 offline controls; R7 source671c9c8f actually recorded167 cancellation observations. T168 remains open.",
   "t168_acceptance": "pending",
-  "native_coordinator_or_global_acceptance": false
+  "native_coordinator_or_global_acceptance": false,
+  "subsequent_observation": {
+    "execution_source": "671c9c8f01a8174ef79096c822dce9f66229c071",
+    "preflight_success": true,
+    "preflight_seconds": 229.855,
+    "actual_success": false,
+    "actual_seconds": 321.979,
+    "task_seconds": [
+      34.101
+    ],
+    "nested_error_codes": [
+      "native_model_75_second_deadline"
+    ],
+    "cancel_poll_count": 167,
+    "predicate_states": {
+      "unknown/none": 2,
+      "idle/none": 48,
+      "idle/pending": 5,
+      "processing/pending": 12,
+      "completed/verified": 100
+    },
+    "generated_canary_observed_during_processing": false,
+    "computed_number_seen_after_completed": true,
+    "active_predicate_ever_true": false,
+    "cancel_called": false,
+    "cancel_call_evidence": "Reviewed sole cancel callsite is guarded by the active predicate; every archived poll has active=false.",
+    "conclusion": "Harness textual activity barrier was not met before worker completion; no production cancellation call was exercised.",
+    "production_cancellation_bug_proven": false,
+    "original_mcp_client_closed": false,
+    "closure_recovery_scope": "closure_only_not_acceptance",
+    "all_owners_closed_exact_resources_absent": true,
+    "active_tool_probe_proposal": "Claude conceptual review a20ed208: requires exact child/native ancestry, OS identity/birth/env/argv, pre-cancel recheck and exact death before natural timeout; native-tool activity is distinct from token streaming. Not implemented or accepted."
+  }
 }

@@ -1,0 +1,29 @@
+{
+  "schema": "caos.spec025.cross-provider-source-proof.v1",
+  "execution_source": "671c9c8f01a8174ef79096c822dce9f66229c071",
+  "native_run_source_pins_unchanged": 547,
+  "tests_passed": 141,
+  "warnings": 2,
+  "seconds": 146.57,
+  "native_provider_CLIs_launched_by_contract_suite": false,
+  "postgres_autostart": false,
+  "offline_database_markers_verified": true,
+  "test_files": [
+    "test/providers/test_mcp_tool_profiles.py",
+    "test/providers/test_mcp_profile_preflight.py",
+    "test/providers/test_claude_mcp_tool_filter.py",
+    "test/providers/test_opencode_native_filters.py",
+    "test/providers/test_opencode_native_policy.py"
+  ],
+  "scope": "Config builders, native policy/filters and in-process/real-Python-stdio MCP contracts; independent native OpenCode/Codex/Claude CLI acceptance not inferred.",
+  "native_remaining": {
+    "opencode": "T168 active cancellation not exercised: model-text activity predicate never passed before completion; R7 evidence retained.",
+    "codex": "Current-source native catalog/authorization; interaction/restart; separate generic and cao.work.message contracts.",
+    "claude": "Current-source Unicode/504 diagnostic; native catalog/authorization; interaction/restart/messages. Preserve login; T032 remains deferred."
+  },
+  "architecture_contracts_kept": 5,
+  "architecture_contracts_broken": 0,
+  "all_real_test_owners_closed": true,
+  "selected_tests_unchanged": true,
+  "peer_review": "Claude READ4966b7b122404dc98c2419327b38e0e7: GO, source/evidence scope only"
+}
