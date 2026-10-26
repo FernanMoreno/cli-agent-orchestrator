@@ -1308,6 +1308,19 @@ def task_for_peer(
     return refresh_local_task(task_id)
 
 
+def _remote_task_not_found(error: Exception) -> bool:
+    """Recognize only the peer's typed missing-task response, not an outage."""
+    if not isinstance(error, requests.HTTPError):
+        return False
+    response = error.response
+    if response is None or response.status_code != 404:
+        return False
+    try:
+        return response.json() == {"detail": {"kind": "task_not_found"}}
+    except ValueError:
+        return False
+
+
 def task_from_peer(task_id: str, *, requester_terminal_id: str | None = None) -> dict[str, object]:
     """Read a local task receipt, querying its target when this profile is source."""
     task, _ = _find_task(task_id)
@@ -1346,6 +1359,9 @@ def task_from_peer(task_id: str, *, requester_terminal_id: str | None = None) ->
         response.raise_for_status()
         remote_receipt = response.json()
     except (requests.RequestException, ValueError) as error:
+        if _remote_task_not_found(error):
+            # This is a live observation, not persistent absence or stop proof.
+            raise LocalPeerError("coordinated task was not found at its peer") from None
         logger.info("Local peer task status is unavailable; retaining its receipt")
         return {**task, "peer_state": "unavailable", "error": "peer_unavailable"}
     return _update_task(
@@ -1390,6 +1406,9 @@ def cancel_task_at_peer(task_id: str) -> dict[str, object]:
         response.raise_for_status()
         receipt = response.json()
     except (requests.RequestException, ValueError) as error:
+        if _remote_task_not_found(error):
+            # This is a live observation, not persistent absence or stop proof.
+            raise LocalPeerError("coordinated task was not found at its peer") from None
         return {**task, "state": "reconcile", "error": "reconcile_required"}
     return _update_task(
         task_id,

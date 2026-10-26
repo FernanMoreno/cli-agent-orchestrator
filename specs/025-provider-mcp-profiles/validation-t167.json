@@ -1,0 +1,104 @@
+{
+  "schema": "caos.spec025.t167.remote-task-missing.v1",
+  "date": "2026-10-26",
+  "base_head": "c22b58c2d7880e9a2767a6b5953132692211e641",
+  "result": "PASS_SCOPED_SERVICE_AND_REAL_API_COMPOSITION",
+  "native_opencode_execution": "not_run",
+  "red": {
+    "failed": 1,
+    "seconds": 79.73,
+    "observations": {
+      "status": {
+        "http_status": 200,
+        "error": "peer_unavailable",
+        "state": "accepted"
+      },
+      "cancel": {
+        "http_status": 200,
+        "error": "reconcile_required",
+        "state": "reconcile"
+      }
+    },
+    "target_task_row_count": 0,
+    "owner_closed": true,
+    "sources_unchanged": true
+  },
+  "intermediate": {
+    "passed": 117,
+    "failed": 1,
+    "seconds": 267.75,
+    "failure": "new retry test cancelled during asynchronous startup without active-worker barrier and discarded non-cancelled states; final state not retained, deferred-init ERROR in private log",
+    "startup_cancel_acceptance": false,
+    "owner_closed": true,
+    "sources_unchanged": true
+  },
+  "final": {
+    "passed": 118,
+    "warnings": 5,
+    "seconds": 158.73,
+    "initial_available_mib": 8129,
+    "memory_floor_mib": 6144,
+    "owner_elapsed_seconds": 210.175,
+    "source_files_frozen": 41,
+    "sources_unchanged": true,
+    "runner_unchanged": true,
+    "observations": {
+      "status": {
+        "http_status": 404,
+        "body": {
+          "detail": {
+            "kind": "task_not_found"
+          }
+        }
+      },
+      "cancel": {
+        "http_status": 404,
+        "body": {
+          "detail": {
+            "kind": "task_not_found"
+          }
+        }
+      },
+      "retry_terminal_state": "cancelled",
+      "retry_worker_stopped": true,
+      "retry_state_observations": [
+        "cancelled"
+      ]
+    }
+  },
+  "invariants_proved": [
+    "typed remote404 maps to existing API404, not peer_unavailable/reconcile_required",
+    "no source receipt rewrite or absence cache on missing observation",
+    "competing project lease remains held until incumbent actually stops",
+    "explicit same operation key/task ID is admitted after lease release",
+    "re-admitted task status works, active worker cancellation proves worker_stopped and lease release",
+    "healthy/other404/extended404/malformed404/403/503/timeouts retain previous semantics"
+  ],
+  "cleanup": {
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "exact_network_absent": true,
+    "owned_identity_verified_while_live": true
+  },
+  "architecture": {
+    "contracts_kept": 5,
+    "broken": 0
+  },
+  "review": {
+    "claude": "focused patch GO with limits; earlier broad review timed out and is not GO",
+    "Luna": "two read-only ECC/source audits; unit draft reviewed and integrated by root; normal PG fixtures preserved"
+  },
+  "limits": [
+    "404 is only the current remote observation, not safe cancellation or permanent worker absence",
+    "no new task state, automatic retry, receipt settlement, stop/deletion or lease authority",
+    "two API servers and real PostgreSQL, but mock_cli workers and test setup pairing routes",
+    "not native OpenCode paired-worker or operator CLI pairing acceptance",
+    "concurrent first-submit same-key hypothesis remains unreproduced/separate",
+    "T166 native receipt remains bound to fda0c1be; no automatic current-source/global equivalence"
+  ],
+  "source_sha256": {
+    "src/cli_agent_orchestrator/services/local_peer_service.py": "cc8a42dd6cf111598a956596f0ff86fc690ed56c409ff577ddc1a7447e90dbde",
+    "test/services/test_local_peer_task_missing.py": "348332c4876f4390f4595822921a7612e87c39ff960fcdc37b766fdaca31aa92",
+    "test/integration/test_local_peer_two_process.py": "e001bab1bef69ac74e78686f03ef88aecc2724cdde416a6f818ffc6694ab0a13"
+  }
+}

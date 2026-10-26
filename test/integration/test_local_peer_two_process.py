@@ -252,6 +252,42 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(
                 assert (
                     blocked.status_code == 202 and blocked.json().get("error") == "project_busy"
                 ), blocked.text
+                contended_id = blocked.json()["task_id"]
+                missing_status = requests.get(
+                    task_url + f"/{contended_id}",
+                    params={"requester_terminal_id": "deadbeef"},
+                    timeout=15,
+                )
+                missing_cancel = requests.post(
+                    task_url + f"/{contended_id}/cancel",
+                    json={"requester_terminal_id": "deadbeef"},
+                    timeout=15,
+                )
+                # Capture both public outcomes before either safety assertion.
+                observations = {
+                    name: {"http_status": value.status_code, "body": value.json()}
+                    for name, value in (("status", missing_status), ("cancel", missing_cancel))
+                }
+                (tmp_path / "busy-missing-observations.json").write_text(
+                    json.dumps(observations, indent=2)
+                )
+                with connect(profile_targets[1].main) as connection:
+                    assert (
+                        connection.execute(
+                            "SELECT COUNT(*) FROM local_peer_tasks WHERE task_id=%s",
+                            (contended_id,),
+                        ).fetchone()[0]
+                        == 0
+                    )
+                assert missing_status.status_code == 404, observations
+                assert missing_status.json() == {"detail": {"kind": "task_not_found"}}
+                assert missing_cancel.status_code == 404, observations
+                assert missing_cancel.json() == {"detail": {"kind": "task_not_found"}}
+                with connect(initiator_target) as connection:
+                    assert connection.execute(
+                        "SELECT state,terminal_id,result_json FROM local_peer_tasks WHERE task_id=%s",
+                        (contended_id,),
+                    ).fetchone() == ("accepted", None, None)
                 with connect(peer_target) as connection:
                     lease = connection.execute(
                         """SELECT task_id,state FROM local_project_write_leases
@@ -280,6 +316,64 @@ def test_two_real_local_profiles_terminal_receipts_and_authorization(
             assert receipt["state"] == receipt["result"]["state"] == expected, receipt
             assert finished() == receipt
             receipts.append(receipt)
+            if expected == "cancelled":
+                # A missing observation must not cache absence or consume the key.
+                retried = requests.post(
+                    task_url,
+                    json={**body, "operation_key": "acceptance-contended"},
+                    timeout=45,
+                )
+                assert retried.status_code == 202, retried.text
+                retry_receipt = retried.json()
+                assert retry_receipt["task_id"] == contended_id
+                assert retry_receipt["terminal_id"] not in (None, receipt["terminal_id"])
+                resumed = requests.get(
+                    task_url + f"/{contended_id}",
+                    params={"requester_terminal_id": "deadbeef"},
+                    timeout=15,
+                )
+                assert resumed.status_code == 200, resumed.text
+
+                def retry_writing():
+                    response = requests.get(
+                        urls[1] + f'/terminals/{retry_receipt["terminal_id"]}/output',
+                        params={"mode": "full"},
+                        timeout=10,
+                    )
+                    return response.status_code == 200 and "__mock_sleep_30" in response.json().get(
+                        "output", ""
+                    )
+
+                # Match the incumbent cancellation scenario: wait for actual
+                # worker input, not only the asynchronous assignment response.
+                _wait(retry_writing, 30)
+                stopped = requests.post(
+                    task_url + f"/{contended_id}/cancel",
+                    json={"requester_terminal_id": "deadbeef"},
+                    timeout=30,
+                )
+                assert stopped.status_code == 200, stopped.text
+
+                retry_observations = []
+
+                def retry_finished():
+                    response = requests.get(
+                        task_url + f"/{contended_id}",
+                        params={"requester_terminal_id": "deadbeef"},
+                        timeout=10,
+                    )
+                    assert response.status_code == 200, response.text
+                    value = response.json()
+                    retry_observations.append(value)
+                    (tmp_path / "retry-cancel-observations.json").write_text(
+                        json.dumps(retry_observations, indent=2)
+                    )
+                    return value if value["state"] in {"succeeded", "failed", "cancelled"} else None
+
+                retried_final = _wait(retry_finished, 90)
+                assert retried_final["state"] == "cancelled"
+                assert retried_final["result"]["state"] == "cancelled"
+                assert retried_final["result"]["worker_stopped"] is True
             snapshot = requests.get(sessions_url, params=session_params, timeout=15)
             assert (
                 snapshot.status_code == 200 and snapshot.json()["state"] == "available"
