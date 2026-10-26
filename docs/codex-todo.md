@@ -201,3 +201,6 @@ Diagnóstico/aceptación acotada2026-10-26: T159 v1 colaboración real **PASS** 
 
 
 Actualización2026-10-26: T160 añade provider_lifecycle al mapa exacto de orígenes cargados de v2; su archivo ya estaba en el inventario, pero eso no probaba el módulo importado.2RED/2controles→4GREEN,152regresiones pasan, arquitectura5/0, PGcerrado y GOClaude/Obsidian. Solo guard de procedencia; sin fallo nativo ni aceptación v2 nuevos. Repinará el próximo full8 desde el HEAD aceptado. [Recibos y límites](../specs/025-provider-mcp-profiles/validation-t160.md).
+
+
+Aceptación acotada2026-10-26: T161 v2full8 real **PASS** enbfacaf8e/540pins:85,07s/fases14,897s y8,973s/min10677MiB; mensajes/ACK/AGUI/reinicio/recibos exactos. OfertaCAOMCP8emisor/0receptor en peticionesprimarias yargumentos48/51bytes exactos. HTTPsellado sin atestación al reciboactivo; peticionesmodel_mismatch y1intentono resuelto se conservan. Fuente/credencialesintactas, puertas/PGcerrados ycontenedor/redausentes. Arquitectura5/0, GOClaude/Obsidian. Quedan OC06/T143 y otros perfiles/OAuth/global/Work con suslímites; siguiente reproducciónentreprocesos, sin tocarjobshistóricos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t161.md).
