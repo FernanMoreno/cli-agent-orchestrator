@@ -1,0 +1,13 @@
+# T168: preparación del trabajador nativo entre instancias
+
+2026-10-26, FR146/SC130. **Preparación; aceptación real pendiente. T168 y OC2-04 permanecen abiertos.**
+
+Se añade un recorrido separado y cerrado por defecto: dos APIs de producción, emparejamiento mediante los comandos reales `peer pair`/`peer accept`, coordinador controlado mediante MCP stdio real con catálogo coordination12 y trabajador OpenCode v2.0.18 Go/glm-5.3-flash. El coordinador utiliza un terminal mock_cli para su identidad; esto no acredita un coordinador nativo ni la oferta de herramientas al modelo. El trabajador declara cero herramientas CAO MCP; la configuración por sí sola no acredita su oferta HTTP efectiva.
+
+El recorrido exige preflight sin inferencia, resultado Unicode exacto, repetición con la misma clave sin crear otro trabajador, cancelación durante una respuesta nativa observada, worktree Git aislado, ausencia de procesos y raíces propios, preservación del operador y fuentes. Mantiene 75s por modelo y 6144MiB. PostgreSQL debe conservar un propietario externo verificado hasta que salgan los prestatarios y se confirme limpieza. Ante incertidumbre retiene los recursos.
+
+Las 15 pruebas del protocolo pasan en31,53s antes del ajuste final del marcador de cierre MCP. Incluyen admisión estricta de resultados, emparejamiento sin exportar el código temporal, rechazo de destinos incoherentes, modelo/perfil fijados y cierre por defecto incluso con --go. La nueva ejecución sobre los bytes finales pasa15 pruebas en39,49s. Estas pruebas no ejecutan modelos ni sustituyen aceptación nativa.
+
+La revisión READ de Claude d1549d926f6a4b398ea0c3a03769275f encontró operaciones sin protección en finally que podían interrumpir la limpieza. Se protegieron el recibo de propiedad, limpieza tmux, verificación de raíces/worktrees y archivo de diagnósticos. La revisión acotada079dfe21a8b34c339c9dfb2530528883 dio GO al preflight sin inferencia; se corrigió también su observación del marcador MCP, que ahora empieza False y exige salida del contexto real además de ausencia de procesos asociados al terminal.
+
+Composición: CLI/identidad de perfil→emparejamiento→catálogo stdio→asignación/replay/consulta/cancelación HTTP→trabajador nativo→Git→limpieza. Graphify existente contrastado con fuente, suplemento privado graph-impact.json; archivos ajenos preservados. No cambia el protocolo ni los esquemas del producto. El check de composición anterior conserva5 contratos/0 rotos; la repetición tras la corrección final también pasa5/0. Black/isort y git diff --check pasan. Veredicto provisional: preparación offline; composición real pendiente. No se infieren gates globales, OAuth, capacidades humanas ni aceptación nativa sobre fuentes nuevas.
