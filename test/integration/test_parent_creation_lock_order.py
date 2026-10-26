@@ -3,7 +3,9 @@
 import asyncio
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 from test.services.test_terminal_service_inbox_registration import TERMINAL_ID, create_mocks
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -19,16 +21,25 @@ SESSION = "cao-parent-lock-order"
 WINDOW = "parent-window"
 
 
+@pytest.fixture
+def logged_create_mocks(create_mocks, tmp_path):
+    # Exit before create_mocks restores its own patch. A later monkeypatch
+    # teardown would resurrect that fixture's MagicMock for subsequent tests.
+    before = terminal.TERMINAL_LOG_DIR
+    with patch.object(terminal, "TERMINAL_LOG_DIR", tmp_path):
+        yield create_mocks
+    assert terminal.TERMINAL_LOG_DIR is before
+
+
 @pytest.mark.asyncio
 async def test_parent_creation_allows_herdr_to_finish_while_waiting_for_session(
-    create_mocks, monkeypatch, tmp_path, caplog
+    logged_create_mocks, monkeypatch, caplog
 ):
     """Both actors use production locks; no timeout or lock implementation is replaced."""
     assert db.engine.dialect.name == "postgresql"
     db.create_terminal(PARENT, SESSION, WINDOW, "claude_code", "developer")
-    m = create_mocks
+    m = logged_create_mocks
     m.db_create_terminal.side_effect = db.create_terminal
-    monkeypatch.setattr(terminal, "TERMINAL_LOG_DIR", tmp_path)
     monkeypatch.setattr(registry, "_backend", m.backend)
     m.backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
         TerminalCleanupOutcome.UNKNOWN
@@ -121,12 +132,11 @@ async def test_parent_creation_allows_herdr_to_finish_while_waiting_for_session(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("changed", ["incarnation", "generation", "session"])
 async def test_fenced_parent_rejection_precedes_backend_effects(
-    create_mocks, monkeypatch, tmp_path, changed
+    logged_create_mocks, monkeypatch, changed
 ):
     db.create_terminal(PARENT, SESSION, WINDOW, "claude_code", "developer")
-    m = create_mocks
+    m = logged_create_mocks
     m.db_create_terminal.side_effect = db.create_terminal
-    monkeypatch.setattr(terminal, "TERMINAL_LOG_DIR", tmp_path)
     options = dict(
         provider="claude_code",
         agent_profile="developer",
@@ -153,11 +163,10 @@ async def test_fenced_parent_rejection_precedes_backend_effects(
 
 @pytest.mark.asyncio
 async def test_fenced_parent_sql_failure_rolls_back_child_under_both_locks(
-    create_mocks, monkeypatch, tmp_path
+    logged_create_mocks, monkeypatch
 ):
     db.create_terminal(PARENT, SESSION, WINDOW, "claude_code", "developer")
-    monkeypatch.setattr(terminal, "TERMINAL_LOG_DIR", tmp_path)
-    m = create_mocks
+    m = logged_create_mocks
     failure = RuntimeError("controlled child registration failure")
     m.db_create_terminal.side_effect = failure
     held = set()
@@ -207,3 +216,11 @@ async def test_fenced_parent_sql_failure_rolls_back_child_under_both_locks(
     assert held == set()
     assert db.get_terminal_metadata(PARENT) is not None
     assert db.get_terminal_metadata(TERMINAL_ID) is None
+
+
+@pytest.mark.offline_database
+def test_parent_assignment_fixtures_restore_service_objects():
+    """Later admission checks must see the actual path and service objects."""
+    assert isinstance(terminal.TERMINAL_LOG_DIR, Path)
+    assert not isinstance(terminal.provider_manager, Mock)
+    assert not isinstance(terminal.status_monitor, Mock)

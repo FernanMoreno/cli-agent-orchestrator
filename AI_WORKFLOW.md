@@ -105,6 +105,10 @@ For bugs, failing tests, integration failures, or unexpected behavior:
 
 Prefer test-driven development for new behavior and regressions when practical.
 
+Before freezing source hashes or launching a broad regression, run the commit hook's applicable format/import/lint checks on the changed files. Fix those checks first; a later formatter mutation invalidates the frozen source evidence and must not be relabeled as the tested bytes.
+
+When overriding an attribute already patched by another fixture, make the override a dependent fixture with a nested patch scope. Verify restoration after its consumers before broad regression; teardown from an unrelated monkeypatch fixture can resurrect a stale mock and invalidate downstream checks.
+
 Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics

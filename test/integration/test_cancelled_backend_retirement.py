@@ -332,6 +332,7 @@ async def test_cancelled_creation_retains_row_without_cleanup_authority(
     assert terminal._initial_task_pending_ids == set()
     assert terminal._active_deferred_init_external_owner_ids == set()
     assert db.get_terminal_metadata(TERMINAL_ID) is not None
+    assert db.get_terminal_metadata(TERMINAL_ID)["deferred_init_failure"] is None
     create_mocks.backend.kill_window.assert_not_called()
     create_mocks.backend.cleanup_terminal_exact.assert_not_called()
     for view in views:

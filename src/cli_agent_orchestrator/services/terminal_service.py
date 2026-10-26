@@ -1248,6 +1248,7 @@ def _roll_back_cancelled_create(
     *,
     created_session: bool,
     expected_binding: Optional[Dict[str, Any]] = None,
+    startup_owner: Any = None,
 ) -> bool:
     """Undo a create whose awaiter was cancelled AFTER the worker succeeded.
 
@@ -1287,6 +1288,13 @@ def _roll_back_cancelled_create(
                 logger.warning("Cancelled create %s binding changed; retaining row", terminal_id)
                 return False
             if not _still_owns_incarnation(session_name, terminal_id):
+                return False
+            # This worker published a shell, but cancellation prevented provider
+            # initialization. Record that fact before releasing input admission,
+            # even when the native stop below cannot be proven.
+            if not _persist_cancelled_create_failure(terminal_id):
+                _mark_initial_task_pending(terminal_id)
+                retain_uncertain_startup(startup_owner)
                 return False
             _roll_back_backend_create_locked(
                 session_name, window_name, created_session=created_session
@@ -1370,9 +1378,10 @@ def _finish_and_roll_back_cancelled_create(
                     window_name,
                     created_session=session_created,
                     expected_binding=expected_binding_getter() if expected_binding_getter else None,
+                    startup_owner=owner,
                 )
     finally:
-        if release_startup_marks is not None:
+        if release_startup_marks is not None and not (owner is not None and owner.uncertain):
             release_startup_marks()
         finish_startup(owner)
 
@@ -3787,6 +3796,47 @@ def _persist_deferred_init_failure(
     return failure
 
 
+def _persist_cancelled_create_failure(terminal_id: str) -> bool:
+    """Publish a matched cancelled shell's failure on its compensation worker.
+
+    The caller holds the session/dispatch/retirement guards and has checked
+    both the attempt binding and current incarnation. Reuse deferred-init
+    durability so fresh observers do not depend on the status-monitor cache.
+    """
+    detail = {
+        "kind": "creation_cancelled",
+        "message": "Terminal creation was cancelled before provider initialization; reconcile this terminal.",
+        "exception_type": "CancelledError",
+    }
+    for attempt in range(1, _DEFERRED_INIT_FAILURE_PERSIST_ATTEMPTS + 1):
+        try:
+            return _persist_deferred_init_failure(terminal_id, **detail) is not None
+        except Exception:
+            logger.warning(
+                "Cancelled-create failure persistence attempt %d/%d for %s failed",
+                attempt,
+                _DEFERRED_INIT_FAILURE_PERSIST_ATTEMPTS,
+                terminal_id,
+            )
+        if attempt < _DEFERRED_INIT_FAILURE_PERSIST_ATTEMPTS:
+            time.sleep(0.05 * attempt)
+    try:
+        return _publish_deferred_failure_fallback(terminal_id, {"phase": "deferred_init", **detail})
+    except Exception:
+        logger.exception(
+            "Cancelled-create fallback for %s failed; retaining local admission", terminal_id
+        )
+        return False
+
+
+def _guard_initialization_failure(terminal_id: str, metadata: dict[str, Any]) -> None:
+    if get_deferred_init_failure(terminal_id, metadata.get("deferred_init_failure")) is not None:
+        raise TerminalInputBlockedError(
+            f"Terminal {terminal_id} initialization failed; reconcile before delivering input.",
+            action="reconcile",
+        )
+
+
 async def _surface_deferred_init_failure(
     terminal_id: str,
     *,
@@ -4974,6 +5024,7 @@ def send_input(
         if not metadata:
             raise ValueError(f"Terminal '{terminal_id}' not found")
 
+        _guard_initialization_failure(terminal_id, metadata)
         with _active_deferred_init_external_owner_lock:
             initial_task_pending = terminal_id in _initial_task_pending_ids
         if initial_task_pending and _initial_task_owner is not _INITIAL_TASK_OWNER:
@@ -5256,6 +5307,12 @@ def send_input(
         # reach the provider, including same-task redelivery paths that do not
         # advance the turn.
         _interaction_source_status(terminal_id, metadata)
+        fresh_metadata = get_terminal_metadata(terminal_id)
+        if fresh_metadata is None:
+            raise TerminalInputBlockedError(
+                f"Terminal {terminal_id} disappeared before input; reconcile.", action="reconcile"
+            )
+        _guard_initialization_failure(terminal_id, fresh_metadata)
         try:
             transport_attempted = True
             backend.send_keys(
