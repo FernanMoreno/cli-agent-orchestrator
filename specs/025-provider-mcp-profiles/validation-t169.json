@@ -50,6 +50,15 @@
       "seconds": 139.357,
       "accept_cli_exit": 0,
       "native_terminals_created": 0
+    },
+    {
+      "head": "4f25382f382f2fa75c751b457ed5f73c2e22a652",
+      "error": "native_worker_model_or_tools_mismatch",
+      "seconds": 195.928,
+      "production_pairing_verified": true,
+      "caller_controller_created": true,
+      "model_inference_started": false,
+      "owned_cleanup_confirmed": true
     }
   ],
   "native_paired_acceptance": "pending",

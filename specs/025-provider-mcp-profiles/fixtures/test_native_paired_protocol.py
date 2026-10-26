@@ -270,3 +270,114 @@ def test_private_caller_binary_is_source_bound_and_resolvable(tmp_path):
     path = journey.private_executable_path(tmp_path / "bin/opencode")
     assert shutil.which("mock_cli", path=path) == str(expected)
     assert "test/providers/fixtures/bin/mock_cli" in journey.EXTRA_SOURCES
+
+
+def test_native_model_selection_is_launch_argument_not_required_agent_metadata(
+    tmp_path, monkeypatch
+):
+    import shlex
+
+    import frontmatter
+    import run_native_paired_worker as journey
+
+    from cli_agent_orchestrator.models.opencode_agent import OpenCodeAgentConfig
+    from cli_agent_orchestrator.providers.opencode_cli import OpenCodeCliProvider
+    from cli_agent_orchestrator.utils import opencode_v2
+
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    metadata = OpenCodeAgentConfig(description="private control", permission={})
+    (agents / f"{journey.WORKER}.md").write_text(
+        frontmatter.dumps(frontmatter.Post("Control", **metadata.model_dump(exclude_none=True)))
+    )
+    native_root = tmp_path / "native"
+    opencode_v2.write_v2_configuration(
+        native_root,
+        source_agents=agents,
+        source_config={},
+        session_id="deadbeef",
+        selected_model=journey.MODEL,
+    )
+    config = json.loads((native_root / "opencode.json").read_text())
+    assert "model" not in config["agents"][journey.WORKER]
+    provider = OpenCodeCliProvider(
+        "deadbeef", "control", "0", agent_profile=journey.WORKER, model=journey.MODEL
+    )
+    provider._cli_major = 2
+    arguments = shlex.split(provider._build_launch_command())
+    assert arguments[arguments.index("--model") + 1] == journey.MODEL
+    info = native_root.stat()
+    (native_root / ".cao-ownership.json").write_text(
+        json.dumps(
+            {
+                "terminal_id": "deadbeef",
+                "claim": {
+                    "major": 2,
+                    "device": info.st_dev,
+                    "inode": info.st_ino,
+                    "name": native_root.name,
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(journey.native, "_provider_roots", lambda _: [native_root])
+    # Isolate the model-location regression from the separately checked MCP contract.
+    monkeypatch.setattr(journey.native, "_native_mcp_profile_contract", lambda *_a, **_k: True)
+    monkeypatch.setattr(opencode_v2, "validate_v2_mcp_configuration", lambda *_a, **_k: None)
+    observed = []
+    monkeypatch.setattr(
+        journey, "owned_native_launch_selected", lambda tid, **kw: observed.append(tid) or True
+    )
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    assert (
+        journey.worker_configuration(tmp_path, "deadbeef", launch_binding={}, evidence=evidence)
+        == native_root
+    )
+    assert observed == ["deadbeef"]
+
+
+@pytest.mark.parametrize("selection", ["correct", "wrong_model", "duplicate_model", "version"])
+def test_owned_native_model_gate_reads_exact_process_argv(tmp_path, selection):
+    import os
+    import subprocess
+    import sys
+    from test.live_provider import opencode_interaction_journey as processes
+    from uuid import uuid4
+
+    import run_native_paired_worker as journey
+
+    terminal_id = uuid4().hex[:8]
+    flags = ["--agent", journey.WORKER, "--model", journey.MODEL]
+    if selection == "wrong_model":
+        flags[-1] = "foreign/model"
+    elif selection == "duplicate_model":
+        flags += ["--model", journey.MODEL]
+    elif selection == "version":
+        flags = ["--version"]
+    parent = processes._process_info(os.getpid())[0]
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import sys; print('ready', flush=True); sys.stdin.read(1)", *flags],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env={"CAO_TERMINAL_ID": terminal_id, "PATH": "/usr/bin:/bin"},
+    )
+    try:
+        assert child.stdout.readline() == b"ready\n"
+        binding = {
+            "binary_path": Path(sys.executable),
+            "server_identity": parent,
+            "socket_path": tmp_path / "unused-socket",
+        }
+        if selection in {"wrong_model", "duplicate_model"}:
+            with pytest.raises(protocol.HarnessError, match="native_worker_launch_model_mismatch"):
+                journey.owned_native_launch_selected(terminal_id, **binding)
+        else:
+            assert journey.owned_native_launch_selected(terminal_id, **binding) is (
+                selection == "correct"
+            )
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+        child.stdin.close()
+        child.stdout.close()

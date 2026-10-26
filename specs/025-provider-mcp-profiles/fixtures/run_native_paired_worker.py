@@ -174,7 +174,57 @@ def worker_profile(environment: dict) -> str:
     )
 
 
-def worker_configuration(cao_home: Path, terminal_id: str) -> Path:
+def owned_native_launch_selected(
+    terminal_id: str, *, binary_path: Path, server_identity, socket_path: Path
+) -> bool:
+    """Observe the selected model on the exact owned native executable process."""
+    from test.live_provider import opencode_interaction_journey as journey
+
+    from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
+
+    expected = binary_path.resolve(strict=True)
+    matches = []
+    for identity in journey._terminal_tagged_processes(
+        terminal_id, socket_path, server_identity=server_identity
+    ):
+        process = Path("/proc") / str(identity.pid)
+        try:
+            if (process / "exe").resolve(strict=True) != expected:
+                continue
+            with (process / "cmdline").open("rb") as stream:
+                raw = stream.read(65537)
+            if len(raw) > 65536 or not raw.endswith(b"\0"):
+                raise protocol.HarnessError("native_launch_arguments_invalid")
+            arguments = [part.decode("utf-8") for part in raw[:-1].split(b"\0")]
+            if "--agent" not in arguments:
+                continue  # A bounded --version probe is not the running worker.
+            current = journey._process_info(identity.pid)
+            if current is None or current[0] != identity or current[2] == "Z":
+                continue
+            if (
+                arguments.count("--agent") != 1
+                or arguments.count("--model") != 1
+                or arguments[-1:] == ["--agent"]
+                or arguments[-1:] == ["--model"]
+                or arguments[arguments.index("--agent") + 1] != to_opencode_agent_id(WORKER)
+                or arguments[arguments.index("--model") + 1] != MODEL
+            ):
+                raise protocol.HarnessError("native_worker_launch_model_mismatch")
+            with (process / "cmdline").open("rb") as stream:
+                repeated = stream.read(65537)
+            if (process / "exe").resolve(strict=True) != expected or repeated != raw:
+                raise protocol.HarnessError("native_worker_launch_changed_during_read")
+            matches.append(identity)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    if len(matches) > 1:
+        raise protocol.HarnessError("native_worker_launch_not_unique")
+    return len(matches) == 1
+
+
+def worker_configuration(
+    cao_home: Path, terminal_id: str, *, launch_binding: dict, evidence: Path
+) -> Path | None:
     """Validate actual owned v2 config, static model and zero-MCP native policy."""
     from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
     from cli_agent_orchestrator.utils.mcp_tool_policy import (
@@ -200,10 +250,11 @@ def worker_configuration(cao_home: Path, terminal_id: str) -> Path:
             or claim.get("name") != root.name
         ):
             raise protocol.HarnessError("native_worker_owner_mismatch")
-        config = json.loads((root / "opencode.json").read_text())
+        configuration_bytes = (root / "opencode.json").read_bytes()
+        config = json.loads(configuration_bytes)
         server = config.get("mcp", {}).get("servers", {}).get("cao-mcp-server", {})
         agent = config.get("agents", {}).get(WORKER, {})
-        if agent.get("model") != MODEL or not native._native_mcp_profile_contract(
+        tool_contract = native._native_mcp_profile_contract(
             "receiver",
             server,
             server.get("environment"),
@@ -213,7 +264,21 @@ def worker_configuration(cao_home: Path, terminal_id: str) -> Path:
             filter_env=MCP_TOOL_FILTER_ENV,
             profile_env=MCP_TOOL_PROFILE_ENV,
             legacy_marker=_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV,
-        ):
+        )
+        checks = {
+            "schema": "caos.spec025.t168.native-config-input-observation.v1",
+            "configuration_sha256": hashlib.sha256(configuration_bytes).hexdigest(),
+            "native_agent_model_present": "model" in agent,
+            "explicit_model_override_valid": agent.get("model") in (None, MODEL),
+            "mcp_contract_valid": tool_contract,
+            "server_environment_object": isinstance(server.get("environment"), dict),
+            "codemode_disabled": server.get("codemode") is False,
+            "permissions_array": isinstance(agent.get("permissions"), list),
+        }
+        observation = evidence / f"native-config-input-{terminal_id}.json"
+        if not observation.exists():
+            private_json(observation, checks)
+        if not checks["explicit_model_override_valid"] or not tool_contract:
             raise protocol.HarnessError("native_worker_model_or_tools_mismatch")
         validate_v2_mcp_configuration(
             root, agent_name=WORKER, server_name="cao-mcp-server", require_interaction=False
@@ -221,7 +286,20 @@ def worker_configuration(cao_home: Path, terminal_id: str) -> Path:
         matches.append(root)
     if len(matches) > 1:
         raise protocol.HarnessError("native_worker_configuration_not_unique")
-    return matches[0] if matches else None
+    if not matches or not owned_native_launch_selected(terminal_id, **launch_binding):
+        return None
+    observation = evidence / f"native-configuration-{terminal_id}.json"
+    if not observation.exists():
+        private_json(
+            observation,
+            {
+                "schema": "caos.spec025.t168.native-launch-observation.v1",
+                "owned_executable_model_argv_verified": True,
+                "native_zero_mcp_configuration_verified": True,
+                "agent_model_field_required": False,
+            },
+        )
+    return matches[0]
 
 
 def cleanup_safe(receipt: dict) -> bool:
@@ -271,7 +349,9 @@ def acceptance(receipt: dict) -> bool:
     )
 
 
-async def _tasks(client, source, target, target_home, project, identity, caller_id, receipt, ids):
+async def _tasks(
+    client, source, target, target_home, project, identity, caller_id, receipt, ids, launch_binding
+):
     from cli_agent_orchestrator.services.worktree_service import worktree_path_for
 
     base = {
@@ -310,7 +390,12 @@ async def _tasks(client, source, target, target_home, project, identity, caller_
             if metadata.get("provider") != "opencode_cli":
                 raise protocol.HarnessError("paired_worker_provider_mismatch")
             try:
-                configuration = worker_configuration(target_home, terminal_id)
+                configuration = worker_configuration(
+                    target_home,
+                    terminal_id,
+                    launch_binding=launch_binding,
+                    evidence=Path(receipt["evidence_dir"]),
+                )
             except FileNotFoundError:
                 configuration = None
             if configuration is None:
@@ -374,6 +459,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         "schema": "caos.spec025.t168.native-paired.v1",
         "mode": "preflight" if preflight_only else "execute",
         "source_head": manifest["source_head"],
+        "evidence_dir": manifest["evidence_dir"],
     }
     receipt.update(
         model=MODEL,
@@ -530,6 +616,11 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         socket_path = journey._pin_tmux_client_to_private_server(tmux, tmux_dir)
         sid, socket_id = journey._start_and_pin_private_tmux_server(tmux, socket_path)
         source, target = servers[0][0], servers[1][0]
+        launch_binding = {
+            "binary_path": Path(manifest["binary_path"]),
+            "server_identity": sid,
+            "socket_path": socket_path,
+        }
         pair = protocol.pair_profiles(
             environments[0], environments[1], source.url, target.url, project, raw
         )
@@ -567,7 +658,12 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         ready_deadline = time.monotonic() + MODEL_SECONDS
         while time.monotonic() < ready_deadline:
             try:
-                configured = worker_configuration(homes[1], preflight["id"])
+                configured = worker_configuration(
+                    homes[1],
+                    preflight["id"],
+                    launch_binding=launch_binding,
+                    evidence=Path(manifest["evidence_dir"]),
+                )
             except FileNotFoundError:
                 configured = None
             full = api(
@@ -612,6 +708,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
                             caller["id"],
                             receipt,
                             ids,
+                            launch_binding,
                         )
                 receipt["mcp_client_closed"] = True
             finally:
