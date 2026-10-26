@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Actualización 2026-10-26 · T165: corregida y validada la compensación de inicialización compartida. Esto no traslada los recibos nativos anteriores al HEAD nuevo ni cierra perfiles/gates globales. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t165.md).
+
 Actualización 2026-10-25: mensajería nativa/reinicio acreditados en v1 genérico (**99,3s**, fuentecf58;525runtime+7artefactos idénticos a0fe) y v2 genérico (**89,9s**) y full8 (**91,2s**) en0fe560dc. Dos fases exactas, ACK/Unicode/PG/API/AG-UI/reinicio y limpieza pasan; catálogos MCP observados2/0 y8/0. Work conserva su PASS separado en7f6 con equivalencia exacta de46archivos declarados, incluidos dos lanzadores; no se presenta como una ejecución nueva. [Cierre y límites](../specs/025-provider-mcp-profiles/validation-t135-closeout.md). Siguen separados concurrencia/escala, operaciones de perfiles ampliados, autenticación/OAuth/modelos, lanzadores históricos y reconciliación/global.
 
 Publicación, 2026-10-20: el gate común reprodujo el NFR de memoria a 1,010 s en el diagnóstico serial y a 2,200 s en la ejecución completa con ocho trabajadores, frente al límite de 1 s. Esta última terminó con 18.263 pruebas correctas, una fallida y 83 omitidas; el push fue rechazado. Es evidencia del backend, separado de los perfiles y recorridos OpenCode. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).
@@ -607,3 +609,6 @@ T163 validado: reproducción real PG/Git de 2 fallos y 1 control; 8 pruebas inic
 
 
 T164 validado: dos RED reales separados (entrada a shell retenido y liberación tras lectura fallida de identidad) corregidos. 80 controles enfocados y 893 regresiones pasan, 3 deselecciones configuradas intactas, 8 avisos, 676.87s. Evidencia genérica initialization_error en DB/fallback antes de liberar admisión; sin almacenes o lectura fiable, cuarentena solo local. Conserva identidad, autoridad, error original y contrato de cancelación. PG/contenedor/red cerrados, fuentes verificadas, arquitectura 5/0 y GO Claude. Sin nueva aceptación nativa/global. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t164.md).
+
+
+T165 validado:2RED raíz/hijo por error real de SessionLocal→2GREEN;112 controles y4casos finales con fallo/sano y excepción atestiguada dentro de la transición. Final897PASS/3deselecciones configuradas intactas/8avisos en707.26s. El fallo best-effort al guardar estado del hijo ya no sustituye initialize ni omite la compensación T163/T164. Sin reintentos ni falsa confirmación de recibo. Fuentes y cierre PG/contenedor/red verificados, arquitectura5/0 y GOClaude. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t165.md). Siguiente: operación real de perfil coordination v2/OC2-04; sin cierre nativo/global.

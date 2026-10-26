@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+Actualización 2026-10-26 · T165: corregida y validada la compensación de inicialización compartida. Esto no traslada los recibos nativos anteriores al HEAD nuevo ni cierra perfiles/gates globales. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t165.md).
+
 Publicación, 2026-10-20: el gate común reprodujo el NFR de memoria a 1,010 s en el diagnóstico serial y a 2,200 s en la ejecución completa con ocho trabajadores, frente al límite de 1 s. Esta última terminó con 18.263 pruebas correctas, una fallida y 83 omitidas; el push fue rechazado. Es evidencia del backend, separado de los perfiles y recorridos Claude. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).
 
 Fecha de revisión: 2026-10-20. Lista de trabajo, sin activación de herramientas ni cambios de permisos. Registrar la versión concreta de Claude Code y el modelo; la división v1/v2 de OpenCode no se traslada a este adaptador.
@@ -215,3 +217,6 @@ T163 validado: reproducción real PG/Git de 2 fallos y 1 control; 8 pruebas inic
 
 
 T164 validado: dos RED reales separados (entrada a shell retenido y liberación tras lectura fallida de identidad) corregidos. 80 controles enfocados y 893 regresiones pasan, 3 deselecciones configuradas intactas, 8 avisos, 676.87s. Evidencia genérica initialization_error en DB/fallback antes de liberar admisión; sin almacenes o lectura fiable, cuarentena solo local. Conserva identidad, autoridad, error original y contrato de cancelación. PG/contenedor/red cerrados, fuentes verificadas, arquitectura 5/0 y GO Claude. Sin nueva aceptación nativa/global. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t164.md).
+
+
+T165 validado:2RED raíz/hijo por error real de SessionLocal→2GREEN;112 controles y4casos finales con fallo/sano y excepción atestiguada dentro de la transición. Final897PASS/3deselecciones configuradas intactas/8avisos en707.26s. El fallo best-effort al guardar estado del hijo ya no sustituye initialize ni omite la compensación T163/T164. Sin reintentos ni falsa confirmación de recibo. Fuentes y cierre PG/contenedor/red verificados, arquitectura5/0 y GOClaude. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t165.md). Siguiente: operación real de perfil coordination v2/OC2-04; sin cierre nativo/global.

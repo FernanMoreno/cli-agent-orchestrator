@@ -3128,15 +3128,21 @@ async def create_terminal(
             # Creation has not sent a task yet.  A provider-init timeout is a
             # failed launch (the rollback below owns the process cleanup), not
             # a completed child and not an invitation to redeliver a prompt.
-            await asyncio.to_thread(
-                transition_native_child,
-                terminal_id,
-                "failed",
-                error_kind=(
-                    "initialization_timeout" if isinstance(e, TimeoutError) else "create_error"
-                ),
-                error_summary=str(e),
-            )
+            try:
+                await asyncio.to_thread(
+                    transition_native_child,
+                    terminal_id,
+                    "failed",
+                    error_kind=(
+                        "initialization_timeout" if isinstance(e, TimeoutError) else "create_error"
+                    ),
+                    error_summary=str(e),
+                )
+            except Exception:
+                # Receipt settlement is best-effort, not the gate that owns
+                # failed initialization. Preserve its original exception and
+                # continue the bound classification/retirement path below.
+                logger.exception("Could not settle failed child state for %s", terminal_id)
         try:
             if terminal_id is not None:
                 fifo_manager.stop_reader(terminal_id)
