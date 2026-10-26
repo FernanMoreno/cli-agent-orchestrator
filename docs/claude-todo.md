@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+Actualización 2026-10-26 · T166: preparado el caso OpenCode v2 de coordinación12/0 y la atestación mínima del resultado MCP;156 pruebas del fixture y50 del observador pasan. **Recorrido real pendiente**; T166/OC2-04 y los gates globales siguen abiertos. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t166-preparation.md).
+
 Actualización 2026-10-26 · T165: corregida y validada la compensación de inicialización compartida. Esto no traslada los recibos nativos anteriores al HEAD nuevo ni cierra perfiles/gates globales. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t165.md).
 
 Publicación, 2026-10-20: el gate común reprodujo el NFR de memoria a 1,010 s en el diagnóstico serial y a 2,200 s en la ejecución completa con ocho trabajadores, frente al límite de 1 s. Esta última terminó con 18.263 pruebas correctas, una fallida y 83 omitidas; el push fue rechazado. Es evidencia del backend, separado de los perfiles y recorridos Claude. [Resultados y límites de evidencia](../specs/021-postgresql-persistence/publication-nfr-20261020.md).

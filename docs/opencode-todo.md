@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Actualización 2026-10-26 · T166: preparado el caso OpenCode v2 de coordinación12/0 y la atestación mínima del resultado MCP;156 pruebas del fixture y50 del observador pasan. **Recorrido real pendiente**; T166/OC2-04 y los gates globales siguen abiertos. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t166-preparation.md).
+
 Actualización 2026-10-26 · T165: corregida y validada la compensación de inicialización compartida. Esto no traslada los recibos nativos anteriores al HEAD nuevo ni cierra perfiles/gates globales. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t165.md).
 
 Actualización 2026-10-25: mensajería nativa/reinicio acreditados en v1 genérico (**99,3s**, fuentecf58;525runtime+7artefactos idénticos a0fe) y v2 genérico (**89,9s**) y full8 (**91,2s**) en0fe560dc. Dos fases exactas, ACK/Unicode/PG/API/AG-UI/reinicio y limpieza pasan; catálogos MCP observados2/0 y8/0. Work conserva su PASS separado en7f6 con equivalencia exacta de46archivos declarados, incluidos dos lanzadores; no se presenta como una ejecución nueva. [Cierre y límites](../specs/025-provider-mcp-profiles/validation-t135-closeout.md). Siguen separados concurrencia/escala, operaciones de perfiles ampliados, autenticación/OAuth/modelos, lanzadores históricos y reconciliación/global.

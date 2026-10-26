@@ -30,6 +30,10 @@ _MAX_EVENTS = 256
 _MAX_BYTES = 128 * 1024
 _MAX_MESSAGE_ARGUMENT_CHARACTERS = 8192
 _MAX_MESSAGE_ARGUMENT_UTF8_BYTES = 32 * 1024
+_MAX_SAFE_RESULT_BYTES = 4096
+_MAX_SAFE_PEER_COUNT = 10_000
+_SAFE_RESULT_TOOL = "list_local_cao_peers"
+_SAFE_RESULT_TOOL_ENV = "CAO_OPENCODE_MCP_SAFE_RESULT_TOOL"
 _COMPLETE_SUFFIX = ".complete"
 _COMPLETE_PENDING_SUFFIX = ".complete.pending"
 _COMPLETE_CONTENT = b"CAO_OPEN_CODE_MCP_OBSERVER_COMPLETE\n"
@@ -52,6 +56,68 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise _DuplicateJSONKeyError("observer_duplicate_json_key")
         result[key] = value
     return result
+
+
+def _safe_local_peer_result(payload: Any) -> tuple[bool | None, int | None]:
+    """Read only the fixed success flag and peer-list length from one tool result."""
+    try:
+        if not isinstance(payload, types.CallToolResult) or type(payload.isError) is not bool:
+            return None, None
+        if payload.isError:
+            return None, None
+
+        candidate: Any = None
+        structured_present = False
+        for attribute in ("structuredContent", "structured_content"):
+            try:
+                structured = getattr(payload, attribute, None)
+            except Exception:
+                return None, None
+            if structured is not None:
+                candidate = structured
+                structured_present = True
+                break
+
+        if structured_present:
+            if not isinstance(candidate, Mapping):
+                return None, None
+        else:
+            content = getattr(payload, "content", None)
+            if type(content) is not list or len(content) != 1:
+                return None, None
+            block = content[0]
+            if not isinstance(block, types.TextContent):
+                return None, None
+            text = getattr(block, "text", None)
+            if type(text) is not str or len(text) > _MAX_SAFE_RESULT_BYTES:
+                return None, None
+            encoded = text.encode("utf-8", errors="strict")
+            if len(encoded) > _MAX_SAFE_RESULT_BYTES:
+                return None, None
+            candidate = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_json_object)
+            if not isinstance(candidate, Mapping):
+                return None, None
+
+        if "result" in candidate:
+            if len(candidate) != 1:
+                return None, None
+            nested = candidate.get("result")
+            if not isinstance(nested, Mapping):
+                return None, None
+            candidate = nested
+
+        success = candidate.get("success")
+        if type(success) is not bool:
+            return None, None
+        peers = candidate.get("peers")
+        if type(peers) is not list:
+            return (success, None) if success is False else (None, None)
+        if len(peers) > _MAX_SAFE_PEER_COUNT:
+            return success, None
+        return success, len(peers)
+    except Exception:
+        # Result bodies and parser errors must never escape into observer data.
+        return None, None
 
 
 def _empty_summary(status: str = "unobserved") -> dict[str, Any]:
@@ -90,9 +156,15 @@ class ProtocolObserver:
         nonce: str,
         *,
         expected_message_bodies: tuple[str, ...] = (),
+        expected_safe_result_tool: str | None = None,
     ) -> None:
         if not path.is_absolute() or not _NONCE_RE.fullmatch(nonce):
             raise ValueError("mcp_observer_binding_invalid")
+        if expected_safe_result_tool is not None and (
+            type(expected_safe_result_tool) is not str
+            or expected_safe_result_tool != _SAFE_RESULT_TOOL
+        ):
+            raise ValueError("mcp_observer_safe_result_tool_invalid")
         if (
             type(expected_message_bodies) is not tuple
             or len(expected_message_bodies) not in {0, 2}
@@ -135,6 +207,7 @@ class ProtocolObserver:
         self._call_id = 0
         self._message_ordinal = 0
         self._expected_message_bodies = expected_message_bodies
+        self._expected_safe_result_tool = expected_safe_result_tool
         self._written_bytes = 0
         self._closed = False
         self._write_failed = False
@@ -206,7 +279,14 @@ class ProtocolObserver:
             if self._expected_message_bodies and name == "send_message":
                 self._message_ordinal += 1
                 ordinal = self._message_ordinal
-        tool = name if isinstance(name, str) and name in INTERACTION_TOOLS else "other"
+        if (
+            self._expected_safe_result_tool is not None
+            and type(name) is str
+            and name == self._expected_safe_result_tool
+        ):
+            tool = self._expected_safe_result_tool
+        else:
+            tool = name if isinstance(name, str) and name in INTERACTION_TOOLS else "other"
         self._append("tool_call_started", call_id=call_id, tool=tool)
         if ordinal is not None:
             self._record_message_argument(call_id, ordinal, arguments)
@@ -273,6 +353,17 @@ class ProtocolObserver:
             status=status,
             error_present=error_present,
             result_present=result_present,
+        )
+
+    def record_safe_result(self, call_id: int, payload: Any) -> None:
+        if self._expected_safe_result_tool is None:
+            return
+        success, peer_count = _safe_local_peer_result(payload)
+        self._append(
+            "safe_result_observed",
+            call_id=call_id,
+            success=success,
+            peer_count=peer_count,
         )
 
     def close(self, *, complete: bool = True) -> None:
@@ -377,6 +468,7 @@ def install_protocol_observer(
     nonce: str,
     *,
     expected_message_bodies: tuple[str, ...] = (),
+    expected_safe_result_tool: str | None = None,
 ) -> ProtocolObserver:
     """Wrap the real low-level request dispatchers without changing their results."""
     list_handler = server.request_handlers.get(types.ListToolsRequest)
@@ -387,6 +479,7 @@ def install_protocol_observer(
         path,
         nonce,
         expected_message_bodies=expected_message_bodies,
+        expected_safe_result_tool=expected_safe_result_tool,
     )
 
     async def observed_list(request: Any) -> Any:
@@ -400,15 +493,16 @@ def install_protocol_observer(
 
     async def observed_call(request: Any) -> Any:
         params = getattr(request, "params", None)
+        tool = None
         try:
             name = getattr(params, "name", None)
             if observer._expected_message_bodies:
-                call_id, _tool = observer.start_call(
+                call_id, tool = observer.start_call(
                     name,
                     getattr(params, "arguments", None),
                 )
             else:
-                call_id, _tool = observer.start_call(name)
+                call_id, tool = observer.start_call(name)
         except Exception:
             call_id = None
         token = _IN_TOOL_CALL.set(True)
@@ -417,6 +511,11 @@ def install_protocol_observer(
         except BaseException:
             if call_id is not None:
                 try:
+                    if (
+                        observer._expected_safe_result_tool is not None
+                        and tool == observer._expected_safe_result_tool
+                    ):
+                        observer.record_safe_result(call_id, None)
                     observer.finish_call(
                         call_id,
                         status="failed",
@@ -438,6 +537,11 @@ def install_protocol_observer(
             error_present = False
         if call_id is not None:
             try:
+                if (
+                    observer._expected_safe_result_tool is not None
+                    and tool == observer._expected_safe_result_tool
+                ):
+                    observer.record_safe_result(call_id, payload)
                 observer.finish_call(
                     call_id,
                     status=status,
@@ -464,16 +568,26 @@ def install_protocol_observer_from_env(
         enabled = selected_environment.get(OBSERVER_ENABLE_ENV)
         raw_path = selected_environment.get(OBSERVER_PATH_ENV)
         nonce = selected_environment.get(OBSERVER_NONCE_ENV)
+        raw_safe_result_tool = selected_environment.get(_SAFE_RESULT_TOOL_ENV)
     except Exception:
         raise RuntimeError("mcp_observer_environment_invalid") from None
     if type(enabled) is not str or enabled != "1":
         raise RuntimeError("mcp_observer_not_enabled")
     if type(raw_path) is not str or not raw_path or type(nonce) is not str:
         raise RuntimeError("mcp_observer_binding_incomplete")
+    if raw_safe_result_tool is not None and (
+        type(raw_safe_result_tool) is not str or raw_safe_result_tool != _SAFE_RESULT_TOOL
+    ):
+        raise RuntimeError("mcp_observer_safe_result_tool_invalid")
     low_level_server = getattr(server, "_mcp_server", None)
     if low_level_server is None:
         raise RuntimeError("mcp_observer_server_unavailable")
-    return install_protocol_observer(low_level_server, Path(raw_path), nonce)
+    return install_protocol_observer(
+        low_level_server,
+        Path(raw_path),
+        nonce,
+        expected_safe_result_tool=raw_safe_result_tool,
+    )
 
 
 def _completion_marker_valid(path: Path) -> bool:
@@ -520,8 +634,13 @@ def read_protocol_observations(
     *,
     expected_nonce: str,
     expected_message_bodies: tuple[str, ...] = (),
+    expected_safe_result_tool: str | None = None,
 ) -> dict[str, Any]:
     """Read only a bounded, private sidecar and return closed protocol facts."""
+    if expected_safe_result_tool is not None and (
+        type(expected_safe_result_tool) is not str or expected_safe_result_tool != _SAFE_RESULT_TOOL
+    ):
+        return _empty_summary("incomplete")
     if (
         type(expected_message_bodies) is not tuple
         or len(expected_message_bodies) not in {0, 2}
@@ -634,6 +753,19 @@ def read_protocol_observations(
                 "error_present",
                 "result_present",
             },
+            "safe_result_observed": (
+                {
+                    "version",
+                    "nonce",
+                    "sequence",
+                    "event",
+                    "call_id",
+                    "success",
+                    "peer_count",
+                }
+                if expected_safe_result_tool is not None
+                else None
+            ),
             "observer_stopped": {
                 "version",
                 "nonce",
@@ -653,6 +785,10 @@ def read_protocol_observations(
     catalogs: list[dict[str, Any]] = []
     calls: dict[int, dict[str, Any]] = {}
     call_order: list[int] = []
+    safe_result_observations: dict[int, tuple[bool | None, int | None]] = {}
+    allowed_call_tools = INTERACTION_TOOLS | {"other"}
+    if expected_safe_result_tool is not None:
+        allowed_call_tools |= {expected_safe_result_tool}
     message_probe_invalid = False
     message_argument_observations: list[dict[str, Any]] = []
     unexpected_calls = 0
@@ -688,7 +824,7 @@ def read_protocol_observations(
                 or call_id <= 0
                 or call_id in calls
                 or not isinstance(tool, str)
-                or tool not in INTERACTION_TOOLS | {"other"}
+                or tool not in allowed_call_tools
             ):
                 incomplete = True
                 break
@@ -757,6 +893,27 @@ def read_protocol_observations(
                     "utf8_length": utf8_length,
                 }
             )
+        elif event == "safe_result_observed":
+            call_id = row.get("call_id")
+            call = calls.get(call_id) if type(call_id) is int else None
+            success = row.get("success")
+            peer_count = row.get("peer_count")
+            if (
+                expected_safe_result_tool is None
+                or call is None
+                or call["tool"] != expected_safe_result_tool
+                or call["status"] != "in_progress"
+                or call_id in safe_result_observations
+                or (success is not None and type(success) is not bool)
+                or (success is None and peer_count is not None)
+                or (
+                    peer_count is not None
+                    and (type(peer_count) is not int or not 0 <= peer_count <= _MAX_SAFE_PEER_COUNT)
+                )
+            ):
+                incomplete = True
+                break
+            safe_result_observations[call_id] = (success, peer_count)
         elif event == "tool_call_finished":
             call_id = row.get("call_id")
             call = calls.get(call_id) if type(call_id) is int else None
@@ -770,6 +927,13 @@ def read_protocol_observations(
                 or status not in {"completed", "failed", "unknown"}
                 or not isinstance(error_present, bool)
                 or not isinstance(result_present, bool)
+            ):
+                incomplete = True
+                break
+            if (
+                expected_safe_result_tool is not None
+                and call["tool"] == expected_safe_result_tool
+                and call_id not in safe_result_observations
             ):
                 incomplete = True
                 break
@@ -788,6 +952,14 @@ def read_protocol_observations(
                     "result_present": result_present,
                 }
             )
+            if expected_safe_result_tool is not None and call["tool"] == expected_safe_result_tool:
+                success, peer_count = safe_result_observations[call_id]
+                call.update(
+                    {
+                        "safe_result_success": success,
+                        "safe_result_peer_count": peer_count,
+                    }
+                )
         elif event == "observer_stopped":
             if not isinstance(row.get("writer_incomplete"), bool):
                 incomplete = True

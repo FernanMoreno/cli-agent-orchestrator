@@ -1,0 +1,117 @@
+{
+  "schema": "caos.native-v2-coordination-acceptance-profiles.v1",
+  "case_id": "coordination",
+  "label": "t166-native-v2-coordination-read",
+  "receipt_schema": "spec025.t166.opencode-v2-coordination.private.v1",
+  "scope": "Source-defined native v2 coordination12/0 diagnostic; authorized empty peer read only, no assignment/cancellation/pairing or global acceptance.",
+  "profiles": {
+    "sender": {
+      "allowed_tools": [
+        "@cao-mcp-server"
+      ],
+      "native_tool_profile": "coordination",
+      "enabled_mcp_tools": null,
+      "runtime_capability": "Required; current InteractionService source bound to exact sender terminal and incarnation",
+      "prompt": "This profile is for a read-only local coordination and machine-to-machine transport diagnostic. Use exactly one cao-mcp-server_list_local_cao_peers call, then exactly one cao-mcp-server_send_message call for each requested delivery phase. Do not assign tasks, cancel tasks, pair instances, or use human-interaction, supervision, memory, or other tools."
+    },
+    "receiver": {
+      "allowed_tools": [],
+      "native_tool_profile": "collaboration",
+      "enabled_mcp_tools": [],
+      "runtime_capability": "Absent",
+      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, the public acknowledgement body must be exactly ACK. Do not add summaries, explanations, quotes, or message echoes to that body. Also append the active machine turn receipt required by the delivery contract as a separate final line. The receipt is protocol metadata, separate from the acknowledgement body. Do not use tools, ask questions, or send messages."
+    }
+  },
+  "catalog": [
+    "assign_local_cao_task",
+    "cancel_local_cao_task",
+    "cao_acknowledge_user_answers",
+    "cao_ask_user",
+    "cao_escalate_interaction",
+    "cao_get_interaction",
+    "cao_list_interactions",
+    "cao_wait_for_user_answers",
+    "get_local_cao_task",
+    "list_local_cao_peers",
+    "list_siblings",
+    "send_message"
+  ],
+  "sender_calls": [
+    "list_local_cao_peers",
+    "send_message",
+    "send_message"
+  ],
+  "receiver_catalog": [],
+  "capability_inventory": {
+    "sender": 1,
+    "receiver": 0,
+    "before_first_input": 1,
+    "before_delete": 1,
+    "after_delete": 0
+  },
+  "coordination_operation": {
+    "tool": "list_local_cao_peers",
+    "calls": 1,
+    "success": true,
+    "peer_count": 0,
+    "preflight_http_status": 200,
+    "preflight_peer_count": 0,
+    "mutating_calls": 0
+  },
+  "native_model_request_observation": {
+    "sender_cao_mcp_wire_names": [
+      "cao-mcp-server_assign_local_cao_task",
+      "cao-mcp-server_cancel_local_cao_task",
+      "cao-mcp-server_cao_acknowledge_user_answers",
+      "cao-mcp-server_cao_ask_user",
+      "cao-mcp-server_cao_escalate_interaction",
+      "cao-mcp-server_cao_get_interaction",
+      "cao-mcp-server_cao_list_interactions",
+      "cao-mcp-server_cao_wait_for_user_answers",
+      "cao-mcp-server_get_local_cao_task",
+      "cao-mcp-server_list_local_cao_peers",
+      "cao-mcp-server_list_siblings",
+      "cao-mcp-server_send_message"
+    ],
+    "receiver_cao_mcp_wire_names": [],
+    "source_approved_optional_native_builtins": [
+      "skill",
+      "todowrite"
+    ],
+    "diagnostic_only_native_names_must_be_zero": true,
+    "minimum_target_primary_requests_per_role": 2,
+    "all_selected_model_primary_requests_must_match_role_profile": true,
+    "builtin_execution_observation": "not_observed"
+  },
+  "required_checks": {
+    "sender_calls_exact": [
+      "list_local_cao_peers",
+      "send_message",
+      "send_message"
+    ],
+    "sender_exact_twelve_tool_catalog": [
+      "assign_local_cao_task",
+      "cancel_local_cao_task",
+      "cao_acknowledge_user_answers",
+      "cao_ask_user",
+      "cao_escalate_interaction",
+      "cao_get_interaction",
+      "cao_list_interactions",
+      "cao_wait_for_user_answers",
+      "get_local_cao_task",
+      "list_local_cao_peers",
+      "list_siblings",
+      "send_message"
+    ],
+    "receiver_catalog_empty": true,
+    "receiver_calls_empty": true,
+    "coordination_context_preflight_passed": true,
+    "coordination_read_success_observed": true,
+    "human_capability_current_source_bound": true,
+    "two_message_ack_unicode_restart_and_owned_cleanup": true,
+    "model_phase_seconds": 75,
+    "memory_floor_mib": 6144,
+    "no_assign_cancel_or_pair_calls": true,
+    "receipt_has_no_peer_entries_or_raw_tool_result": true
+  }
+}

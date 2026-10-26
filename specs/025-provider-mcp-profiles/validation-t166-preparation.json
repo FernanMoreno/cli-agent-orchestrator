@@ -1,0 +1,68 @@
+{
+  "schema": "caos.spec025.t166.offline-preparation.v1",
+  "date": "2026-10-26",
+  "status": "OFFLINE_PREPARATION_PASS_NATIVE_PENDING",
+  "base_head": "0e3449e91c23276d6e48c7defce88f57dbf550a8",
+  "native_execution": "not_run",
+  "task_complete": false,
+  "case": "coordination",
+  "catalog_cao_mcp_sender": 12,
+  "catalog_cao_mcp_receiver": 0,
+  "expected_calls": [
+    "list_local_cao_peers",
+    "send_message",
+    "send_message"
+  ],
+  "limits": {
+    "memory_mib": 6144,
+    "model_phase_seconds": 75
+  },
+  "checks": {
+    "fixture": {
+      "passed": 156,
+      "seconds": 91.58,
+      "warnings": 3
+    },
+    "observer": {
+      "passed": 50,
+      "seconds": 53.63,
+      "same_current_observer_and_test_bytes": true
+    },
+    "composition": {
+      "contracts_kept": 5,
+      "contracts_broken": 0
+    }
+  },
+  "failed_evidence_preserved": [
+    "initial RED missing case/result proof",
+    "integration-first 150specPASS/2testfixtureFAIL +50observerPASS",
+    "integration-green 155specPASS/1newtestexpectationFAIL +50observerPASS"
+  ],
+  "postgres": {
+    "final_owner_closed": true,
+    "final_container_absent": true,
+    "observer_owner_closed": true,
+    "observer_container_absent": true,
+    "source_unchanged": true
+  },
+  "reviews": {
+    "claude_read_rounds": 2,
+    "blockers_found": 0,
+    "limits": "Scoped source review; reviewers did not run tests or attest native acceptance."
+  },
+  "scope_limits": [
+    "actual controller/project authorization and selected-model native operation remain unexecuted for this case",
+    "other coordination operations and profiles remain open",
+    "no new runtime permission or authorization policy",
+    "existing collaboration8 and generic2 preserved",
+    "native builtins separate from CAO MCP count",
+    "OAuth and global acceptance not claimed"
+  ],
+  "source_sha256": {
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "70b982bfc2b700a11b8ce916ec8dc44bd9af4d7cc618aea4a083f4f884f5f649",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py": "04fc1432f1f3b1f8fd134215ad2e2fdd4404c99bfa3e7e7a5f4d8fc67c02b5d6",
+    "specs/025-provider-mcp-profiles/fixtures/native-v2-coordination-acceptance-profiles.json": "f08c6a95bee7fdeed252946de08762f1e28d6122edc7dca6faf71ca56d58bd33",
+    "test/live_provider/opencode_mcp_observer.py": "b97ba7bd127c2b22839891c10758261898389b34f8e8be3548f2816d327afda3",
+    "test/live_provider/test_opencode_mcp_observer.py": "61f6c2ae9a0534a512cba9eac608341d7ebc5895359883bbfb4327826a4bfea4"
+  }
+}

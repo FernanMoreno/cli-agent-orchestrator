@@ -156,6 +156,25 @@ class NativeV2AcceptanceCase:
 
 DEFAULT_CASE_ID = "collaboration"
 GENERIC_MESSAGE_CASE_ID = "generic_message"
+COORDINATION_CASE_ID = "coordination"
+COORDINATION_SENDER_TOOLS = tuple(
+    sorted(
+        SENDER_TOOLS
+        + (
+            "assign_local_cao_task",
+            "cancel_local_cao_task",
+            "get_local_cao_task",
+            "list_local_cao_peers",
+        )
+    )
+)
+_COORDINATION_SENDER_PROMPT = (
+    "This profile is for a read-only local coordination and machine-to-machine transport diagnostic. "
+    "Use exactly one cao-mcp-server_list_local_cao_peers call, then exactly one "
+    "cao-mcp-server_send_message call for each requested delivery phase. "
+    "Do not assign tasks, cancel tasks, pair instances, or use human-interaction, "
+    "supervision, memory, or other tools."
+)
 _COLLABORATION_SENDER_PROMPT = (
     "This profile is for a machine-to-machine transport diagnostic. "
     "Use exactly one cao-mcp-server_list_siblings call, then exactly one "
@@ -226,6 +245,25 @@ CASE_DEFINITIONS = (
             "exact two-tool generic-message profile; no human capability claimed or issued"
         ),
     ),
+    NativeV2AcceptanceCase(
+        case_id=COORDINATION_CASE_ID,
+        label="t166-native-v2-coordination-read",
+        manifest_schema="spec025.t166.native-v2-coordination-manifest.v1",
+        receipt_schema="spec025.t166.opencode-v2-coordination.private.v1",
+        profile_fixture_path="specs/025-provider-mcp-profiles/fixtures/native-v2-coordination-acceptance-profiles.json",
+        profile_fixture_schema="caos.native-v2-coordination-acceptance-profiles.v1",
+        profile_prefix="t166-v2-coordination",
+        group_prefix="spec025-t166-coordination-v2",
+        session_prefix="t166coord",
+        sender_allowed_tools=("@cao-mcp-server",),
+        sender_enabled_mcp_tools=None,
+        sender_catalog=COORDINATION_SENDER_TOOLS,
+        sender_calls=("list_local_cao_peers", "send_message", "send_message"),
+        sender_prompt=_COORDINATION_SENDER_PROMPT,
+        receiver_prompt=_RECEIVER_PROMPT,
+        requires_human_capability=True,
+        native_surface="unfiltered coordination12; one authorized read and two exact message phases",
+    ),
 )
 
 SOURCE_PATHS = (
@@ -236,6 +274,7 @@ SOURCE_PATHS = (
     "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native-v2-collaboration-acceptance-profiles.json",
     "specs/025-provider-mcp-profiles/fixtures/native-v2-generic-message-acceptance-profiles.json",
+    "specs/025-provider-mcp-profiles/fixtures/native-v2-coordination-acceptance-profiles.json",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v2_text_probe.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_text_probe.py",
@@ -271,6 +310,8 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.utils.opencode_policy",
     "cli_agent_orchestrator.security.auth",
     "cli_agent_orchestrator.api.main",
+    "cli_agent_orchestrator.api.local_coordination_routes",
+    "cli_agent_orchestrator.services.local_peer_service",
     "cli_agent_orchestrator.api.interactions",
     "cli_agent_orchestrator.services.terminal_service",
     "cli_agent_orchestrator.services.provider_lifecycle",
@@ -319,6 +360,8 @@ RUN_SOURCE_RELATIVE_PATHS = {
     ),
     "cli_agent_orchestrator.security.auth": "src/cli_agent_orchestrator/security/auth.py",
     "cli_agent_orchestrator.api.main": "src/cli_agent_orchestrator/api/main.py",
+    "cli_agent_orchestrator.api.local_coordination_routes": "src/cli_agent_orchestrator/api/local_coordination_routes.py",
+    "cli_agent_orchestrator.services.local_peer_service": "src/cli_agent_orchestrator/services/local_peer_service.py",
     "cli_agent_orchestrator.api.interactions": "src/cli_agent_orchestrator/api/interactions.py",
     "cli_agent_orchestrator.services.terminal_service": (
         "src/cli_agent_orchestrator/services/terminal_service.py"
@@ -1026,6 +1069,7 @@ def _derive_private_mcp_observer_source(
     *,
     sender_catalog: tuple[str, ...],
     expected_message_bodies: tuple[str, ...],
+    expected_safe_result_tool: str | None = None,
 ) -> str:
     """Enable the fixed-body argument probe only in the source-derived private copy."""
     if (
@@ -1035,6 +1079,13 @@ def _derive_private_mcp_observer_source(
         or type(expected_message_bodies) is not tuple
         or len(expected_message_bodies) != len(PHASES)
         or any(type(body) is not str for body in expected_message_bodies)
+        or (
+            expected_safe_result_tool is not None
+            and (
+                type(expected_safe_result_tool) is not str
+                or expected_safe_result_tool != "list_local_cao_peers"
+            )
+        )
     ):
         raise GateError("observer_source_binding_shape_changed")
     try:
@@ -1043,10 +1094,32 @@ def _derive_private_mcp_observer_source(
         raise GateError("observer_source_binding_shape_changed") from None
     start_token = "INTERACTION_TOOLS = frozenset("
     observer_end_token = "_NONCE_RE ="
-    old_return = "return install_protocol_observer(low_level_server, Path(raw_path), nonce)"
+    try:
+        functions = [
+            node
+            for node in ast.parse(original).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "install_protocol_observer_from_env"
+        ]
+        returns = (
+            [node for node in functions[0].body if isinstance(node, ast.Return)]
+            if len(functions) == 1
+            else []
+        )
+        if (
+            len(returns) != 1
+            or not isinstance(returns[0].value, ast.Call)
+            or not isinstance(returns[0].value.func, ast.Name)
+            or returns[0].value.func.id != "install_protocol_observer"
+        ):
+            raise ValueError("observer_return_shape_invalid")
+        old_return = ast.get_source_segment(original, returns[0])
+    except (SyntaxError, ValueError):
+        raise GateError("observer_source_binding_shape_changed") from None
     if (
         original.count(start_token) != 1
         or original.count(observer_end_token) != 1
+        or type(old_return) is not str
         or original.count(old_return) != 1
     ):
         raise GateError("observer_source_binding_shape_changed")
@@ -1071,7 +1144,12 @@ def _derive_private_mcp_observer_source(
         "        Path(raw_path).with_name(Path(raw_path).name + '-' + terminal),\n"
         "        nonce,\n"
         "        expected_message_bodies=_MESSAGE_ARGUMENT_EXPECTATIONS,\n"
-        "    )"
+        + (
+            "        expected_safe_result_tool=" + repr(expected_safe_result_tool) + ",\n"
+            if expected_safe_result_tool is not None
+            else ""
+        )
+        + "    )"
     )
     return adapted.replace(old_return, new_return, 1)
 
@@ -1165,7 +1243,7 @@ def _case_fixture_contract(case_id: Any = DEFAULT_CASE_ID) -> bool:
         or ("case_id" in document and document.get("case_id") != case.case_id)
         or not isinstance(sender, dict)
         or sender.get("allowed_tools") != list(case.sender_allowed_tools)
-        or sender.get("native_tool_profile") != "collaboration"
+        or sender.get("native_tool_profile") != _case_native_profile("sender", case.case_id)
         or sender.get("enabled_mcp_tools") != expected_sender_filter
         or not isinstance(sender.get("runtime_capability"), str)
         or (
@@ -1176,7 +1254,7 @@ def _case_fixture_contract(case_id: Any = DEFAULT_CASE_ID) -> bool:
         or sender.get("prompt") != case.sender_prompt
         or not isinstance(receiver, dict)
         or receiver.get("allowed_tools") != []
-        or receiver.get("native_tool_profile") != "collaboration"
+        or receiver.get("native_tool_profile") != _case_native_profile("receiver", case.case_id)
         or receiver.get("enabled_mcp_tools") != []
         or receiver.get("runtime_capability") != "Absent"
         or receiver.get("prompt") != case.receiver_prompt
@@ -1188,7 +1266,7 @@ def _case_fixture_contract(case_id: Any = DEFAULT_CASE_ID) -> bool:
     ):
         return False
     expected_calls = list(case.sender_calls)
-    if case.case_id == DEFAULT_CASE_ID:
+    if case.case_id in {DEFAULT_CASE_ID, COORDINATION_CASE_ID}:
         if checks.get("sender_calls_exact") != expected_calls:
             return False
     elif document.get("case_id") != case.case_id or (
@@ -1311,7 +1389,154 @@ def _case_fixture_contract(case_id: Any = DEFAULT_CASE_ID) -> bool:
             and case.sender_calls == ("list_siblings", "send_message", "send_message")
             and case.requires_human_capability is False
         )
-    return True
+    return (
+        _coordination_fixture_contract(document, case)
+        if case.case_id == COORDINATION_CASE_ID
+        else True
+    )
+
+
+def _case_native_profile(role: str, case_id: Any = DEFAULT_CASE_ID) -> str:
+    case = _case_definition(case_id)
+    if role not in {"sender", "receiver"}:
+        raise ValueError("invalid_role")
+    return (
+        "coordination"
+        if role == "sender" and case.case_id == COORDINATION_CASE_ID
+        else "collaboration"
+    )
+
+
+def _case_observer_options(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
+    case = _case_definition(case_id)
+    return (
+        {"expected_safe_result_tool": "list_local_cao_peers"}
+        if case.case_id == COORDINATION_CASE_ID
+        else {}
+    )
+
+
+def _case_mcp_wire_names(case_id: Any = DEFAULT_CASE_ID) -> tuple[str, ...]:
+    case = _case_definition(case_id)
+    return (
+        tuple("cao-mcp-server_" + tool for tool in case.sender_catalog)
+        if case.case_id == COORDINATION_CASE_ID
+        else MCP_HTTP_OFFER_TOOL_NAMES
+    )
+
+
+def _case_http_offer_names(case_id: Any = DEFAULT_CASE_ID) -> tuple[str, ...]:
+    return (
+        _case_mcp_wire_names(case_id)
+        + OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES
+        + DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES
+    )
+
+
+def _case_receipt_key(field: str, case_id: Any = DEFAULT_CASE_ID) -> str:
+    case = _case_definition(case_id)
+    if case.case_id != COORDINATION_CASE_ID:
+        return field
+    return {
+        "sender_native_v3_full_collaboration_unfiltered": "sender_native_v3_full_coordination_unfiltered",
+        "sender_model_request_full_eight_cao_mcp_tools": "sender_model_request_full_twelve_cao_mcp_tools",
+    }.get(field, field)
+
+
+def _case_scope(case_id: Any = DEFAULT_CASE_ID) -> str:
+    case = _case_definition(case_id)
+    if case.case_id == GENERIC_MESSAGE_CASE_ID:
+        return "one exact two-tool generic-message sender, one zero-tool receiver, two generic send_message phases around API restart"
+    if case.case_id == COORDINATION_CASE_ID:
+        return "one exact twelve-tool coordination sender, one zero-tool receiver, one authorized empty peer read and two send_message phases around API restart"
+    return "one full-collaboration sender, one empty-tool receiver, two generic send_message phases around API restart"
+
+
+def _coordination_context_contract(
+    metadata: Any, *, sender_id: str, working_directory: str, peer_status: Any, peer_body: Any
+) -> bool:
+    return (
+        isinstance(metadata, dict)
+        and _safe_terminal_identity(sender_id)
+        and type(working_directory) is str
+        and bool(working_directory)
+        and Path(working_directory).is_absolute()
+        and metadata.get("id") == sender_id
+        and metadata.get("working_directory") == working_directory
+        and type(peer_status) is int
+        and peer_status == 200
+        and type(peer_body) is list
+        and len(peer_body) == 0
+    )
+
+
+def _coordination_result_contract(sender: Any) -> bool:
+    calls = sender.get("mcp_tool_calls") if isinstance(sender, dict) else None
+    if type(calls) is not list or any(type(call) is not dict for call in calls):
+        return False
+    reads = [call for call in calls if call.get("tool") == "list_local_cao_peers"]
+    return len(reads) == 1 and (
+        reads[0].get("server") == "cao-mcp-server"
+        and reads[0].get("status") == "completed"
+        and reads[0].get("error_present") is False
+        and reads[0].get("result_present") is True
+        and reads[0].get("safe_result_success") is True
+        and type(reads[0].get("safe_result_peer_count")) is int
+        and reads[0]["safe_result_peer_count"] == 0
+    )
+
+
+def _coordination_fixture_contract(document: dict[str, Any], case: NativeV2AcceptanceCase) -> bool:
+    return (
+        document.get("case_id") == case.case_id
+        and document.get("label") == case.label
+        and document.get("receipt_schema") == case.receipt_schema
+        and document.get("sender_calls") == list(case.sender_calls)
+        and document.get("receiver_catalog") == []
+        and document.get("capability_inventory")
+        == {
+            "sender": 1,
+            "receiver": 0,
+            "before_first_input": 1,
+            "before_delete": 1,
+            "after_delete": 0,
+        }
+        and document.get("coordination_operation")
+        == {
+            "tool": "list_local_cao_peers",
+            "calls": 1,
+            "success": True,
+            "peer_count": 0,
+            "preflight_http_status": 200,
+            "preflight_peer_count": 0,
+            "mutating_calls": 0,
+        }
+        and document.get("native_model_request_observation")
+        == {
+            "sender_cao_mcp_wire_names": list(_case_mcp_wire_names(case.case_id)),
+            "receiver_cao_mcp_wire_names": [],
+            "source_approved_optional_native_builtins": list(OPTIONAL_OPENCODE_BUILTIN_TOOL_NAMES),
+            "diagnostic_only_native_names_must_be_zero": True,
+            "minimum_target_primary_requests_per_role": len(PHASES),
+            "all_selected_model_primary_requests_must_match_role_profile": True,
+            "builtin_execution_observation": "not_observed",
+        }
+        and document.get("required_checks")
+        == {
+            "sender_calls_exact": list(case.sender_calls),
+            "sender_exact_twelve_tool_catalog": list(case.sender_catalog),
+            "receiver_catalog_empty": True,
+            "receiver_calls_empty": True,
+            "coordination_context_preflight_passed": True,
+            "coordination_read_success_observed": True,
+            "human_capability_current_source_bound": True,
+            "two_message_ack_unicode_restart_and_owned_cleanup": True,
+            "model_phase_seconds": int(MODEL_PHASE_SECONDS),
+            "memory_floor_mib": MEMORY_FLOOR_MIB,
+            "no_assign_cancel_or_pair_calls": True,
+            "receipt_has_no_peer_entries_or_raw_tool_result": True,
+        }
+    )
 
 
 def _profile_contract(
@@ -1338,18 +1563,31 @@ def _native_permission_matches(metadata: Any, allowed_tools: list[str], translat
     return type(permission) is dict and permission == translator(allowed_tools)
 
 
-def _phase_prompt(index: int, receiver_id: str, message: str) -> str:
+def _phase_prompt(
+    index: int, receiver_id: str, message: str, case_id: Any = DEFAULT_CASE_ID
+) -> str:
     if index not in (0, 1) or not _safe_terminal_identity(receiver_id):
         raise ValueError("invalid_phase_binding")
+    case = _case_definition(case_id)
     discover = (
         "First call cao-mcp-server_list_siblings exactly once and confirm the target ID is in the same group. "
         if index == 0
         else ""
     )
+    if case.case_id == COORDINATION_CASE_ID:
+        discover = (
+            "First call cao-mcp-server_list_local_cao_peers exactly once; its authorized result must be success true with an empty peer list. "
+            if index == 0
+            else ""
+        )
+    restrictions = (
+        "Do not assign tasks, cancel tasks, pair instances, or use human-interaction, supervision, or memory tools. "
+        if case.case_id == COORDINATION_CASE_ID
+        else "Do not use human-interaction, delegation, supervision, or memory tools, and do not use any operation beyond the requested message transport. "
+    )
     return (
         "This is one automated machine-to-machine delivery check, not a human request. "
-        "Do not use human-interaction, delegation, supervision, or memory tools, "
-        "and do not use any operation beyond the requested message transport. "
+        + restrictions
         + discover
         + "Call cao-mcp-server_send_message exactly once with receiver_id "
         + receiver_id
@@ -1535,7 +1773,8 @@ def _observer_contract(observations: dict[str, Any], case_id: Any = DEFAULT_CASE
     receiver_catalog_count = receiver.get("mcp_catalog_observation_count")
     receiver_catalog_status = receiver.get("mcp_catalog_observation_status")
     return (
-        isinstance(calls, list)
+        (case.case_id != COORDINATION_CASE_ID or _coordination_result_contract(sender))
+        and isinstance(calls, list)
         and all(isinstance(call, dict) for call in calls)
         and sender.get("observer_status") == "observed"
         and receiver.get("observer_status") == "observed"
@@ -2266,13 +2505,14 @@ def _acceptance_contract(receipt: Any, case_id: Any = DEFAULT_CASE_ID) -> bool:
     required_true_fields = (
         _GENERIC_MESSAGE_TRUE_RECEIPT_FIELDS if is_generic else _REQUIRED_TRUE_RECEIPT_FIELDS
     )
-    expected_scope = (
-        "one exact two-tool generic-message sender, one zero-tool receiver, two generic "
-        "send_message phases around API restart"
-        if is_generic
-        else "one full-collaboration sender, one empty-tool receiver, two generic "
-        "send_message phases around API restart"
-    )
+    if selected_case.case_id == COORDINATION_CASE_ID:
+        required_true_fields = tuple(
+            _case_receipt_key(field, selected_case.case_id) for field in required_true_fields
+        ) + (
+            "coordination_context_preflight_passed",
+            "coordination_read_success_observed",
+        )
+    expected_scope = _case_scope(selected_case.case_id)
     case_identity_exact = (
         receipt.get("case_id") == selected_case.case_id
         and receipt.get("artifact_label") == selected_case.label
@@ -2307,6 +2547,16 @@ def _acceptance_contract(receipt: Any, case_id: Any = DEFAULT_CASE_ID) -> bool:
         "error_code" in receipt
         or receipt.get("schema") != selected_case.receipt_schema
         or not case_identity_exact
+        or (
+            selected_case.case_id == COORDINATION_CASE_ID
+            and any(
+                field in receipt
+                for field in (
+                    "sender_native_v3_full_collaboration_unfiltered",
+                    "sender_model_request_full_eight_cao_mcp_tools",
+                )
+            )
+        )
         or not capability_inventory_exact
         or receipt.get("model") != MODEL
         or receipt.get("auth_lane") != MODEL
@@ -2413,6 +2663,8 @@ def _self_check(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
         if case.case_id == GENERIC_MESSAGE_CASE_ID
         else "spec025.t104.native-v2-self-check.v1"
     )
+    if case.case_id == COORDINATION_CASE_ID:
+        self_check_schema = "spec025.t166.native-v2-coordination-self-check.v1"
     sender_allowed, sender_filter, _ = _profile_contract("sender", case.case_id)
     receiver_allowed, receiver_filter, _ = _profile_contract("receiver", case.case_id)
     try:
@@ -2446,7 +2698,11 @@ def _self_check(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
             "cao_escalate_interaction",
         },
         "only_two_message_operations": case.sender_calls
-        == ("list_siblings", "send_message", "send_message"),
+        == (
+            ("list_local_cao_peers" if case.case_id == COORDINATION_CASE_ID else "list_siblings"),
+            "send_message",
+            "send_message",
+        ),
         "no_execute_in_full_tool_offer": (
             "cao-mcp-server_execute" not in MCP_HTTP_OFFER_TOOL_NAMES
         ),
@@ -2500,6 +2756,10 @@ def _self_check(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
         checks["sender_has_full_collaboration_grant"] = checks[
             "default_collaboration_case_has_full_grant"
         ]
+    if case.case_id == COORDINATION_CASE_ID:
+        checks["coordination_exact_twelve_tool_catalog"] = (
+            len(case.sender_catalog) == 12 and case.sender_catalog == COORDINATION_SENDER_TOOLS
+        )
     return {
         "schema": self_check_schema,
         "success": all(checks.values()),
@@ -2608,7 +2868,7 @@ def _profile_text(
         "command": sys.executable,
         "args": ["-m", "cli_agent_orchestrator.mcp_server.server"],
         "env": child_env,
-        "cao_tool_profile": "collaboration",
+        "cao_tool_profile": _case_native_profile(role, case.case_id),
         **({"enabled_tools": enabled} if enabled is not None else {}),
         "timeout": 60_000,
     }
@@ -3025,6 +3285,9 @@ def _native_mcp_profile_contract(
 ) -> bool:
     from cli_agent_orchestrator.utils.opencode_v2 import _effective_permission
 
+    if role not in ("sender", "receiver"):
+        return False
+
     try:
         case = _case_definition(case_id)
     except GateError:
@@ -3036,7 +3299,7 @@ def _native_mcp_profile_contract(
         or not isinstance(permissions, list)
         or server.get("codemode") is not False
         or server.get("enabled_tools") is not None
-        or environment.get(profile_env) != "collaboration"
+        or environment.get(profile_env) != _case_native_profile(role, case.case_id)
         or legacy_marker in environment
     ):
         return False
@@ -3886,7 +4149,7 @@ def _http_tool_offer_contract(
     if (
         not isinstance(observation, dict)
         or expected_mcp_tool_names not in (expected_sender_wire_names, ())
-        or tracked_tool_names != HTTP_OFFER_TOOL_NAMES
+        or tracked_tool_names != _case_http_offer_names(case.case_id)
     ):
         return False
     records = observation.get("requests")
@@ -3942,7 +4205,7 @@ def _http_tool_offer_contract(
             or any(names[name] != 1 for name in expected_mcp_tool_names)
             or any(
                 names[name] != 0
-                for name in MCP_HTTP_OFFER_TOOL_NAMES
+                for name in _case_mcp_wire_names(case.case_id)
                 if name not in expected_mcp_tool_names
             )
             or any(names[name] != 0 for name in DIAGNOSTIC_ONLY_OPENCODE_TOOL_NAMES)
@@ -5648,6 +5911,7 @@ def _capture_sender_message_argument_diagnostic(
             copied_trace_path,
             expected_nonce=expected_nonce,
             expected_message_bodies=expected_bodies,
+            **_case_observer_options(case.case_id),
         )
     except Exception:
         unavailable["reason"] = "observer_trace_copy_or_read_failed"
@@ -6063,13 +6327,7 @@ def _run_enabled(
         "postgres_container_id_expected": PINNED_POSTGRES_ID,
         "postgres_image_id_expected": PINNED_POSTGRES_IMAGE,
         "model": model,
-        "scope": (
-            "one exact two-tool generic-message sender, one zero-tool receiver, two generic "
-            "send_message phases around API restart"
-            if not case.requires_human_capability
-            else "one full-collaboration sender, one empty-tool receiver, two generic "
-            "send_message phases around API restart"
-        ),
+        "scope": _case_scope(case.case_id),
         "run_manifest_sha256": RUN_MANIFEST_SHA256,
         "review_digest": REVIEW_DIGEST,
         "source_fingerprint_sha256_expected": SOURCE_FINGERPRINT_SHA256,
@@ -6381,7 +6639,7 @@ def _run_enabled(
             derived_offer_plugin = _http_tool_offer_plugin_bytes(
                 offer_plugin_bytes,
                 nonce=offer_nonces[role],
-                tool_names=HTTP_OFFER_TOOL_NAMES,
+                tool_names=_case_http_offer_names(case.case_id),
             )
             offer_plugin_path = observer_dir / f"opencode-http-tool-offer-{role}.js"
             _write_private(offer_plugin_path, derived_offer_plugin)
@@ -6506,6 +6764,7 @@ def _run_enabled(
             mcp_observer_source,
             sender_catalog=case.sender_catalog,
             expected_message_bodies=tuple(message for _phase_name, message in PHASES),
+            **_case_observer_options(case.case_id),
         )
         observer_path = observer_dir / "opencode_mcp_observer.py"
         _write_private(observer_path, adapted_observer)
@@ -6638,7 +6897,8 @@ def _run_enabled(
                 native_policy is None
                 or native_policy.state != "ready"
                 or native_policy.format_version != 3
-                or dict(native_policy.profiles) != {"cao-mcp-server": "collaboration"}
+                or dict(native_policy.profiles)
+                != {"cao-mcp-server": _case_native_profile(role, case.case_id)}
                 or dict(native_policy.filters)
                 != ({} if enabled is None else {"cao-mcp-server": frozenset(enabled)})
                 or not _native_permission_matches(
@@ -6653,7 +6913,11 @@ def _run_enabled(
             receipt[f"{role}_allowed_tools_exact"] = True
             if role == "sender":
                 if case.requires_human_capability:
-                    receipt["sender_native_v3_full_collaboration_unfiltered"] = True
+                    receipt[
+                        _case_receipt_key(
+                            "sender_native_v3_full_collaboration_unfiltered", case.case_id
+                        )
+                    ] = True
                 else:
                     receipt["sender_native_v3_exact_two_tool_filter"] = True
             else:
@@ -7130,8 +7394,45 @@ def _run_enabled(
         ):
             raise GateError("initial_inbox_not_empty")
 
+        if case.case_id == COORDINATION_CASE_ID:
+            context_deadline = time.monotonic() + OBSERVER_GRACE_SECONDS
+            cwd_response = _api_json(
+                requests,
+                "GET",
+                f"{server.url}/terminals/{sender_id}/working-directory",
+                expected=200,
+                deadline=context_deadline,
+            )
+            expected_cwd = str(role_workdirs["sender"].resolve(strict=True))
+            if (
+                type(cwd_response) is not dict
+                or cwd_response.get("working_directory") != expected_cwd
+            ):
+                raise GateError("coordination_sender_context_mismatch")
+            peers = _api_json(
+                requests,
+                "GET",
+                f"{server.url}/local-coordination/agent/peers",
+                expected=200,
+                deadline=context_deadline,
+                params={"requester_terminal_id": sender_id, "project_path": expected_cwd},
+            )
+            context = {
+                "id": terminals["sender"].get("id"),
+                "working_directory": cwd_response["working_directory"],
+            }
+            if not _coordination_context_contract(
+                context,
+                sender_id=sender_id,
+                working_directory=expected_cwd,
+                peer_status=200,
+                peer_body=peers,
+            ):
+                raise GateError("coordination_project_preflight_failed")
+            receipt["coordination_context_preflight_passed"] = True
+
         phase_prompts = tuple(
-            _phase_prompt(index, receiver_id, message)
+            _phase_prompt(index, receiver_id, message, case.case_id)
             for index, (_phase_name, message) in enumerate(PHASES)
         )
         expected_prompt_document = _http_prompt_expectations(
@@ -7759,10 +8060,15 @@ def _run_enabled(
                 observation_paths[role],
                 expected_nonce=nonce,
                 expected_message_bodies=tuple(message for _phase_name, message in PHASES),
+                **_case_observer_options(case.case_id),
             )
             for role in terminals
         }
         receipt["native_observations"] = native_observations
+        if case.case_id == COORDINATION_CASE_ID:
+            receipt["coordination_read_success_observed"] = _coordination_result_contract(
+                native_observations.get("sender")
+            )
         receipt["native_catalog_and_calls_exact"] = _observer_contract(
             native_observations, case.case_id
         )
@@ -7778,7 +8084,7 @@ def _run_enabled(
                 offer_observer,
                 offer_directories[role],
                 expected_nonce=offer_nonces[role],
-                tracked_tool_names=HTTP_OFFER_TOOL_NAMES,
+                tracked_tool_names=_case_http_offer_names(case.case_id),
             )
             for role in ("sender", "receiver")
         }
@@ -7794,7 +8100,7 @@ def _run_enabled(
         for role in ("sender", "receiver"):
             contract_key = (
                 (
-                    "sender_model_request_full_eight_cao_mcp_tools"
+                    _case_receipt_key("sender_model_request_full_eight_cao_mcp_tools", case.case_id)
                     if case.requires_human_capability
                     else "sender_model_request_exact_two_cao_mcp_tools"
                 )
@@ -7805,13 +8111,13 @@ def _run_enabled(
                 offer_observations[role],
                 expected_nonce=offer_nonces[role],
                 expected_mcp_tool_names=role_expected_mcp_tools[role],
-                tracked_tool_names=HTTP_OFFER_TOOL_NAMES,
+                tracked_tool_names=_case_http_offer_names(case.case_id),
                 case_id=case.case_id,
             )
         receipt["native_model_request_cao_mcp_surfaces_exact"] = (
             receipt[
                 (
-                    "sender_model_request_full_eight_cao_mcp_tools"
+                    _case_receipt_key("sender_model_request_full_eight_cao_mcp_tools", case.case_id)
                     if case.requires_human_capability
                     else "sender_model_request_exact_two_cao_mcp_tools"
                 )

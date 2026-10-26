@@ -1091,6 +1091,397 @@ def test_probe_reader_rejects_duplicate_unknown_and_malformed_diagnostic_rows(
     assert summary["send_message_argument_observations"] == []
 
 
+def _dispatch_production_peer_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transport,
+    *,
+    expected_safe_result_tool: str | None = "list_local_cao_peers",
+):
+    """Dispatch the registered production tool through FastMCP's real handler."""
+    from mcp import types
+
+    from cli_agent_orchestrator.mcp_server import server as production_server
+
+    low_level_server = production_server.mcp._mcp_server
+    list_handler = low_level_server.request_handlers[types.ListToolsRequest]
+    call_handler = low_level_server.request_handlers[types.CallToolRequest]
+    path = tmp_path / "local-peers-observations.jsonl"
+    nonce = "a" * 32
+    monkeypatch.setattr(
+        production_server,
+        "_local_peer_caller_context",
+        lambda: ("a1b2c3d4", str(tmp_path), None),
+    )
+    monkeypatch.setattr(production_server.mcp_utils, "local_get_json", transport)
+    observer = opencode_mcp_observer.install_protocol_observer(
+        low_level_server,
+        path,
+        nonce,
+        expected_safe_result_tool=expected_safe_result_tool,
+    )
+
+    async def dispatch():
+        return await low_level_server.request_handlers[types.CallToolRequest](
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="list_local_cao_peers",
+                    arguments={},
+                ),
+            )
+        )
+
+    try:
+        result = asyncio.run(dispatch())
+    finally:
+        try:
+            observer.close()
+        finally:
+            low_level_server.request_handlers[types.ListToolsRequest] = list_handler
+            low_level_server.request_handlers[types.CallToolRequest] = call_handler
+
+    assert isinstance(result.root, types.CallToolResult)
+    if expected_safe_result_tool is None:
+        summary = opencode_mcp_observer.read_protocol_observations(
+            path,
+            expected_nonce=nonce,
+        )
+    else:
+        summary = opencode_mcp_observer.read_protocol_observations(
+            path,
+            expected_nonce=nonce,
+            expected_safe_result_tool=expected_safe_result_tool,
+        )
+    return result.root, summary, path, nonce
+
+
+@pytest.mark.offline_database
+def test_opt_in_summarizes_real_empty_local_peer_tool_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload, summary, path, nonce = _dispatch_production_peer_tool(
+        tmp_path,
+        monkeypatch,
+        lambda *_args, **_kwargs: [],
+    )
+
+    assert payload.isError is False
+    assert summary["observer_status"] == "observed"
+    assert summary["mcp_tool_calls"] == [
+        {
+            "server": "cao-mcp-server",
+            "tool": "list_local_cao_peers",
+            "status": "completed",
+            "error_present": False,
+            "result_present": True,
+            "safe_result_success": True,
+            "safe_result_peer_count": 0,
+        }
+    ]
+    sidecar = path.read_text(encoding="utf-8")
+    assert '"event":"safe_result_observed"' in sidecar
+    assert nonce not in json.dumps(summary)
+
+
+@pytest.mark.offline_database
+def test_opt_in_distinguishes_handled_peer_transport_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import requests
+
+    def unavailable(*_args, **_kwargs):
+        raise requests.RequestException("RAW_TRANSPORT_ERROR_CANARY")
+
+    payload, summary, path, _nonce = _dispatch_production_peer_tool(
+        tmp_path,
+        monkeypatch,
+        unavailable,
+    )
+
+    assert payload.isError is False
+    assert summary["mcp_tool_calls"][0]["status"] == "completed"
+    assert summary["mcp_tool_calls"][0]["safe_result_success"] is False
+    assert summary["mcp_tool_calls"][0]["safe_result_peer_count"] is None
+    serialized = path.read_text(encoding="utf-8") + json.dumps(summary)
+    assert "RAW_TRANSPORT_ERROR_CANARY" not in serialized
+
+
+@pytest.mark.offline_database
+def test_opt_in_peer_result_redacts_peer_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secrets = (
+        "PEER_ID_CANARY",
+        "PEER_NAME_CANARY",
+        "PROJECT_ID_CANARY",
+        "SCOPE_CANARY",
+        "PEER_URL_CANARY",
+    )
+    peer = {
+        "instance_id": secrets[0],
+        "name": secrets[1],
+        "project_id": secrets[2],
+        "scopes": [secrets[3]],
+        "base_url": secrets[4],
+    }
+    _payload, summary, path, _nonce = _dispatch_production_peer_tool(
+        tmp_path,
+        monkeypatch,
+        lambda *_args, **_kwargs: [peer],
+    )
+
+    assert summary["mcp_tool_calls"][0]["safe_result_success"] is True
+    assert summary["mcp_tool_calls"][0]["safe_result_peer_count"] == 1
+    serialized = path.read_text(encoding="utf-8") + json.dumps(summary)
+    assert all(secret not in serialized for secret in secrets)
+
+
+@pytest.mark.offline_database
+def test_default_observer_keeps_peer_result_unclassified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _payload, summary, path, _nonce = _dispatch_production_peer_tool(
+        tmp_path,
+        monkeypatch,
+        lambda *_args, **_kwargs: [],
+        expected_safe_result_tool=None,
+    )
+
+    assert summary["observer_status"] == "observed"
+    assert summary["mcp_tool_calls"] == [
+        {
+            "server": "cao-mcp-server",
+            "tool": "other",
+            "status": "completed",
+            "error_present": False,
+            "result_present": True,
+        }
+    ]
+    assert "safe_result_observed" not in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{malformed-json",
+        '{"success":true,"peers":[],"success":false}',
+        '{"success":1,"peers":[]}',
+        '{"success":true,"peers":{}}',
+        "x" * 4097,
+    ],
+)
+@pytest.mark.offline_database
+def test_safe_peer_text_result_parser_fails_closed(text: str) -> None:
+    from mcp import types
+
+    payload = types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        isError=False,
+    )
+
+    success, peer_count = opencode_mcp_observer._safe_local_peer_result(payload)
+    assert (success, peer_count) == (None, None)
+
+
+@pytest.mark.offline_database
+def test_safe_peer_text_result_accepts_bounded_empty_list() -> None:
+    from mcp import types
+
+    payload = types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text",
+                text='{"success":true,"peers":[]}',
+            )
+        ],
+        isError=False,
+    )
+
+    assert opencode_mcp_observer._safe_local_peer_result(payload) == (True, 0)
+
+
+@pytest.mark.offline_database
+@pytest.mark.parametrize("representation", ["structured", "text"])
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        {
+            "success": False,
+            "peers": [],
+            "result": {"success": True, "peers": []},
+        },
+        {
+            "result": {"success": True, "peers": []},
+            "extra": "AMBIGUOUS_RESULT_CANARY",
+        },
+    ],
+)
+def test_safe_peer_result_rejects_ambiguous_result_wrappers(
+    representation: str, candidate: dict[str, object]
+) -> None:
+    from mcp import types
+
+    if representation == "structured":
+        payload = types.CallToolResult(
+            content=[],
+            isError=False,
+            structuredContent=candidate,
+        )
+    else:
+        payload = types.CallToolResult(
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=json.dumps(candidate, separators=(",", ":")),
+                )
+            ],
+            isError=False,
+        )
+
+    assert opencode_mcp_observer._safe_local_peer_result(payload) == (None, None)
+
+
+@pytest.mark.offline_database
+@pytest.mark.parametrize("representation", ["structured", "text"])
+def test_safe_peer_result_accepts_single_field_result_wrapper(representation: str) -> None:
+    from mcp import types
+
+    candidate = {"result": {"success": True, "peers": []}}
+    if representation == "structured":
+        payload = types.CallToolResult(
+            content=[],
+            isError=False,
+            structuredContent=candidate,
+        )
+    else:
+        payload = types.CallToolResult(
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=json.dumps(candidate, separators=(",", ":")),
+                )
+            ],
+            isError=False,
+        )
+
+    assert opencode_mcp_observer._safe_local_peer_result(payload) == (True, 0)
+
+
+@pytest.mark.offline_database
+def test_safe_peer_error_result_never_parses_error_text() -> None:
+    from mcp import types
+
+    payload = types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text",
+                text='{"success":true,"peers":[],"RAW_ERROR_CANARY":true}',
+            )
+        ],
+        isError=True,
+    )
+
+    assert opencode_mcp_observer._safe_local_peer_result(payload) == (None, None)
+
+
+@pytest.mark.offline_database
+@pytest.mark.parametrize("mutation", ["wrong_call_id", "wrong_tool", "missing", "duplicate"])
+def test_safe_result_event_must_match_the_started_tool_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    _payload, _summary, path, nonce = _dispatch_production_peer_tool(
+        tmp_path,
+        monkeypatch,
+        lambda *_args, **_kwargs: [],
+    )
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    safe_index = next(
+        index for index, row in enumerate(rows) if row["event"] == "safe_result_observed"
+    )
+    safe_row = rows[safe_index]
+    if mutation == "wrong_call_id":
+        safe_row["call_id"] += 1
+    elif mutation == "wrong_tool":
+        start_row = next(row for row in rows if row["event"] == "tool_call_started")
+        start_row["tool"] = "other"
+    elif mutation == "missing":
+        del rows[safe_index]
+    else:
+        rows.insert(safe_index + 1, dict(safe_row))
+    for sequence, row in enumerate(rows, start=1):
+        row["sequence"] = sequence
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    summary = opencode_mcp_observer.read_protocol_observations(
+        path,
+        expected_nonce=nonce,
+        expected_safe_result_tool="list_local_cao_peers",
+    )
+    assert summary["observer_status"] == "incomplete"
+    assert summary["mcp_tool_calls"][0]["status"] == "in_progress"
+    assert "safe_result_success" not in summary["mcp_tool_calls"][0]
+
+
+@pytest.mark.offline_database
+def test_private_safe_result_environment_is_fixed_and_default_off(tmp_path: Path) -> None:
+    from mcp import types
+
+    nonce = "b" * 32
+    root = tmp_path / "safe-result-environment"
+    root.mkdir(mode=0o700)
+    path = root / "observer.jsonl"
+
+    def make_server():
+        return SimpleNamespace(
+            _mcp_server=SimpleNamespace(
+                request_handlers={
+                    types.ListToolsRequest: object(),
+                    types.CallToolRequest: object(),
+                }
+            )
+        )
+
+    base_environment = {
+        opencode_mcp_observer.OBSERVER_ENABLE_ENV: "1",
+        opencode_mcp_observer.OBSERVER_PATH_ENV: str(path),
+        opencode_mcp_observer.OBSERVER_NONCE_ENV: nonce,
+    }
+
+    observer = opencode_mcp_observer.install_protocol_observer_from_env(
+        make_server(),
+        base_environment,
+    )
+    observer.close()
+    assert observer._expected_safe_result_tool is None
+
+    opt_in_path = root / "observer-opt-in.jsonl"
+    opt_in_environment = {
+        **base_environment,
+        opencode_mcp_observer._SAFE_RESULT_TOOL_ENV: "list_local_cao_peers",
+        opencode_mcp_observer.OBSERVER_PATH_ENV: str(opt_in_path),
+    }
+    opt_in = opencode_mcp_observer.install_protocol_observer_from_env(
+        make_server(),
+        opt_in_environment,
+    )
+    opt_in.close()
+    assert opt_in._expected_safe_result_tool == "list_local_cao_peers"
+
+    invalid_environment = {
+        **base_environment,
+        opencode_mcp_observer._SAFE_RESULT_TOOL_ENV: "assign_local_cao_task",
+    }
+    with pytest.raises(RuntimeError, match="mcp_observer_safe_result_tool_invalid"):
+        opencode_mcp_observer.install_protocol_observer_from_env(
+            make_server(),
+            invalid_environment,
+        )
+
+
 @pytest.mark.offline_database
 @pytest.mark.parametrize("field", ["version", "sequence"])
 @pytest.mark.parametrize("probe_enabled", [False, True])

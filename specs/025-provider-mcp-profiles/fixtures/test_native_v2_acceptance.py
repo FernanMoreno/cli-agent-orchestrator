@@ -776,6 +776,7 @@ def test_generic_message_case_has_fixed_exact_profile_and_fixture():
     assert tuple(item.case_id for item in runner.CASE_DEFINITIONS) == (
         "collaboration",
         "generic_message",
+        "coordination",
     )
     assert case.label == "t116-native-v2-generic-message"
     assert case.receipt_schema == "spec025.t116.opencode-v2-generic-message.private.v1"
@@ -946,7 +947,10 @@ def test_generic_message_case_registry_rejects_unknown_case():
         runner.CASE_DEFINITIONS[1].case_id = "arbitrary-tools"
 
 
-def test_offer_observer_startup_ast_keeps_verified_journey_module_bound(monkeypatch, tmp_path):
+@pytest.mark.parametrize("case_id", ("collaboration", "generic_message", "coordination"))
+def test_offer_observer_startup_ast_keeps_verified_journey_module_bound(
+    monkeypatch, tmp_path, case_id
+):
     import ast
     from types import SimpleNamespace
 
@@ -1036,7 +1040,8 @@ def test_offer_observer_startup_ast_keeps_verified_journey_module_bound(monkeypa
             "offer_plugin_bytes": (
                 runner.REPO / "test/live_provider/opencode_http_tool_offer_observer.js"
             ).read_bytes(),
-            "HTTP_OFFER_TOOL_NAMES": runner.HTTP_OFFER_TOOL_NAMES,
+            "_case_http_offer_names": runner._case_http_offer_names,
+            "case": runner._case_definition(case_id),
             "observer_dir": observer_dir,
             "offer_directories": {},
             "offer_observer": SimpleNamespace(install_project_plugin=install_project_plugin),
@@ -4466,3 +4471,261 @@ def test_t135_outer_failure_handler_records_checkpoint_without_replacing_error()
         "stage": "provider_process_snapshot",
         "private_error_code": "unknown_private_runtime_error",
     }
+
+
+def test_coordination_case_has_exact_twelve_tools_and_keeps_existing_cases():
+    from cli_agent_orchestrator.utils.mcp_tool_policy import TOOL_PROFILES
+
+    assert tuple(item.case_id for item in runner.CASE_DEFINITIONS[:2]) == (
+        "collaboration",
+        "generic_message",
+    )
+    case = runner._case_definition("coordination")
+    assert tuple(item.case_id for item in runner.CASE_DEFINITIONS) == (
+        "collaboration",
+        "generic_message",
+        "coordination",
+    )
+    assert case.sender_catalog == tuple(sorted(TOOL_PROFILES["coordination"]))
+    assert len(case.sender_catalog) == 12
+    assert case.sender_allowed_tools == ("@cao-mcp-server",)
+    assert case.sender_enabled_mcp_tools is None
+    assert case.sender_calls == ("list_local_cao_peers", "send_message", "send_message")
+    assert case.requires_human_capability is True
+    assert runner.RUN_ENABLED is False
+    assert runner._case_definition("collaboration").sender_catalog == runner.SENDER_TOOLS
+    assert len(runner.SENDER_TOOLS) == 8
+
+
+def test_coordination_case_has_separate_source_bound_profile_fixture():
+    assert runner._case_fixture_contract("coordination") is True
+    assert runner._case_fixture_contract("collaboration") is True
+    assert runner._case_fixture_contract("generic_message") is True
+
+
+def test_coordination_profile_selection_keeps_receiver_empty_collaboration():
+    import frontmatter
+
+    sender = frontmatter.loads(runner._profile_text(frontmatter, "sender", {}, "coordination"))
+    receiver = frontmatter.loads(runner._profile_text(frontmatter, "receiver", {}, "coordination"))
+    assert sender.metadata["mcpServers"]["cao-mcp-server"]["cao_tool_profile"] == "coordination"
+    assert "enabled_tools" not in sender.metadata["mcpServers"]["cao-mcp-server"]
+    assert sender.metadata["allowedTools"] == ["@cao-mcp-server"]
+    assert receiver.metadata["mcpServers"]["cao-mcp-server"]["cao_tool_profile"] == "collaboration"
+    assert receiver.metadata["mcpServers"]["cao-mcp-server"]["enabled_tools"] == []
+    assert receiver.metadata["allowedTools"] == []
+
+
+def test_coordination_phase_prompt_calls_read_only_peers_once_before_messages():
+    first = runner._phase_prompt(0, "a1b2c3d4", runner.PRE_RESTART_MESSAGE, "coordination")
+    second = runner._phase_prompt(1, "a1b2c3d4", runner.POST_RESTART_MESSAGE, "coordination")
+    assert first.count("cao-mcp-server_list_local_cao_peers") == 1
+    assert "cao-mcp-server_list_local_cao_peers" not in second
+    assert "cao-mcp-server_list_siblings" not in first + second
+    assert "cao-mcp-server_list_siblings" in runner._phase_prompt(
+        0, "a1b2c3d4", runner.PRE_RESTART_MESSAGE
+    )
+    for prompt in (first, second):
+        assert "cao-mcp-server_send_message exactly once" in prompt
+        assert runner.LAST_RECEIPT in prompt
+
+
+@pytest.mark.parametrize("status,peers", [(200, []), (200, [{}]), (403, []), (True, []), (200, {})])
+def test_coordination_context_requires_exact_registered_cwd_and_empty_authorized_list(
+    status, peers
+):
+    metadata = {"id": "a1b2c3d4", "working_directory": "/tmp/private-coordination"}
+    expected = status == 200 and type(status) is int and type(peers) is list and not peers
+    assert (
+        runner._coordination_context_contract(
+            metadata,
+            sender_id="a1b2c3d4",
+            working_directory="/tmp/private-coordination",
+            peer_status=status,
+            peer_body=peers,
+        )
+        is expected
+    )
+    for changed in ({**metadata, "id": "b1b2c3d4"}, {**metadata, "working_directory": "/operator"}):
+        assert (
+            runner._coordination_context_contract(
+                changed,
+                sender_id="a1b2c3d4",
+                working_directory="/tmp/private-coordination",
+                peer_status=200,
+                peer_body=[],
+            )
+            is False
+        )
+
+
+@pytest.mark.parametrize(
+    "success,count,expected",
+    [
+        (True, 0, True),
+        (False, 0, False),
+        (None, 0, False),
+        (1, 0, False),
+        (True, False, False),
+        (True, 1, False),
+        (True, None, False),
+    ],
+)
+def test_coordination_completed_call_requires_explicit_success_and_zero_peer_count(
+    success, count, expected
+):
+    call = {
+        "server": "cao-mcp-server",
+        "tool": "list_local_cao_peers",
+        "status": "completed",
+        "error_present": False,
+        "result_present": True,
+        "safe_result_success": success,
+        "safe_result_peer_count": count,
+    }
+    assert runner._coordination_result_contract({"mcp_tool_calls": [call]}) is expected
+    assert (
+        runner._coordination_result_contract(
+            {"mcp_tool_calls": [{**call, "tool": "list_siblings"}]}
+        )
+        is False
+    )
+    assert runner._coordination_result_contract({"mcp_tool_calls": [call, call]}) is False
+
+
+def test_coordination_http_offers_require_twelve_without_weakening_full_eight():
+    tracked = runner._case_http_offer_names("coordination")
+    offered = runner._case_mcp_wire_names("coordination")
+    summary = _http_offer_summary([offered, offered], tracked_tool_names=tracked)
+    assert runner._http_tool_offer_contract(
+        summary,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=offered,
+        tracked_tool_names=tracked,
+        case_id="coordination",
+    )
+    assert not runner._http_tool_offer_contract(
+        summary,
+        expected_nonce="1" * 32,
+        expected_mcp_tool_names=runner.MCP_HTTP_OFFER_TOOL_NAMES,
+        tracked_tool_names=tracked,
+        case_id="collaboration",
+    )
+    for tools in (offered[:-1], offered + ("execute",)):
+        wrong = _http_offer_summary([tools, tools], tracked_tool_names=tracked)
+        assert not runner._http_tool_offer_contract(
+            wrong,
+            expected_nonce="1" * 32,
+            expected_mcp_tool_names=offered,
+            tracked_tool_names=tracked,
+            case_id="coordination",
+        )
+
+
+def test_coordination_native_grant_does_not_substitute_for_server_profile():
+    from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
+    from cli_agent_orchestrator.utils.mcp_tool_policy import (
+        MCP_TOOL_FILTER_ENV,
+        MCP_TOOL_PROFILE_ENV,
+    )
+
+    args = dict(
+        capability_path=Path("/private/sender.cap"),
+        case_id="coordination",
+        filter_env=MCP_TOOL_FILTER_ENV,
+        profile_env=MCP_TOOL_PROFILE_ENV,
+        legacy_marker=_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV,
+    )
+    grant = [{"action": "cao-mcp-server_*", "resource": "*", "effect": "allow"}]
+    environment = {
+        MCP_TOOL_PROFILE_ENV: "coordination",
+        "CAO_INTERACTION_CAPABILITY_FILE": "/private/sender.cap",
+    }
+    assert runner._native_mcp_profile_contract(
+        "sender", {"codemode": False}, environment, grant, **args
+    )
+    assert not runner._native_mcp_profile_contract(
+        "sender",
+        {"codemode": False},
+        {**environment, MCP_TOOL_PROFILE_ENV: "collaboration"},
+        grant,
+        **args,
+    )
+    assert not runner._native_mcp_profile_contract(
+        "sender", {"codemode": True}, environment, grant, **args
+    )
+    assert not runner._native_mcp_profile_contract(
+        "sender", {"codemode": False}, {**environment, MCP_TOOL_FILTER_ENV: "[]"}, grant, **args
+    )
+    for invalid_role in (None, "unknown", []):
+        assert (
+            runner._native_mcp_profile_contract(
+                invalid_role, {"codemode": False}, environment, grant, **args
+            )
+            is False
+        )
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_coordination_derived_observer_attests_actual_fastmcp_result(
+    tmp_path, monkeypatch, success
+):
+    from mcp import types
+    from mcp.server.fastmcp import FastMCP
+
+    case = runner._case_definition("coordination")
+    source = (runner.REPO / "test/live_provider/opencode_mcp_observer.py").read_bytes()
+    derived = runner._derive_private_mcp_observer_source(
+        source,
+        sender_catalog=case.sender_catalog,
+        expected_message_bodies=tuple(body for _phase, body in runner.PHASES),
+        **runner._case_observer_options(case.case_id),
+    )
+    path = tmp_path / "derived_observer.py"
+    path.write_text(derived, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("t166_derived_observer_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    server = FastMCP("t166-derived-result")
+
+    @server.tool()
+    async def list_local_cao_peers() -> dict[str, object]:
+        return {"success": success, "peers": []}
+
+    base_path = tmp_path / "native-events"
+    nonce = "e" * 32
+    observer = module.install_protocol_observer_from_env(
+        server,
+        environ={
+            "CAO_OPENCODE_MCP_OBSERVER": "1",
+            "CAO_OPENCODE_MCP_OBSERVER_PATH": str(base_path),
+            "CAO_OPENCODE_MCP_OBSERVER_NONCE": nonce,
+            "CAO_TERMINAL_ID": "0123abcd",
+        },
+    )
+
+    async def dispatch():
+        result = await server._mcp_server.request_handlers[types.CallToolRequest](
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(name="list_local_cao_peers", arguments={}),
+            )
+        )
+        assert result.root.isError is False
+
+    try:
+        asyncio.run(dispatch())
+    finally:
+        observer.close()
+    summary = module.read_protocol_observations(
+        base_path.with_name(base_path.name + "-0123abcd"),
+        expected_nonce=nonce,
+        expected_message_bodies=tuple(body for _phase, body in runner.PHASES),
+        **runner._case_observer_options(case.case_id),
+    )
+    assert summary["observer_status"] == "observed"
+    assert summary["mcp_tool_calls"][0]["safe_result_success"] is success
+    assert summary["mcp_tool_calls"][0]["safe_result_peer_count"] == 0
+    assert runner._coordination_result_contract(summary) is success
