@@ -42,7 +42,11 @@ def test_missing_or_failed_protocol_result_fails_closed():
             protocol.unwrap_coordination_result(value)
 
 
-def test_cli_pairing_receipt_does_not_export_one_use_code(monkeypatch, tmp_path):
+@pytest.mark.parametrize("pretty_json", [False, True])
+@pytest.mark.parametrize("binding", ["correct", "wrong_peer", "wrong_project"])
+def test_cli_pairing_receipt_does_not_export_one_use_code(
+    monkeypatch, tmp_path, pretty_json, binding
+):
     source = protocol._Identity("11111111-1111-4111-8111-111111111111", "a")
     target = protocol._Identity("22222222-2222-4222-8222-222222222222", "b")
     monkeypatch.setattr(
@@ -55,14 +59,40 @@ def test_cli_pairing_receipt_does_not_export_one_use_code(monkeypatch, tmp_path)
 
     def command(label, env, args, raw_dir, *, stdin=None):
         calls.append((label, args, stdin))
+        assert "--json" in args
         if label == "source-pair":
-            text = (
-                f"Par: target ({target.instance_id})\nProyecto: {tmp_path}\n"
-                f"ID de emparejamiento: {challenge}\nCódigo temporal (válido 5 minutos): {code}\n"
-            )
+            payload = {
+                "schema": "cao.peer.pair.v1",
+                "success": True,
+                "data": {
+                    "challenge_id": challenge,
+                    "code": code,
+                    "expires_at": 2000000000.0,
+                    "peer_instance_id": target.instance_id,
+                    "peer_display_name": "target",
+                    "project_id": project_id,
+                    "canonical_root": str(tmp_path),
+                    "requested_scopes": ["task:submit"],
+                },
+            }
         else:
             assert stdin == f"y\n{code}\n"
-            text = f"Emparejado con source para el proyecto {project_id}.\n"
+            payload = {
+                "schema": "cao.peer.accept.v1",
+                "success": True,
+                "data": {
+                    "peer_instance_id": source.instance_id,
+                    "peer_display_name": "source",
+                    "project_id": project_id,
+                    "scopes": ["task:submit"],
+                },
+            }
+        if label == "target-accept":
+            if binding == "wrong_peer":
+                payload["data"]["peer_instance_id"] = target.instance_id
+            if binding == "wrong_project":
+                payload["data"]["project_id"] = "c" * 64
+        text = json.dumps(payload, indent=2 if pretty_json else None)
         return text, tmp_path / (label + ".private")
 
     monkeypatch.setattr(protocol, "_run_cli", command)
@@ -78,6 +108,17 @@ def test_cli_pairing_receipt_does_not_export_one_use_code(monkeypatch, tmp_path)
         "CAO_DATABASE_CONFIG_FILE": str(tmp_path / "target.json"),
         "CAO_API_PORT": "19002",
     }
+    if binding != "correct":
+        with pytest.raises(protocol.HarnessError, match="accept_output_invalid"):
+            receipt = protocol.pair_profiles(
+                source_env,
+                target_env,
+                "http://127.0.0.1:19001",
+                "http://127.0.0.1:19002",
+                tmp_path,
+                tmp_path,
+            )
+        return
     receipt = protocol.pair_profiles(
         source_env,
         target_env,
@@ -182,3 +223,50 @@ def test_mcp_closure_distinguishes_not_created_from_failed_exit(created, exited,
     receipt = {"mcp_client_created": created, "mcp_client_closed": exited}
     journey.record_mcp_closure(receipt, processes_dead=dead)
     assert receipt["mcp_client_closed"] is expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Emparejado con source para el proyecto " + "b" * 64 + ".",
+        '{"schema":"cao.peer.accept.v1","success":true,"success":false,"data":{}}',
+        '{"schema":"cao.peer.accept.v1","success":1,"data":{}}',
+        '{"schema":"cao.peer.accept.v2","success":true,"data":{}}',
+        '{"schema":"cao.peer.accept.v1","success":true,"data":{},"extra":true}',
+    ],
+)
+def test_structured_cli_rejects_prose_ambiguous_or_wrong_schema(text):
+    from cli_agent_orchestrator.models.peer_cli import PeerAcceptOutput
+
+    with pytest.raises(protocol.HarnessError, match="accept_output_invalid"):
+        protocol._structured_cli_output(text, PeerAcceptOutput, "accept_output_invalid")
+
+
+def test_structured_cli_requires_boolean_success_with_other_fields_valid():
+    from cli_agent_orchestrator.models.peer_cli import PeerAcceptOutput
+
+    payload = {
+        "schema": "cao.peer.accept.v1",
+        "success": 1,
+        "data": {
+            "peer_instance_id": "11111111-1111-4111-8111-111111111111",
+            "peer_display_name": "source",
+            "project_id": "b" * 64,
+            "scopes": [],
+        },
+    }
+    with pytest.raises(protocol.HarnessError, match="accept_output_invalid"):
+        protocol._structured_cli_output(
+            json.dumps(payload), PeerAcceptOutput, "accept_output_invalid"
+        )
+
+
+def test_private_caller_binary_is_source_bound_and_resolvable(tmp_path):
+    import shutil
+
+    import run_native_paired_worker as journey
+
+    expected = journey.native.REPO / "test/providers/fixtures/bin/mock_cli"
+    path = journey.private_executable_path(tmp_path / "bin/opencode")
+    assert shutil.which("mock_cli", path=path) == str(expected)
+    assert "test/providers/fixtures/bin/mock_cli" in journey.EXTRA_SOURCES

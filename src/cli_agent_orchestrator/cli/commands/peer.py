@@ -1,10 +1,14 @@
 """Operator commands for pairing and coordinating local CAO profiles."""
 
 import json
-from typing import cast
+import sys
+from contextlib import nullcontext, redirect_stdout
+from typing import NoReturn, cast
 
 import click
+from pydantic import ValidationError
 
+from cli_agent_orchestrator.models.peer_cli import PeerAcceptOutput, PeerErrorOutput, PeerPairOutput
 from cli_agent_orchestrator.services import local_peer_auth, local_peer_service
 
 
@@ -53,6 +57,26 @@ def list_peers(project_path: str | None, as_json: bool) -> None:
         )
 
 
+def _pairing_json_error(operation: str, code: str) -> NoReturn:
+    output = PeerErrorOutput.model_validate(
+        {
+            "schema": "cao.peer.error.v1",
+            "success": False,
+            "error": {"operation": operation, "code": code},
+        }
+    )
+    click.echo(output.model_dump_json(by_alias=True))
+    raise click.exceptions.Exit(1)
+
+
+def _emit_pairing_success(model, schema: str, data, operation: str) -> None:
+    try:
+        output = model.model_validate({"schema": schema, "success": True, "data": data})
+    except ValidationError:
+        _pairing_json_error(operation, "pairing_result_invalid")
+    click.echo(output.model_dump_json(by_alias=True))
+
+
 @peer.command("pair")
 @click.argument("instance_id")
 @click.option(
@@ -62,12 +86,18 @@ def list_peers(project_path: str | None, as_json: bool) -> None:
     type=click.Path(exists=True, file_okay=False),
     help="Shared local project directory.",
 )
-def pair_peer(instance_id: str, project_path: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print versioned machine-readable JSON.")
+def pair_peer(instance_id: str, project_path: str, as_json: bool) -> None:
     """Create a one-use pairing code for another active local CAO profile."""
     try:
         challenge = local_peer_service.initiate_pairing(instance_id, project_path)
     except (local_peer_service.LocalPeerError, local_peer_auth.LocalPeerAuthError) as error:
+        if as_json:
+            _pairing_json_error("pair", "pairing_failed")
         raise click.ClickException(str(error)) from error
+    if as_json:
+        _emit_pairing_success(PeerPairOutput, "cao.peer.pair.v1", challenge, "pair")
+        return
     click.echo(f"Par: {challenge['peer_display_name']} ({challenge['peer_instance_id']})")
     click.echo(f"Proyecto: {challenge['canonical_root']}")
     click.echo(f"Acciones solicitadas: {', '.join(cast(list[str], challenge['requested_scopes']))}")
@@ -81,25 +111,52 @@ def pair_peer(instance_id: str, project_path: str) -> None:
 
 @peer.command("accept")
 @click.argument("challenge_id")
-def accept_peer_pairing(challenge_id: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Print versioned machine-readable JSON.")
+def accept_peer_pairing(challenge_id: str, as_json: bool) -> None:
     """Review and accept a one-use pairing invitation from another CAO."""
     try:
         challenge = local_peer_auth.get_candidate_challenge(challenge_id)
     except local_peer_auth.LocalPeerAuthError as error:
+        if as_json:
+            _pairing_json_error("accept", "pairing_failed")
         raise click.ClickException(str(error)) from error
-    click.echo(f"Instancia que solicita acceso: {challenge['initiator_display_name']}")
-    click.echo(f"Identidad: {challenge['initiator_instance_id']}")
-    click.echo(f"Proyecto: {challenge['canonical_root']}")
-    click.echo(f"Acciones solicitadas: {', '.join(cast(list[str], challenge['requested_scopes']))}")
-    if not click.confirm(
-        "¿Autorizas este emparejamiento para el proyecto indicado?", default=False
-    ):
+    click.echo(f"Instancia que solicita acceso: {challenge['initiator_display_name']}", err=as_json)
+    click.echo(f"Identidad: {challenge['initiator_instance_id']}", err=as_json)
+    click.echo(f"Proyecto: {challenge['canonical_root']}", err=as_json)
+    click.echo(
+        f"Acciones solicitadas: {', '.join(cast(list[str], challenge['requested_scopes']))}",
+        err=as_json,
+    )
+    try:
+        # Click may echo visible confirmation input to stdout even with err=True.
+        # Keep the entire prompt interaction off the machine-result stream.
+        with redirect_stdout(sys.stderr) if as_json else nullcontext():
+            confirmed = click.confirm(
+                "¿Autorizas este emparejamiento para el proyecto indicado?",
+                default=False,
+                err=as_json,
+            )
+            if confirmed:
+                code = click.prompt(
+                    "Código temporal", hide_input=True, confirmation_prompt=False, err=as_json
+                )
+    except click.Abort:
+        if as_json:
+            _pairing_json_error("accept", "pairing_aborted")
+        raise
+    if not confirmed:
+        if as_json:
+            _pairing_json_error("accept", "pairing_declined")
         raise click.ClickException("Emparejamiento rechazado; no se creó permiso.")
-    code = click.prompt("Código temporal", hide_input=True, confirmation_prompt=False)
     try:
         receipt = local_peer_service.accept_pairing(challenge_id, code)
     except (local_peer_service.LocalPeerError, local_peer_auth.LocalPeerAuthError) as error:
+        if as_json:
+            _pairing_json_error("accept", "pairing_failed")
         raise click.ClickException(str(error)) from error
+    if as_json:
+        _emit_pairing_success(PeerAcceptOutput, "cao.peer.accept.v1", receipt, "accept")
+        return
     click.echo(
         f"Emparejado con {receipt['peer_display_name']} para el proyecto "
         f"{receipt['project_id']}."

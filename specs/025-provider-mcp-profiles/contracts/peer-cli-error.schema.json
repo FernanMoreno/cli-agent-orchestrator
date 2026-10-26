@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "PeerErrorData": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "enum": [
+            "pair",
+            "accept"
+          ],
+          "title": "Operation",
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "pairing_failed",
+            "pairing_declined",
+            "pairing_aborted",
+            "pairing_result_invalid"
+          ],
+          "title": "Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "code"
+      ],
+      "title": "PeerErrorData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "cao.peer.error.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "success": {
+      "const": false,
+      "title": "Success",
+      "type": "boolean"
+    },
+    "error": {
+      "$ref": "#/$defs/PeerErrorData"
+    }
+  },
+  "required": [
+    "schema",
+    "success",
+    "error"
+  ],
+  "title": "PeerErrorOutput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

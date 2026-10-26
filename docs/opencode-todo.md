@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Actualización 2026-10-26 · T169: peer pair/accept --json y consumidor tipado integrados,39 controles y20 contratos PostgreSQL pasan. Segundo preflight identificó el parser de texto; **nuevo preflight nativo T168 pendiente**. Auditoría propone T170, sin implementarlo. [Resultado](../specs/025-provider-mcp-profiles/validation-t169.md) y [auditoría](../specs/025-provider-mcp-profiles/structured-output-audit.md).
+
 Actualización 2026-10-26 · T168: preparado recorrido separado de emparejamiento CLI/API/MCP real a trabajador OpenCode nativo; primer preflight fallido antes de inferencia; corregida la configuración del peer compartido y el cierre no creado;20 controles pasan. **Repetición real y aceptación pendientes**. [Alcance](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).
 
 Actualización 2026-10-26 · T167: corregida la clasificación de tareas rechazadas por ocupación y luego no encontradas;118 pruebas pasan, con dos APIs/PostgreSQL reales y trabajadores mock_cli. **Nueva aceptación nativa entre instancias pendiente**; T166 conserva su fuentefda0c1be. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t167.md).

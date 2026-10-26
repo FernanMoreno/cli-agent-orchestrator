@@ -685,3 +685,7 @@ T165 validado:2RED raíz/hijo por error real de SessionLocal→2GREEN;112 contro
 - [x] T167 [US4] [FR145/SC129] Reproduce paired project_busy -> get/cancel classification with actual two-process/PG composition; fix first incorrect boundary without inventing task settlement/absence, verify explicit same-key retry and healthy/unavailable/caller controls, record evidence and leave native paired-worker OC2-04 acceptance separate.
 
 - [ ] T168 [US4] [FR146/SC130] Implement/review default-closed production CLI-paired two-API/real-stdio coordinator to pinned native OpenCode worker journey; validate actual initialization and strict success/replay/active-cancel/Git/cleanup/credential gates, integrate/repin before actual models, record complete or partial source-bound outcome without native-coordinator/global inference.
+
+- [x] T169 [US4] [FR147/SC131] Implement strict versioned JSON outputs for peer pair/accept and migrate T168 off localized CLI prose; preserve explicit authorization/error exits/human defaults/private code handling, audit other machine boundaries, validate producer/consumer/real-PG authorization contracts before fresh native preflight.
+
+- [ ] T170 [US4] [FR148/SC132] Reproduce and correct cao agent final-output non-TTY contract (including handoff) after current T169/T168; verify TTY/pipe/explicitJSON success/failure and heartbeat/exit compatibility. Audit proposal, not implemented.

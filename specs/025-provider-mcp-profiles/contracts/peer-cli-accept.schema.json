@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "AcceptData": {
+      "additionalProperties": false,
+      "properties": {
+        "peer_instance_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Peer Instance Id",
+          "type": "string"
+        },
+        "peer_display_name": {
+          "title": "Peer Display Name",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "peer_instance_id",
+        "peer_display_name",
+        "project_id",
+        "scopes"
+      ],
+      "title": "AcceptData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "cao.peer.accept.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "success": {
+      "const": true,
+      "title": "Success",
+      "type": "boolean"
+    },
+    "data": {
+      "$ref": "#/$defs/AcceptData"
+    }
+  },
+  "required": [
+    "schema",
+    "success",
+    "data"
+  ],
+  "title": "PeerAcceptOutput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

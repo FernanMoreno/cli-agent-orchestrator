@@ -36,6 +36,8 @@ EXTRA_SOURCES = (
     "specs/025-provider-mcp-profiles/fixtures/native_paired_protocol.py",
     "specs/025-provider-mcp-profiles/fixtures/run_native_paired_worker.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_paired_protocol.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_peer_cli_json.py",
+    "test/providers/fixtures/bin/mock_cli",
 )
 
 
@@ -137,6 +139,12 @@ def record_mcp_closure(receipt: dict, *, processes_dead: bool) -> None:
     receipt["mcp_client_closed"] = (
         not_created or receipt.get("mcp_client_closed") is True
     ) and processes_dead
+
+
+def private_executable_path(binary: Path) -> str:
+    return ":".join(
+        (str(binary.parent), str(native.REPO / "test/providers/fixtures/bin"), "/usr/bin", "/bin")
+    )
 
 
 def worker_profile(environment: dict) -> str:
@@ -413,7 +421,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         _copy_private_state_bundle(auth_paths[0], data)
         raw = journey._private_directory(root / "raw")
         tmux_dir = journey._private_directory(root / "tmux")
-        path_value = str(Path(manifest["binary_path"]).parent) + ":/usr/bin:/bin"
+        path_value = private_executable_path(Path(manifest["binary_path"]))
         common = {
             "HOME": str(home),
             "PATH": path_value,

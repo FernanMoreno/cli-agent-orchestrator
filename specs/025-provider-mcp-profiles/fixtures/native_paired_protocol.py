@@ -19,6 +19,7 @@ import requests
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from cli_agent_orchestrator.models.peer_cli import PeerAcceptOutput, PeerPairOutput
 from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_PROFILE_ENV, TOOL_PROFILES
 
 COORDINATION_TOOLS = TOOL_PROFILES["coordination"]
@@ -146,9 +147,20 @@ def _run_cli(label, env, args, raw_dir, *, stdin=None):
     return result.stdout, path
 
 
-def _one(pattern: str, text: str) -> str | None:
-    found = re.findall(pattern, text, flags=re.MULTILINE)
-    return found[0] if len(found) == 1 else None
+def _structured_cli_output(text: str, model, code: str):
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON member")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(text, object_pairs_hook=unique_keys)
+        return model.model_validate(payload)
+    except (ValueError, TypeError):
+        raise HarnessError(code) from None
 
 
 def pair_profiles(
@@ -193,33 +205,28 @@ def pair_profiles(
     pair_stdout, pair_log = _run_cli(
         "source-pair",
         source_env,
-        ["peer", "pair", target_before.instance_id, "--project", project_path],
+        ["peer", "pair", target_before.instance_id, "--project", project_path, "--json"],
         raw_dir,
     )
-    challenge_id = _one(
-        r"^ID de emparejamiento: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
-        pair_stdout,
-    )
-    pairing_code = _one(r"^Código temporal \(válido 5 minutos\): ([A-Za-z0-9_-]{43})$", pair_stdout)
-    selected_peer = _one(r"^Par: .+ \(([0-9a-f-]{36})\)$", pair_stdout)
-    canonical_project = _one(r"^Proyecto: (.+)$", pair_stdout)
+    pairing = _structured_cli_output(pair_stdout, PeerPairOutput, "pair_output_invalid").data
     if (
-        challenge_id is None
-        or pairing_code is None
-        or selected_peer != target_before.instance_id
-        or canonical_project != project_path
+        pairing.peer_instance_id != target_before.instance_id
+        or pairing.canonical_root != project_path
     ):
         raise HarnessError("pair_output_invalid", (str(pair_log),))
 
     accept_stdout, accept_log = _run_cli(
         "target-accept",
         target_env,
-        ["peer", "accept", challenge_id],
+        ["peer", "accept", pairing.challenge_id, "--json"],
         raw_dir,
-        stdin=f"y\n{pairing_code}\n",
+        stdin=f"y\n{pairing.code}\n",
     )
-    project_id = _one(r"^Emparejado con .+ para el proyecto ([0-9a-f]{64})\.$", accept_stdout)
-    if project_id is None:
+    accepted = _structured_cli_output(accept_stdout, PeerAcceptOutput, "accept_output_invalid").data
+    if (
+        accepted.peer_instance_id != source_before.instance_id
+        or accepted.project_id != pairing.project_id
+    ):
         raise HarnessError("accept_output_invalid", (str(pair_log), str(accept_log)))
 
     if _identity(source_url) != source_before or _identity(target_url) != target_before:
@@ -227,7 +234,7 @@ def pair_profiles(
     return PairingReceipt(
         source_instance_id=source_before.instance_id,
         target_instance_id=target_before.instance_id,
-        project_id=project_id,
+        project_id=accepted.project_id,
         diagnostics=(str(pair_log), str(accept_log)),
     )
 

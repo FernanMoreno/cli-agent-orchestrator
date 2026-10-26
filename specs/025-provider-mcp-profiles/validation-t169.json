@@ -1,0 +1,57 @@
+{
+  "schema": "caos.spec025.t169.structured-cli-validation.v1",
+  "date": "2026-10-26",
+  "base_head": "a7659dd327eb62dd4888dd0ea860c448a8660f92",
+  "scope": "peer pair/accept JSON producer, typed paired consumer and operation authorization; no provider acceptance",
+  "offline": {
+    "passed": 39,
+    "seconds": 36.99,
+    "log": "structured-reviewed.log"
+  },
+  "postgres": {
+    "passed": 20,
+    "warnings": 2,
+    "pytest_seconds": 52.35,
+    "owner_seconds": 66.218,
+    "source_sha256": {
+      "src/cli_agent_orchestrator/models/peer_cli.py": "2003b81f459432b358cfcb9c285589ffa9fbfa698bc39629172e80aa37d36ebb",
+      "src/cli_agent_orchestrator/cli/commands/peer.py": "bd3ea22fa251ad3a9faeb064b1542e7be361a5fe503db395862ccad0373d3f7f",
+      "specs/025-provider-mcp-profiles/fixtures/native_paired_protocol.py": "cbad48f6f0fc381c36beaa88ba91d688072e7072915d88c0f8059179259a908d",
+      "specs/025-provider-mcp-profiles/fixtures/run_native_paired_worker.py": "cb618fea0a91912fec236b58fe9f8509886e0764203608ef881705420e0b8a8e",
+      "test/postgres/fixtures.py": "7318d370ef67be8600804bc1f893bf51a33cd8933e36d465a4fcaa190f9da7b4",
+      "test/cli/commands/test_peer_contracts.py": "04714be0001265d0ffd121e9c1f71a5ca3d34a57e8b04eafbecf2af4b002617a",
+      "test/cli/commands/test_peer.py": "9668a4140f08dd743afc128b0a485c50c699b7a180968f59ada2024d5534ded4"
+    },
+    "identity_verified": true,
+    "borrower_exited": true,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "exact_network_absent": true,
+    "destructive_commands_own_only": true,
+    "foreign_snapshot_preserved": false,
+    "foreign_snapshot_observation_only": true,
+    "memory_before_pytest_mib": 8755
+  },
+  "review": {
+    "claude": "d180b626562b40859c75d15652034c90",
+    "scope": "two production CLI/model files; no blockers; indeterminate output classification corrected and rechecked",
+    "earlier_timeout": "ff630154baa84f12a44c7cfdc246fb83 not GO"
+  },
+  "native_preflight_attempts": [
+    {
+      "head": "f9d219a5691341ab7985539c51366129c5d4ec18",
+      "error": "source-pair_failed",
+      "seconds": 113.699,
+      "native_terminals_created": 0
+    },
+    {
+      "head": "a7659dd327eb62dd4888dd0ea860c448a8660f92",
+      "error": "accept_output_invalid",
+      "seconds": 139.357,
+      "accept_cli_exit": 0,
+      "native_terminals_created": 0
+    }
+  ],
+  "native_paired_acceptance": "pending",
+  "global_gates": "open"
+}

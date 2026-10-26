@@ -19,16 +19,26 @@ from cli_agent_orchestrator.services import local_peer_registry as registry
 from cli_agent_orchestrator.services import local_peer_service as service
 
 
-def test_cli_list_and_pair_render_current_identity_without_granting_authority(peers):
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_list_and_pair_render_current_identity_without_granting_authority(peers, as_json):
     runner = CliRunner()
     listed = runner.invoke(peer, ["list", "--project", str(peers.project), "--json"])
     assert listed.exit_code == 0, listed.output
     assert json.loads(listed.output)["instances"][0]["instance_id"] == peers.peer.instance_id
     assert json.loads(listed.output)["grants"] == []
-    paired = runner.invoke(peer, ["pair", peers.peer.instance_id, "--project", str(peers.project)])
+    paired = runner.invoke(
+        peer,
+        ["pair", peers.peer.instance_id, "--project", str(peers.project)]
+        + (["--json"] if as_json else []),
+    )
     assert paired.exit_code == 0, paired.output
-    assert "Código temporal" in paired.output
-    assert peers.invitation["challenge_id"] in paired.output
+    if as_json:
+        body = json.loads(paired.stdout)
+        assert body["schema"] == "cao.peer.pair.v1" and body["success"] is True
+        assert body["data"]["challenge_id"] == peers.invitation["challenge_id"]
+    else:
+        assert "Código temporal" in paired.output
+        assert peers.invitation["challenge_id"] in paired.output
     assert grant(peers) is None
     with database.SessionLocal() as session:
         row = session.get(database.LocalPeerChallengeModel, peers.invitation["challenge_id"])
@@ -36,33 +46,56 @@ def test_cli_list_and_pair_render_current_identity_without_granting_authority(pe
 
 
 @pytest.mark.parametrize("confirmation", ["n", "y"])
-def test_cli_accept_requires_confirmation_and_one_use_secret(peers, confirmation):
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_accept_requires_confirmation_and_one_use_secret(peers, confirmation, as_json):
     payload = candidate_payload(peers)
     service.receive_pairing_invitation(payload)
     result = CliRunner().invoke(
         peer,
-        ["accept", payload["challenge_id"]],
+        ["accept", payload["challenge_id"]] + (["--json"] if as_json else []),
         input=confirmation + "\n" + payload["code"] + "\n",
     )
     assert payload["code"] not in result.output
     if confirmation == "n":
-        assert result.exit_code == 1 and "no se creó permiso" in result.output
+        assert result.exit_code == 1
+        if as_json:
+            assert json.loads(result.stdout)["error"]["code"] == "pairing_declined"
+        else:
+            assert "no se creó permiso" in result.output
         assert grant(peers) is None
     else:
-        assert result.exit_code == 0 and "Emparejado" in result.output
+        assert result.exit_code == 0
+        if as_json:
+            body = json.loads(result.stdout)
+            assert body["schema"] == "cao.peer.accept.v1" and body["success"] is True
+            assert body["data"]["project_id"] == payload["project_id"]
+        else:
+            assert "Emparejado" in result.output
         assert grant(peers).peer_public_key == peers.peer.public_key
         assert json.loads(grant(peers).scopes_json) == ["peer:revoke", "session:read"]
 
 
-def test_cli_accept_wrong_secret_and_unknown_challenge_do_not_create_grant(peers):
+@pytest.mark.parametrize("as_json", [False, True])
+def test_cli_accept_wrong_secret_and_unknown_challenge_do_not_create_grant(peers, as_json):
     payload = candidate_payload(peers)
     service.receive_pairing_invitation(payload)
     runner = CliRunner()
-    wrong = runner.invoke(peer, ["accept", payload["challenge_id"]], input="y\nwrong-secret\n")
-    assert wrong.exit_code == 1 and "code does not match" in wrong.output
+    flags = ["--json"] if as_json else []
+    wrong = runner.invoke(
+        peer, ["accept", payload["challenge_id"], *flags], input="y\nwrong-secret\n"
+    )
+    assert wrong.exit_code == 1
+    if as_json:
+        assert json.loads(wrong.stdout)["error"]["code"] == "pairing_failed"
+    else:
+        assert "code does not match" in wrong.output
     assert grant(peers) is None
-    missing = runner.invoke(peer, ["accept", str(uuid4())])
-    assert missing.exit_code == 1 and "not found" in missing.output
+    missing = runner.invoke(peer, ["accept", str(uuid4()), *flags])
+    assert missing.exit_code == 1
+    if as_json:
+        assert json.loads(missing.stdout)["error"]["code"] == "pairing_failed"
+    else:
+        assert "not found" in missing.output
     assert grant(peers) is None
 
 

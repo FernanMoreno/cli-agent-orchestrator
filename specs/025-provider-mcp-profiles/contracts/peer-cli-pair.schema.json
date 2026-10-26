@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "PairData": {
+      "additionalProperties": false,
+      "properties": {
+        "challenge_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Challenge Id",
+          "type": "string"
+        },
+        "code": {
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "expires_at": {
+          "title": "Expires At",
+          "type": "number"
+        },
+        "peer_instance_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "title": "Peer Instance Id",
+          "type": "string"
+        },
+        "peer_display_name": {
+          "title": "Peer Display Name",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "canonical_root": {
+          "minLength": 1,
+          "title": "Canonical Root",
+          "type": "string"
+        },
+        "requested_scopes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requested Scopes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "challenge_id",
+        "code",
+        "expires_at",
+        "peer_instance_id",
+        "peer_display_name",
+        "project_id",
+        "canonical_root",
+        "requested_scopes"
+      ],
+      "title": "PairData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "cao.peer.pair.v1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "success": {
+      "const": true,
+      "title": "Success",
+      "type": "boolean"
+    },
+    "data": {
+      "$ref": "#/$defs/PairData"
+    }
+  },
+  "required": [
+    "schema",
+    "success",
+    "data"
+  ],
+  "title": "PeerPairOutput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
