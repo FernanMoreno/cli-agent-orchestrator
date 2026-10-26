@@ -2,7 +2,7 @@
 
 ## Estado específico del proveedor · 2026-10-26
 
-La aceptación Claude de la fuente actual sigue pendiente. T031 conserva un diagnóstico Unicode nativo sano (Claude Code2.1.303, modelo solicitado claude-sonnet-4-6), sin explicar el504 histórico ni aceptar perfiles/recorridos ampliados. T168 corresponde al trabajador OpenCode y T169 al CLI de emparejamiento. Próximos gates: diagnóstico actual del504/Unicode; catálogo/autorización MCP con CLI Claude real; interacción/recuperación y mensajes. No renovar ni alterar login; T032 sigue aplazada.
+**Diagnóstico Unicode nativo actual PASS** en35a728c1: Claude Code2.1.303/Sonnet4.6 solicitado, HTTP200/21,204s, recibo succeeded/join y limpieza íntegra;1508pins, fuente/binario/operador intactos. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-claude-unicode-current.md). R1harness422 fallido conservado; el504 histórico sigue sin explicarse. La aceptación ampliada de Claude continúa pendiente: catálogo/autorización MCP, interacción/reinicio y mensajes. No alterar login;T032 ampliada sigue aplazada. T168/T169 pertenecen a OpenCode/control plane y no acreditan esos gates.
 
 [Revisión cruzada actual](../specs/025-provider-mcp-profiles/validation-all-providers-current.md):141 comprobaciones pasan; distingue contratos offline, diagnóstico nativo y aceptación por proveedor. Las pruebas reales intensivas siguen serializadas; los perfiles y contratos comunes se comprueban para los tres.
 

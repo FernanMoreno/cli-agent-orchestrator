@@ -82,6 +82,8 @@ T022/T028–T030 evidence: [native policy verification](validation-t022.md), wit
 
 T031 evidence: [timeout observations and real diagnostic](validation-t031.md): RED 11 failures/24 passes, corrected 214 passing regressions, 404-file typing, composition 5/0 and completed read-only Claude review. Corrected real Unicode probe: HTTP 200 in 21.909 seconds, verified marker/native receipt and confirmed cleanup. The first private verifier failure is preserved. T006 remains open because the historical 504 was not reproduced.
 
+Actualización2026-10-26: [diagnóstico Unicode de fuente actual](validation-claude-unicode-current.md) PASS en35a728c1, HTTP200/21,204s, un caso/recibo/join/limpieza,1508pins y operador intactos. R1harness422 fallido conservado. No explica504 ni cierraT006, perfiles/globales oT032 aplazada.
+
 ## T007 Claude explicit filters
 
 - [x] T032 Reproduce ineffective propagation of Claude profiled `enabled_tools`; implement a protected server-side immutable filter with strict startup parsing and empty/partial semantics, leaving legacy unprofiled behavior unchanged. Prove actual builder-to-MCP catalog/call boundaries, malformed/forged input refusal and instance isolation; run provider/native/install regressions, architecture/composition, typing/style and independent review. Keep full T007 and live acceptance open.
