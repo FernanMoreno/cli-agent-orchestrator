@@ -29,6 +29,14 @@ Validation before native execution:
 - All5 architecture contracts kept; Black/isort and scoped diff checks pass.
 - Root composition/source review and independent Claude review: GO.
 
-Native acceptance on the corrected source remains pending. This shared MCP
+Native CX-06 acceptance on9d5ba9f8 passed50.23s: two questions/answers,
+one ready wait, one ACK of both exact receipts, three AG-UI snapshots and
+one controlled API worker restart. All1509 source pins, binary/operator
+preservation and owned container/network absence passed. Executed descriptor
+archived and reclosed. [Native receipt](../022-provider-agui-restart/validation-codex-current.json).
+
+The native receipt does not count internal reconnect attempts or prove an HTTP
+long-poll was interrupted. Those scenarios remain CX-07; injected reconnect and
+real-PG replay evidence stay separately scoped. This shared MCP
 correction applies to every provider using the explicit wait tool; it does not
-establish current Codex/Claude/OpenCode native acceptance or global gates.
+establish other Codex gates, Claude/OpenCode native acceptance or global gates.

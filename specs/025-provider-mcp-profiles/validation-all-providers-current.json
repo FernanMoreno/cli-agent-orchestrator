@@ -18,7 +18,7 @@
   "scope": "Config builders, native policy/filters and in-process/real-Python-stdio MCP contracts; independent native OpenCode/Codex/Claude CLI acceptance not inferred.",
   "native_remaining": {
     "opencode": "T168 active cancellation not exercised: model-text activity predicate never passed before completion; R7 evidence retained.",
-    "codex": "Current-source native catalog/authorization; interaction/restart; separate generic and cao.work.message contracts.",
+    "codex": "CX-06 PASS on9d5ba9f8 with two questions/answers, exact ACK, production routes/controlled worker restart. Negative native catalog/authorization, inflight HTTP wait interruption/CX-07, Unicode/cancellation/CX-08, separate generic and cao.work.message contracts remain open.",
     "claude": "Current-source bounded Unicode diagnostic passed on35a728c1; historical504 cause remains unproved. NativeMCPcatalog/authorization, interaction/restart/messages and fullacceptance remain open; T032 deferred."
   },
   "architecture_contracts_kept": 5,
@@ -35,5 +35,13 @@
     "succeeded_receipt_join_cleanup": true,
     "historical_504_explained": false,
     "full_provider_acceptance": false
+  },
+  "subsequent_native_codex_acceptance": {
+    "execution_source": "9d5ba9f80d25ef2ef91661fe65806014911d9663",
+    "receipt": "../022-provider-agui-restart/validation-codex-current.json",
+    "seconds": 50.23,
+    "source_pins": 1509,
+    "CX_06_passed": true,
+    "global_acceptance": false
   }
 }

@@ -1,5 +1,27 @@
 # Codex current interaction diagnostic · 2026-10-26
 
+## Current scoped acceptance · 2026-10-27
+
+**PASS on9d5ba9f80d25ef2ef91661fe65806014911d9663** after T171.
+Codex CLI0.164.0, requested gpt-6-luna, completed in50.23s, exit0.
+Two questions/two human answers, one ready wait, one ACK containing both exact
+returned question/version/receipt identities, one API restart and three real
+AG-UI snapshots. Both deliveries are agent_acknowledged. All1509source pins,
+binary/operator auth byte/stat preservation and exact owned container/network
+absence passed. The executed descriptor was archived and reclosed flag-only.
+[Machine-readable scoped receipt](validation-codex-current.json).
+
+This closes CX-06, with production routes and lifespan off. It does not close
+full application startup, negative native catalog/authorization, messages,
+Unicode/cancellation, CX-07 or global acceptance. The native receipt does not
+count internal reconnections or prove interruption of an in-flight HTTP wait.
+An external read-only0.25s sampler observed non-200/failed health-query windows
+of0.677s and15.866s, and the actual native wait argument20. These are sampled
+health availability, not exact socket-downtime measurements or proof of which
+reconnect branches executed. The failed runs below retain their own sources.
+
+## Preserved first failure
+
 The real native run on `74a2ca9b910a1d574f09f78ba11f06699e4d110d`
 failed acceptance. Codex CLI 0.164.0, requested `gpt-6-luna`, exited zero in
 49.18 seconds. Two questions and two human answers persisted; one controlled

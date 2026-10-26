@@ -1,0 +1,102 @@
+{
+  "schema": "caos.codex-current-acceptance.v1",
+  "execution_source": "9d5ba9f80d25ef2ef91661fe65806014911d9663",
+  "source_pins": 1509,
+  "scope": "CX-06 two human questions/answers, exact receipt ACK, production routes/controlled worker restart with lifespan off",
+  "served_model_attested": false,
+  "internal_retries_attested": false,
+  "inflight_HTTP_wait_interruption_attested": false,
+  "global_acceptance": false,
+  "native": {
+    "provider": "codex",
+    "requested_model": "gpt-6-luna",
+    "version": "codex-cli 0.164.0",
+    "result": "completed_and_acknowledged",
+    "exit_code": 0,
+    "question_count": 2,
+    "question_kinds": [
+      "single_choice",
+      "text"
+    ],
+    "human_answers_posted": 2,
+    "elapsed_seconds": 50.23,
+    "api_worker_restarts": 1,
+    "agui_snapshot_count": 3,
+    "agui_identity_stable": true,
+    "agui_projection_redacted": true,
+    "agui_final_acknowledged": true,
+    "delivery_states": [
+      "agent_acknowledged",
+      "agent_acknowledged"
+    ],
+    "cleanup_status": "complete",
+    "temporary_files_removed": true,
+    "agent_tool_scope_exact": true,
+    "operator_auth_unchanged": true,
+    "ack_identity_diagnostics": {
+      "ready_wait_count": 1,
+      "create_group_seen": true,
+      "ack_call_count": 1,
+      "wait_call_count": 1,
+      "created_group_matches_database": true,
+      "created_questions_match_database": true,
+      "ready_wait_matches_database": true,
+      "ack_checks": [
+        {
+          "group_matches_created": true,
+          "group_matches_waited": true,
+          "question_versions_match_created": true,
+          "question_versions_match_returned": true,
+          "receipt_hashes_match_returned": true,
+          "ack_succeeded": true,
+          "ack_count": 2
+        }
+      ]
+    },
+    "provider_item_type_counts": {
+      "agent_message": 2,
+      "error": 1,
+      "mcp_tool_call": 6
+    },
+    "failure_diagnostics": {
+      "codex_linux_optional_dependency_missing": false,
+      "mcp_spawn_failed": false,
+      "mcp_handshake_failed": false,
+      "mcp_startup_timeout": false,
+      "mcp_process_exited": false,
+      "filesystem_write_denied": false,
+      "provider_configuration_rejected": false,
+      "provider_auth_rejected": false,
+      "provider_rate_limited": false
+    },
+    "sanitized_failure_signals": []
+  },
+  "proof": {
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "operator_auth_bytes_unchanged": true,
+    "operator_auth_identity_unchanged": true,
+    "model_command_verified": true,
+    "owner_context_returned": true,
+    "exact_container_absent": true,
+    "exact_network_absent": true,
+    "destructive_commands_own_only": true,
+    "strict_codex_receipt_accepted": true,
+    "success": true
+  },
+  "execution_descriptor_reclosed": true,
+  "prior_failures": [
+    {
+      "source": "74a2ca9b910a1d574f09f78ba11f06699e4d110d",
+      "seconds": 49.18,
+      "wait_errors": "unavailable, underlying category not retained",
+      "ack_attempted": false
+    },
+    {
+      "source": "7079a7a8f69c5ef8488d663dbe1cc95826d9fa10",
+      "seconds": 45.5,
+      "wait_errors": "three connection_error",
+      "ack_attempted": false
+    }
+  ]
+}
