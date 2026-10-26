@@ -149,6 +149,57 @@ def active_native_cancellation_barrier(
     )
 
 
+def record_cancel_observation(
+    evidence: Path,
+    terminal_id: str,
+    metadata: dict,
+    turn: dict,
+    task: dict,
+    output,
+    elapsed: float,
+) -> dict:
+    """Preserve each actual predicate before teardown without changing admission."""
+    from cli_agent_orchestrator.utils.text import strip_terminal_escapes
+
+    cleaned = strip_terminal_escapes(output) if isinstance(output, str) else None
+    observation = {
+        "schema": "caos.spec025.t168.cancel-observation.v1",
+        "terminal_id": terminal_id,
+        "elapsed_seconds": round(elapsed, 3),
+        "task_state": task.get("state"),
+        "terminal": {key: metadata.get(key) for key in ("id", "provider", "status")},
+        "turn": {key: turn.get(key) for key in ("terminal_id", "provider", "state", "generation")},
+        "generated_canary_present": isinstance(cleaned, str) and "RESULT: 468911" in cleaned,
+        "active": active_native_cancellation_barrier(terminal_id, metadata, turn, output),
+        "output_type": type(output).__name__,
+        "output": output[-32768:] if isinstance(output, str) else None,
+    }
+    index = len(list(evidence.glob("native-cancel-*.private.json")))
+    private_json(evidence / f"native-cancel-{index:04d}.private.json", observation)
+    return observation
+
+
+def exception_report(error: BaseException) -> dict:
+    """Keep nested machine error codes without exporting exception messages."""
+    leaves = []
+
+    def visit(value):
+        if isinstance(value, BaseExceptionGroup):
+            for child in value.exceptions:
+                visit(child)
+        else:
+            leaves.append(value)
+
+    visit(error)
+    return {
+        "type": type(error).__name__,
+        "leaf_types": sorted({type(leaf).__name__ for leaf in leaves}),
+        "harness_codes": sorted(
+            {leaf.code for leaf in leaves if isinstance(leaf, protocol.HarnessError)}
+        ),
+    }
+
+
 def runtime_configuration(targets, directory: Path):
     """Serialize the selected runtime targets, including an adopted peer store.
 
@@ -541,9 +592,16 @@ async def _tasks(
                 output = await asyncio.to_thread(
                     api, target, "GET", f"/terminals/{terminal_id}/output", params={"mode": "full"}
                 )
-                if active_native_cancellation_barrier(
-                    terminal_id, metadata, turn, output.get("output")
-                ):
+                observation = record_cancel_observation(
+                    Path(receipt["evidence_dir"]),
+                    terminal_id,
+                    metadata,
+                    turn,
+                    status,
+                    output.get("output"),
+                    time.monotonic() - started,
+                )
+                if observation["active"]:
                     receipt["active_native_cancel_observed"] = True
                     cancelled = await client.call("cancel_local_cao_task", {"task_id": task_id})
                     record_cancelled_worker(target, terminal_id, task_id, cancelled, retired)
@@ -853,7 +911,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         try:
             private_json(
                 Path(manifest["evidence_dir"]) / "exception-type.json",
-                {"type": type(error).__name__},
+                exception_report(error),
             )
             import traceback
 

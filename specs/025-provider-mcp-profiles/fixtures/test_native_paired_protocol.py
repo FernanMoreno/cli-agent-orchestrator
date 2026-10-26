@@ -576,3 +576,51 @@ def test_cancellation_reads_status_from_terminal_and_state_from_real_turn_contra
     assert journey.active_native_cancellation_barrier("deadbeef", metadata, turn, output) is (
         fault in (None, "ansi")
     )
+
+
+def test_cancel_poll_preserves_failed_predicate_and_private_output(tmp_path):
+    import stat
+
+    import run_native_paired_worker as journey
+
+    terminal = "deadbeef"
+    metadata = {"id": terminal, "provider": "opencode_cli", "status": "processing"}
+    turn = {
+        "terminal_id": terminal,
+        "provider": "opencode_cli",
+        "state": "pending",
+        "generation": "a" * 32,
+    }
+    observation = journey.record_cancel_observation(
+        tmp_path, terminal, metadata, turn, {"state": "running"}, "still thinking", 1.25
+    )
+    assert observation["schema"] == "caos.spec025.t168.cancel-observation.v1"
+    assert observation["active"] is False
+    assert observation["generated_canary_present"] is False
+    assert observation["terminal"]["status"] == "processing"
+    assert observation["turn"]["state"] == "pending"
+    saved = tmp_path / "native-cancel-0000.private.json"
+    assert json.loads(saved.read_text()) == observation
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    valid = journey.record_cancel_observation(
+        tmp_path, terminal, metadata, turn, {"state": "running"}, "RESULT: 468911", 1.5
+    )
+    assert valid["active"] is True
+    assert (tmp_path / "native-cancel-0001.private.json").exists()
+
+
+def test_structured_exception_report_retains_nested_operation_error():
+    import run_native_paired_worker as journey
+
+    error = ExceptionGroup(
+        "outer",
+        [
+            ExceptionGroup("inner", [protocol.HarnessError("native_model_75_second_deadline")]),
+            ValueError("private detail must not escape"),
+        ],
+    )
+    assert journey.exception_report(error) == {
+        "type": "ExceptionGroup",
+        "leaf_types": ["HarnessError", "ValueError"],
+        "harness_codes": ["native_model_75_second_deadline"],
+    }

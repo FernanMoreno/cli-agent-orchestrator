@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Actualización 2026-10-26 · T168: preflight real PASS; resultado Unicode/replay del trabajador PASS33,403s; cancelación activa agotó75s y sigue pendiente. Recursos cerrados y fallo conservado. Añadidas observaciones estructuradas privadas;74 controles pasan, sin forzar JSON al modelo. [Resultado acotado](../specs/025-provider-mcp-profiles/validation-t168-native.json).
+
 Actualización 2026-10-26 · T168: quinto preflight pasa arranque/catálogo; cierre detectó DELETE repetido. Recuperación propia confirmada, recibo original fallido conservado. Ledger de retiradas y lector de cancelación corregidos;72 controles pasan. **Aceptación real pendiente**. [Evidencia](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).
 
 Actualización 2026-10-26 · T168: lector de disponibilidad alineado con T166 (estado tipado y viewport propio),55 controles pasan y admisión endurecida. Cuarto fallo conservado; **nuevo preflight/aceptación nativa pendientes**. [Evidencia](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).

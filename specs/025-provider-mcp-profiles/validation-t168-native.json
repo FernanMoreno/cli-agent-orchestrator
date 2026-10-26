@@ -1,0 +1,48 @@
+{
+  "schema": "caos.spec025.t168.native-paired-observation.v1",
+  "execution_source": "3e4e53066a2ea6afc9f44c391a414104c6b4afdc",
+  "model": "opencode-go/glm-5.3-flash",
+  "preflight": {
+    "success": true,
+    "elapsed_seconds": 214.64,
+    "native_preflight_passed": true,
+    "production_pairing_verified": true,
+    "mcp_catalog_exact_twelve": true,
+    "cleanup_failures": [],
+    "operator_unchanged": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "interpreter_unchanged": true,
+    "mcp_client_closed": true,
+    "database_targets_closed": true,
+    "private_state_removed": true
+  },
+  "actual_original": {
+    "success": false,
+    "error_code": "paired_journey_failed",
+    "elapsed_seconds": 327.476,
+    "native_preflight_passed": true,
+    "production_pairing_verified": true,
+    "mcp_catalog_exact_twelve": true,
+    "native_success_exact": true,
+    "same_key_replay_exact": true,
+    "task_seconds": [
+      33.403
+    ],
+    "cleanup_failures": [],
+    "operator_unchanged": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "interpreter_unchanged": true,
+    "mcp_client_closed": false,
+    "database_targets_closed": true,
+    "private_state_removed": true
+  },
+  "nested_operation_error": "native_model_75_second_deadline",
+  "timeout_cause": "unproven_without_poll_observations",
+  "closure_recovery_scope": "closure_only_not_acceptance",
+  "all_owners_closed_exact_resources_absent": true,
+  "new_instrumentation": "Private bounded versioned cancellation snapshots and nested exception codes; 74 tests pass. No actual execution of instrumented source yet.",
+  "t168_acceptance": "pending",
+  "native_coordinator_or_global_acceptance": false
+}
