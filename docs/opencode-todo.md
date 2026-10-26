@@ -1,6 +1,8 @@
 # OpenCode v1 y v2: análisis y pendientes
 
-Actualización 2026-10-26 · T166: preparado el caso OpenCode v2 de coordinación12/0 y la atestación mínima del resultado MCP;156 pruebas del fixture y50 del observador pasan. **Recorrido real pendiente**; T166/OC2-04 y los gates globales siguen abiertos. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t166-preparation.md).
+Actualización 2026-10-26 · T166: **PASS real OpenCode v2 coordination12/0 en fda0c1be**, con lectura autorizada de peers, dos mensajes/ACK/AG-UI/reinicio y limpieza propia;186s y mínimo8429MiB. Fallo previo de importación preservado, causa no demostrada. T166 cerrado; **OC2-04 completo y gates globales siguen abiertos**. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t166.md).
+
+Registro previo de preparación T166 (superado por el PASS anterior): preparado el caso OpenCode v2 de coordinación12/0 y la atestación mínima del resultado MCP;156 pruebas del fixture y50 del observador pasan. En ese punto el recorrido real estaba pendiente; se conserva como historia de preparación. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t166-preparation.md).
 
 Actualización 2026-10-26 · T165: corregida y validada la compensación de inicialización compartida. Esto no traslada los recibos nativos anteriores al HEAD nuevo ni cierra perfiles/gates globales. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t165.md).
 

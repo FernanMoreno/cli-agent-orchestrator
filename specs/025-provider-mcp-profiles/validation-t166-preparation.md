@@ -1,5 +1,7 @@
 # T166: preparación de coordinación nativa v2
 
+Actualización posterior, 2026-10-26: el [recorrido real T166](validation-t166.md) pasó en fda0c1be. El texto y JSON de preparación conservan su alcance anterior.
+
 2026-10-26, FR144/SC128. **Preparación offline validada; recorrido nativo pendiente. T166 y OC2-04 siguen abiertos.** Fuente base: T165, 0e3449e9. No se trasladan a esta fuente los recibos nativos anteriores.
 
 Se añade un caso separado `coordination`, desactivado por defecto, con catálogo exacto de 12 herramientas CAO MCP para el emisor y cero para el receptor. Conserva `collaboration`8 y `generic_message`2. Exige una llamada `list_local_cao_peers` seguida de los dos mensajes exactos, ACK, Unicode, AG-UI, reinicio de API y limpieza ya exigidos. No ejecuta asignaciones, cancelaciones ni emparejamientos. Las herramientas nativas del proveedor se contabilizan aparte.
