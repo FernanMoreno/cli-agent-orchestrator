@@ -1547,6 +1547,27 @@ def test_rollback_clears_forwarded_env_even_when_the_kill_raises_base_exception(
 # ---------------------------------------------------------------------------
 
 
+class CancelledCreateBackend(FakeTmuxBackend):
+    """Exact read-only absence for these isolated creation/compensation tests."""
+
+    def cleanup_terminal_exact(
+        self, terminal_id, session_name=None, window_name=None, *, close=True
+    ):
+        from cli_agent_orchestrator.backends.base import (
+            TerminalCleanupOutcome,
+            TerminalCleanupResult,
+        )
+
+        # The simulator's complete native inventory is its session/window map.
+        # Empty means no object can carry any terminal identity. No label-only
+        # inference or destructive fallback is used to satisfy the new gate.
+        with self._lock:
+            absent = bool(terminal_id) and not close and not self._sessions
+        return TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT if absent else TerminalCleanupOutcome.UNKNOWN
+        )
+
+
 def _cancel_create_scenario(session_name, worker_blocked, release_worker, rolled_back):
     """Drive create_terminal to cancellation from its own event loop.
 
@@ -1614,7 +1635,7 @@ def test_cancelled_create_rolls_back_worker_blocked_on_lifecycle_lock(
     """
     import asyncio
 
-    backend = FakeTmuxBackend()
+    backend = CancelledCreateBackend()
     set_backend(backend)
 
     worker_blocked = threading.Event()
@@ -1659,7 +1680,7 @@ def test_cancelled_create_compensation_holds_the_lifecycle_lock(real_db, runtime
     """
     import asyncio
 
-    class KillGateBackend(FakeTmuxBackend):
+    class KillGateBackend(CancelledCreateBackend):
         def __init__(self) -> None:
             super().__init__()
             self.in_kill = threading.Event()
@@ -1744,7 +1765,7 @@ def test_cancelled_create_rolls_back_worker_blocked_in_row_write(real_db, runtim
     commits after. The compensator must remove both."""
     import asyncio
 
-    backend = FakeTmuxBackend()
+    backend = CancelledCreateBackend()
     set_backend(backend)
 
     worker_blocked = threading.Event()

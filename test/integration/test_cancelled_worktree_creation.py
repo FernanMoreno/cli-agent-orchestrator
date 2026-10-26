@@ -392,10 +392,16 @@ async def test_cancel_during_provider_initialization_retains_runtime_worktree(
 async def test_cancel_after_backend_submission_retains_worktree_for_existing_compensator(
     create_mocks, repo, monkeypatch
 ):
+    from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
+
     entered, release = threading.Event(), threading.Event()
     remove = Mock(wraps=worktrees.remove_worktree)
     monkeypatch.setattr(worktrees, "remove_worktree", remove)
     window = create_mocks.backend.create_window.return_value
+    create_mocks.backend.kill_window.return_value = True
+    create_mocks.backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+        TerminalCleanupOutcome.ABSENT
+    )
     before = set(terminal._create_compensations)
 
     def create_window(*_args, **_kwargs):

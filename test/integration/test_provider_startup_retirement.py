@@ -398,6 +398,8 @@ async def test_bridge_refuses_native_cleanup_of_an_active_startup(isolated_memor
 
 @pytest.mark.asyncio
 async def test_cancelled_creation_compensator_keeps_real_db_worker_owned(create_mocks):
+    from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
+
     entered, release = threading.Event(), threading.Event()
 
     def publish(*args, **kwargs):
@@ -408,6 +410,9 @@ async def test_cancelled_creation_compensator_keeps_real_db_worker_owned(create_
 
     create_mocks.db_create_terminal.side_effect = publish
     create_mocks.backend.kill_window.return_value = True
+    create_mocks.backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+        TerminalCleanupOutcome.ABSENT
+    )
     task = asyncio.create_task(
         module.create_terminal(
             provider="claude_code", agent_profile="developer", session_name="cao-test-session"

@@ -1247,7 +1247,8 @@ def _roll_back_cancelled_create(
     window_name: str,
     *,
     created_session: bool,
-) -> None:
+    expected_binding: Optional[Dict[str, Any]] = None,
+) -> bool:
     """Undo a create whose awaiter was cancelled AFTER the worker succeeded.
 
     Runs on a worker thread. Unlike the in-closure rollback this must
@@ -1255,24 +1256,64 @@ def _roll_back_cancelled_create(
     an unlocked late kill could destroy a NEW incarnation of the name that
     another caller legitimately built in between — the same
     never-observable-half-built argument the closure's docstring makes. Under
-    the lock, kill the session/window THIS call created, then drop the
-    committed row, so the cancelled create leaves both stores exactly as it
-    found them.
+    the locks, validate the attempt binding and current incarnation, attempt
+    the existing stop, and retire the row only after exact native absence.
+    Unknown ownership/stop or refused retirement keeps evidence. The result
+    is row-retirement status, never worktree-removal authority.
 
-    Best-effort like its sibling: the cancellation is already propagating and
-    is what the caller must see.
+    Best-effort: failures must not mask the original cancellation.
     """
-    with session_lifecycle_lock(session_name):
-        if _still_owns_incarnation(session_name, terminal_id):
+    if not expected_binding:
+        logger.warning("Cancelled create %s has no attempt binding; retaining row", terminal_id)
+        return False
+    fields = ("id", "tmux_session", "tmux_window", "provider", "engine", "session_incarnation_id")
+    try:
+        with (
+            session_lifecycle_lock(session_name),
+            terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id),
+            retirement_scope(terminal_id) as admitted,
+        ):
+            if not admitted:
+                return False
+            ensure_terminal_is_not_work_owned(terminal_id)
+            from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+
+            if isinstance(get_backend(), WorkBackendView):
+                return False  # Managed reconciliation owns this backend.
+            metadata = get_terminal_metadata(terminal_id)
+            if metadata is None or any(
+                metadata.get(key) != expected_binding.get(key) for key in fields
+            ):
+                logger.warning("Cancelled create %s binding changed; retaining row", terminal_id)
+                return False
+            if not _still_owns_incarnation(session_name, terminal_id):
+                return False
             _roll_back_backend_create_locked(
                 session_name, window_name, created_session=created_session
             )
-        try:
-            delete_terminal_row(terminal_id, get_terminal_metadata(terminal_id), registry=None)
-        except Exception:
-            logger.exception(
-                f"Rollback: failed to delete registry row {terminal_id} " "after a cancelled create"
+            # A void helper or a label-kill boolean is not native absence.
+            # A false kill can also mean already gone: the exact proof decides.
+            proof = get_backend().cleanup_terminal_exact(
+                terminal_id, session_name, window_name, close=False
             )
+            if proof.outcome not in (TerminalCleanupOutcome.ABSENT, TerminalCleanupOutcome.DELETED):
+                logger.warning("Cancelled create %s stop unproven; retaining row", terminal_id)
+                return False
+            metadata = get_terminal_metadata(terminal_id)
+            if metadata is None or any(
+                metadata.get(key) != expected_binding.get(key) for key in fields
+            ):
+                return False
+            if not _still_owns_incarnation(session_name, terminal_id):
+                return False
+            deleted = delete_terminal_row(terminal_id, metadata, registry=None)
+            if deleted is not True:
+                logger.warning("Cancelled create %s row retirement deferred", terminal_id)
+                return False
+            return True
+    except Exception:
+        logger.exception("Cancelled create %s retirement deferred; retaining evidence", terminal_id)
+        return False
 
 
 async def _await_provider_operation(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -1310,6 +1351,7 @@ def _finish_and_roll_back_cancelled_create(
     *,
     startup_owner_getter: Callable[[], Any] | None = None,
     release_startup_marks: Callable[[], None] | None = None,
+    expected_binding_getter: Callable[[], Optional[Dict[str, Any]]] | None = None,
 ) -> None:
     """Compensate on a real executor worker, independent of asyncio task cancellation."""
     try:
@@ -1323,7 +1365,11 @@ def _finish_and_roll_back_cancelled_create(
 
             if current_managed_terminal_id() is None:
                 _roll_back_cancelled_create(
-                    session_name, terminal_id, window_name, created_session=session_created
+                    session_name,
+                    terminal_id,
+                    window_name,
+                    created_session=session_created,
+                    expected_binding=expected_binding_getter() if expected_binding_getter else None,
                 )
     finally:
         if release_startup_marks is not None:
@@ -1997,6 +2043,7 @@ async def create_terminal(
     # ran (use_worktree=False) or itself failed before create_worktree returned.
     worktree_repo_root: Optional[str] = None
     row_published = False
+    created_binding: Optional[Dict[str, Any]] = None
     native_child_planned = False
     native_child_plan_id = None
     worktree_created = False
@@ -2314,7 +2361,7 @@ async def create_terminal(
             name goes free -> free with no observable intermediate state.
             """
             nonlocal deferred_delete_on_failure, session_incarnation_id, startup_owner
-            nonlocal row_published, initial_mark_added, external_mark_added
+            nonlocal row_published, initial_mark_added, external_mark_added, created_binding
             assert session_name is not None  # narrowed by the caller
             parent_lock = (
                 terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), caller_id)
@@ -2478,6 +2525,14 @@ async def create_terminal(
                         ),
                     )
                     row_published = True
+                    created_binding = {
+                        "id": terminal_id,
+                        "tmux_session": session_name,
+                        "tmux_window": created_window_name,
+                        "provider": provider,
+                        "engine": resolved_engine.value if resolved_engine is not None else None,
+                        "session_incarnation_id": session_incarnation_id,
+                    }
                 except BaseException:
                     release_created_init_marks()
                     finish_startup(startup_owner)
@@ -2535,6 +2590,7 @@ async def create_terminal(
                         terminal_id,
                         startup_owner_getter=lambda: startup_owner,
                         release_startup_marks=release_created_init_marks,
+                        expected_binding_getter=lambda: created_binding,
                     ),
                 )
                 _create_compensations.add(compensator)
