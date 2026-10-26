@@ -20,7 +20,6 @@ class TestCreateTerminalCleanup:
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -42,7 +41,6 @@ class TestCreateTerminalCleanup:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
         mock_delete_terminals_by_session,
@@ -83,7 +81,6 @@ class TestCreateTerminalCleanup:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -105,7 +102,6 @@ class TestCreateTerminalCleanup:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
     ):
@@ -144,7 +140,6 @@ class TestCreateTerminalCleanup:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -166,7 +161,6 @@ class TestCreateTerminalCleanup:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
     ):
@@ -195,7 +189,6 @@ class TestCreateTerminalCleanup:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -217,7 +210,6 @@ class TestCreateTerminalCleanup:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
     ):
@@ -249,7 +241,6 @@ class TestCreateTerminalCleanup:
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -271,7 +262,6 @@ class TestCreateTerminalCleanup:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
         mock_delete_terminals_by_session,
@@ -309,7 +299,6 @@ class TestCreateTerminalCleanup:
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_create_terminal")
@@ -329,7 +318,6 @@ class TestCreateTerminalCleanup:
         mock_db_create,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
         mock_delete_terminals_by_session,
@@ -344,7 +332,6 @@ class TestCreateTerminalCleanup:
         # initialize is awaited on the success path; AsyncMock returns cleanly
         mock_provider.initialize = AsyncMock(return_value=True)
         mock_pm.create_provider.return_value = mock_provider
-        mock_log_dir.__truediv__ = MagicMock(return_value=MagicMock())
 
         result = await create_terminal(
             provider="kiro_cli",
@@ -369,7 +356,6 @@ class TestCreateTerminalSessionCleanupGuard:
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -391,7 +377,6 @@ class TestCreateTerminalSessionCleanupGuard:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
     ):
@@ -415,7 +400,6 @@ class TestCreateTerminalSessionCleanupGuard:
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
     @patch("cli_agent_orchestrator.services.terminal_service.status_monitor")
     @patch("cli_agent_orchestrator.services.terminal_service.fifo_manager")
-    @patch("cli_agent_orchestrator.services.terminal_service.TERMINAL_LOG_DIR")
     @patch("cli_agent_orchestrator.backends.registry._backend")
     @patch("cli_agent_orchestrator.services.terminal_service.provider_manager")
     @patch("cli_agent_orchestrator.services.terminal_service.db_delete_terminal")
@@ -437,7 +421,6 @@ class TestCreateTerminalSessionCleanupGuard:
         mock_db_delete,
         mock_pm,
         mock_tmux,
-        mock_log_dir,
         mock_fifo_manager,
         mock_status_monitor,
         mock_delete_terminals_by_session,

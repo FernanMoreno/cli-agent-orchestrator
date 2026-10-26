@@ -101,7 +101,7 @@ def test_bulk_and_publisher_order_both_ways_without_blocking_unrelated_terminal(
     retirement, monkeypatch, path, kind, publisher_first
 ):
     entered, release, registered = threading.Event(), threading.Event(), threading.Event()
-    guard = terminal_service._deferred_sidecar_locks_guard
+    guard = terminal_service._deferred_sidecar_file_locks_guard
     write = terminal_service._write_deferred_sidecar
     db.create_terminal("independent-sidecar", "cao-other-session", "other", "mock_cli", "developer")
     sidecar = publish(kind)
@@ -116,7 +116,7 @@ def test_bulk_and_publisher_order_both_ways_without_blocking_unrelated_terminal(
                 registered.set()
             return result
 
-    monkeypatch.setattr(terminal_service, "_deferred_sidecar_locks_guard", Guard())
+    monkeypatch.setattr(terminal_service, "_deferred_sidecar_file_locks_guard", Guard())
 
     def hold():
         entered.set()
@@ -159,7 +159,11 @@ def test_bulk_and_publisher_order_both_ways_without_blocking_unrelated_terminal(
             assert entered.wait(timeout=5)
             second = workers.submit(actor, "sidecar-contender", not publisher_first)
             assert registered.wait(timeout=5)
-            assert terminal_service._deferred_sidecar_locks[KEY].refs == 2
+            # Contenders now register at the outer stripe before they can
+            # acquire the local ID lease. Keep proving both holder and waiter.
+            file_entries = list(terminal_service._deferred_sidecar_file_locks.values())
+            assert len(file_entries) == 1 and file_entries[0].refs == 2
+            assert terminal_service._deferred_sidecar_locks[KEY].refs == 1
             assert not second.done()
             assert workers.submit(independent).result(timeout=5) is True
             assert db.get_terminal_metadata(KEY) is not None

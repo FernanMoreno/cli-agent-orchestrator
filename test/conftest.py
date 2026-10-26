@@ -224,7 +224,22 @@ def _hermetic_cao_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def isolated_memory_db(tmp_path_factory, monkeypatch, request):
+def isolated_terminal_filesystem(tmp_path, monkeypatch):
+    """Isolate real sidecar IO even for tests that intentionally use no SQL."""
+    import sys
+
+    from cli_agent_orchestrator import constants
+
+    terminal_logs = tmp_path / "terminal-logs"
+    monkeypatch.setattr(constants, "TERMINAL_LOG_DIR", terminal_logs)
+    terminals = sys.modules.get("cli_agent_orchestrator.services.terminal_service")
+    if terminals is not None:
+        monkeypatch.setattr(terminals, "TERMINAL_LOG_DIR", terminal_logs)
+    return terminal_logs
+
+
+@pytest.fixture(autouse=True)
+def isolated_memory_db(tmp_path_factory, monkeypatch, request, isolated_terminal_filesystem):
     """Route ordinary tests to an isolated, fully migrated PostgreSQL target."""
     if (
         request.node.get_closest_marker("postgres") is not None

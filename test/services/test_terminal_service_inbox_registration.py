@@ -40,7 +40,7 @@ _TS = "cli_agent_orchestrator.services.terminal_service."
 
 
 @pytest.fixture
-def create_mocks():
+def create_mocks(tmp_path):
     """Patch every external dependency of create_terminal and yield the mocks.
 
     get_backend() returns a process-wide singleton in production, so a single MagicMock
@@ -54,6 +54,8 @@ def create_mocks():
       as None and update_terminal_shell_command is never called
     - get_herdr_inbox_service -> a live mock service
     """
+    log_dir = tmp_path / "terminal-logs"
+    log_dir.mkdir(mode=0o700, exist_ok=True)
     with contextlib.ExitStack() as stack:
 
         def p(name):
@@ -71,9 +73,9 @@ def create_mocks():
             build_skill_catalog=p("build_skill_catalog"),
             dispatch_plugin_event=p("dispatch_plugin_event"),
             update_terminal_shell_command=p("update_terminal_shell_command"),
-            # TERMINAL_LOG_DIR is a Path; a MagicMock supports `/` (__truediv__),
-            # .touch(), and str(), so log-file setup becomes a no-op.
-            TERMINAL_LOG_DIR=p("TERMINAL_LOG_DIR"),
+            # Sidecar coordination now uses real kernel filesystem leases.
+            # Keep that boundary real and private while mocking the backend.
+            TERMINAL_LOG_DIR=stack.enter_context(patch(_TS + "TERMINAL_LOG_DIR", log_dir)),
         )
 
         m.generate_terminal_id.return_value = TERMINAL_ID

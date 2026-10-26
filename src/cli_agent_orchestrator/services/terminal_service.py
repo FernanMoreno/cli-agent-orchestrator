@@ -19,6 +19,7 @@ Terminal Workflow:
 
 import asyncio
 import contextvars
+import fcntl
 import hashlib
 import json
 import logging
@@ -497,14 +498,20 @@ class _DeferredSidecarLockEntry:
     def __init__(self) -> None:
         self.lock = threading.RLock()
         self.refs = 0
+        self.fd: int | None = None
 
 
 _deferred_sidecar_locks_guard = threading.Lock()
 _deferred_sidecar_locks: dict[str, _DeferredSidecarLockEntry] = {}
+# Shared-filesystem protocol: do not change the stripe count or hash while
+# cooperating API processes are alive. Stable inodes are never unlinked.
+_DEFERRED_SIDECAR_FILE_LOCK_STRIPES = 256
+_deferred_sidecar_file_locks_guard = threading.Lock()
+_deferred_sidecar_file_locks: dict[tuple[int, int, int], _DeferredSidecarLockEntry] = {}
 
 
 @contextmanager
-def _deferred_init_sidecar_lock(terminal_id: str):
+def _deferred_init_sidecar_local_lock(terminal_id: str):
     # Register holders and waiters before acquisition. Retire after the final
     # release so a waiter never keeps an old lock while another caller gets a
     # second lock for the same key. The guard never spans database/filesystem I/O.
@@ -522,6 +529,91 @@ def _deferred_init_sidecar_lock(terminal_id: str):
             entry.refs -= 1
             if entry.refs == 0 and _deferred_sidecar_locks.get(terminal_id) is entry:
                 del _deferred_sidecar_locks[terminal_id]
+
+
+@contextmanager
+def _deferred_sidecar_file_lock(directory: Path, identity: tuple[int, int], stripe: int):
+    key = (*identity, stripe)
+    with _deferred_sidecar_file_locks_guard:
+        entry = _deferred_sidecar_file_locks.get(key)
+        if entry is None:
+            entry = _DeferredSidecarLockEntry()
+            _deferred_sidecar_file_locks[key] = entry
+        entry.refs += 1
+    try:
+        with entry.lock:
+            # Reuse the open description for nested callers on this thread,
+            # including distinct terminal IDs that share a stripe.
+            outer = entry.fd is None
+            if outer:
+                fd = os.open(
+                    directory / f"{stripe:02x}.lock",
+                    os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    0o600,
+                )
+                try:
+                    info = os.fstat(fd)
+                    if (
+                        not stat.S_ISREG(info.st_mode)
+                        or info.st_uid != os.getuid()
+                        or info.st_nlink != 1
+                    ):
+                        raise OSError("Unsafe deferred-init stripe lock file")
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                except BaseException:
+                    os.close(fd)
+                    raise
+                entry.fd = fd
+            try:
+                yield
+            finally:
+                if outer:
+                    fd = entry.fd
+                    entry.fd = None
+                    # Closing the sole description releases flock, also on
+                    # process death. Nested users never reopen or unlock it.
+                    os.close(fd)
+    finally:
+        with _deferred_sidecar_file_locks_guard:
+            entry.refs -= 1
+            if entry.refs == 0 and _deferred_sidecar_file_locks.get(key) is entry:
+                del _deferred_sidecar_file_locks[key]
+
+
+@contextmanager
+def _deferred_init_sidecar_locks(terminal_ids: list[str]):
+    keys = sorted(set(terminal_ids))
+    with ExitStack() as locks:
+        if keys:
+            directory = TERMINAL_LOG_DIR.resolve() / ".deferred-init-locks-v1"
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            # Request private creation modes, as the sidecar writer does, but
+            # do not interpret ACL-backed filesystems' synthetic 0777 as a
+            # failed chmod. Ownership/type and real kernel leases still apply.
+            info = directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                raise OSError("Unsafe deferred-init stripe lock directory")
+            identity = (info.st_dev, info.st_ino)
+            stripes = sorted(
+                {
+                    int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "big")
+                    % _DEFERRED_SIDECAR_FILE_LOCK_STRIPES
+                    for key in keys
+                }
+            )
+            # Acquire all stripes before local ID locks. Bulk callers coalesce
+            # collisions and share this order with single-ID publishers.
+            for stripe in stripes:
+                locks.enter_context(_deferred_sidecar_file_lock(directory, identity, stripe))
+            for key in keys:
+                locks.enter_context(_deferred_init_sidecar_local_lock(key))
+        yield
+
+
+@contextmanager
+def _deferred_init_sidecar_lock(terminal_id: str):
+    with _deferred_init_sidecar_locks([terminal_id]):
+        yield
 
 
 class IdempotencyKeyConflict(Exception):
@@ -3357,20 +3449,24 @@ def _write_deferred_failure_fallback(terminal_id: str, failure: dict[str, Any]) 
 def _publish_deferred_failure_fallback(terminal_id: str, failure: dict[str, Any]) -> bool:
     """Publish a failure sidecar only while its terminal row is not proven gone.
 
-    The existence check and atomic sidecar rename share the same lock as
+    The existence check and atomic sidecar rename share the same filesystem lock as
     ``delete_terminal_row``. A concurrent DELETE therefore orders either before
     this function (row missing => no new sidecar) or after it (DELETE removes
     the just-published sidecar). A transient DB read failure is not proof that
     the row disappeared, so fail toward publishing the external-owner evidence.
     """
 
-    with _deferred_init_sidecar_lock(terminal_id):
-        try:
-            if get_terminal_metadata(terminal_id) is None:
-                return False
-        except Exception:  # noqa: BLE001 — DB outage is why this fallback exists
-            pass
-        return _write_deferred_failure_fallback(terminal_id, failure)
+    try:
+        with _deferred_init_sidecar_lock(terminal_id):
+            try:
+                if get_terminal_metadata(terminal_id) is None:
+                    return False
+            except Exception:  # noqa: BLE001 — DB outage is why this fallback exists
+                pass
+            return _write_deferred_failure_fallback(terminal_id, failure)
+    except OSError as exc:
+        logger.error("Could not coordinate deferred-init failure for %s: %s", terminal_id, exc)
+        return False
 
 
 def _delete_terminal_rows_with_sidecars(
@@ -3386,9 +3482,7 @@ def _delete_terminal_rows_with_sidecars(
     """
     ids = list(terminal_ids)
     keys = sorted(set(ids))
-    with ExitStack() as sidecars:
-        for terminal_id in keys:
-            sidecars.enter_context(_deferred_init_sidecar_lock(terminal_id))
+    with _deferred_init_sidecar_locks(keys):
         deleted = delete_rows(ids)
         for terminal_id in keys:
             _delete_deferred_failure_fallback(terminal_id)
@@ -3441,13 +3535,17 @@ def _write_deferred_init_complete_fallback(terminal_id: str) -> bool:
 def _publish_deferred_init_complete_fallback(terminal_id: str) -> bool:
     """Publish successful-init fallback without racing terminal deletion."""
 
-    with _deferred_init_sidecar_lock(terminal_id):
-        try:
-            if get_terminal_metadata(terminal_id) is None:
-                return False
-        except Exception:  # noqa: BLE001 — preserve success truth through DB outage
-            pass
-        return _write_deferred_init_complete_fallback(terminal_id)
+    try:
+        with _deferred_init_sidecar_lock(terminal_id):
+            try:
+                if get_terminal_metadata(terminal_id) is None:
+                    return False
+            except Exception:  # noqa: BLE001 — preserve success truth through DB outage
+                pass
+            return _write_deferred_init_complete_fallback(terminal_id)
+    except OSError as exc:
+        logger.error("Could not coordinate deferred-init completion for %s: %s", terminal_id, exc)
+        return False
 
 
 def _has_deferred_init_complete_fallback(terminal_id: str) -> bool:

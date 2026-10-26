@@ -12,6 +12,11 @@ from cli_agent_orchestrator.services import terminal_service as module
 pytestmark = pytest.mark.offline_database
 
 
+@pytest.fixture(autouse=True)
+def isolated_filesystem_leases(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "TERMINAL_LOG_DIR", tmp_path / "terminal-logs")
+
+
 def test_reentrant_entries_retire_after_last_scope_and_exception():
     assert module._deferred_sidecar_locks == {}
     error = RuntimeError("controlled scope failure")
@@ -28,7 +33,7 @@ def test_reentrant_entries_retire_after_last_scope_and_exception():
 
 
 def test_registered_waiter_shares_owner_while_another_key_progresses(monkeypatch):
-    guard = module._deferred_sidecar_locks_guard
+    guard = module._deferred_sidecar_file_locks_guard
     registered = threading.Event()
 
     class Guard:
@@ -41,12 +46,12 @@ def test_registered_waiter_shares_owner_while_another_key_progresses(monkeypatch
                 registered.set()
             return result
 
-    monkeypatch.setattr(module, "_deferred_sidecar_locks_guard", Guard())
+    monkeypatch.setattr(module, "_deferred_sidecar_file_locks_guard", Guard())
 
     def waiter():
         threading.current_thread().name = "sidecar-waiter"
         with module._deferred_init_sidecar_lock("A"):
-            return module._deferred_sidecar_locks["A"]
+            return next(iter(module._deferred_sidecar_file_locks.values()))
 
     def independent():
         with module._deferred_init_sidecar_lock("B"):
@@ -55,13 +60,16 @@ def test_registered_waiter_shares_owner_while_another_key_progresses(monkeypatch
     with ThreadPoolExecutor(max_workers=2) as pool:
         with module._deferred_init_sidecar_lock("A"):
             entry = module._deferred_sidecar_locks["A"]
+            file_entry = next(iter(module._deferred_sidecar_file_locks.values()))
             future = pool.submit(waiter)
             assert registered.wait(timeout=5)
-            assert entry.refs == 2
+            assert file_entry.refs == 2
+            assert entry.refs == 1
             assert not future.done()
             assert pool.submit(independent).result(timeout=5) is True
-        assert future.result(timeout=5) is entry
+        assert future.result(timeout=5) is file_entry
     assert module._deferred_sidecar_locks == {}
+    assert module._deferred_sidecar_file_locks == {}
 
 
 def test_ten_thousand_historic_keys_leave_no_idle_entries():
@@ -69,6 +77,7 @@ def test_ten_thousand_historic_keys_leave_no_idle_entries():
         with module._deferred_init_sidecar_lock(f"terminal-{index}"):
             assert len(module._deferred_sidecar_locks) == 1
     assert module._deferred_sidecar_locks == {}
+    assert module._deferred_sidecar_file_locks == {}
 
 
 def test_failed_lock_acquisition_does_not_leak_a_registered_entry(monkeypatch):
@@ -92,7 +101,7 @@ def test_failed_lock_acquisition_does_not_leak_a_registered_entry(monkeypatch):
 @pytest.mark.parametrize("ids", [[], ["b", "a", "b"]])
 def test_bulk_keeps_exact_callback_arguments_count_and_sorted_unique_leases(monkeypatch, ids):
     entered, exited = [], []
-    original = module._deferred_init_sidecar_lock
+    original = module._deferred_init_sidecar_local_lock
 
     @contextmanager
     def observed(key):
@@ -103,7 +112,7 @@ def test_bulk_keeps_exact_callback_arguments_count_and_sorted_unique_leases(monk
             finally:
                 exited.append(key)
 
-    monkeypatch.setattr(module, "_deferred_init_sidecar_lock", observed)
+    monkeypatch.setattr(module, "_deferred_init_sidecar_local_lock", observed)
     failures, completions = Mock(), Mock()
     monkeypatch.setattr(module, "_delete_deferred_failure_fallback", failures)
     monkeypatch.setattr(module, "_delete_deferred_init_complete_fallback", completions)
