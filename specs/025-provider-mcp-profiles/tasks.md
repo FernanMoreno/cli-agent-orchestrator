@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T171 [US4] [FR149/SC133] Reproduce transient explicit-wait connection failure at production MCP boundary; add bounded wait-only reconnect with unchanged overall deadline, frozen capability/group/cursor, decreasing attempt/server waits, no Timeout/HTTP/mutator retry. Validate fake-time controls, real-PG replay idempotency, independent review, composition and fresh native outcome separately.
+
 ## Phase 1 — scope and evidence
 
 - [x] T001 Read current instructions, provider todos, accumulated handoff, source and recent Spec 022 evidence; preserve main changes.

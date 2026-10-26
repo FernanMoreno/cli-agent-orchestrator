@@ -1573,6 +1573,38 @@ async def cao_ask_user(
     return _typed_interaction_tool_result(result, _InteractionCreatedGroupOutput)
 
 
+def _wait_for_user_answers_request(path: str, wait_seconds: int, cursor: int | None) -> Any:
+    """Reconnect only this replay-safe wait within its existing HTTP budget."""
+    if wait_seconds == 0:
+        return mcp_utils.interaction_post_json(
+            path, {"wait_seconds": 0, "after_event_sequence": cursor}, timeout=5
+        )
+    deadline = time.monotonic() + wait_seconds + 5
+    capability = mcp_utils._read_interaction_capability()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise requests.Timeout()
+        server_wait = min(wait_seconds, max(0, int(remaining - 5)))
+        try:
+            return mcp_utils.interaction_post_json(
+                path,
+                {"wait_seconds": server_wait, "after_event_sequence": cursor},
+                timeout=remaining,
+                capability=capability,
+            )
+        except requests.Timeout:
+            # ConnectTimeout is also ConnectionError; preserve its timeout code.
+            raise
+        except requests.ConnectionError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(0.25, remaining))
+            if time.monotonic() >= deadline:
+                raise
+
+
 @mcp.tool()
 async def cao_wait_for_user_answers(
     group_id: UUID,
@@ -1590,10 +1622,10 @@ async def cao_wait_for_user_answers(
     except ValueError:
         return _invalid_interaction_id()
     result = await _call_interaction_tool(
-        mcp_utils.interaction_post_json,
+        _wait_for_user_answers_request,
         f"/agent/interactions/groups/{group_segment}/wait",
-        {"wait_seconds": wait_seconds, "after_event_sequence": after_event_sequence},
-        timeout=wait_seconds + 5,
+        wait_seconds,
+        after_event_sequence,
     )
     return _typed_interaction_tool_result(
         result,

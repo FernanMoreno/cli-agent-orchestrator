@@ -556,3 +556,14 @@ FR146/SC130 (T168, actual paired-worker acceptance): Add a default-closed, sourc
 FR147/SC131 (T169, structured operator CLI): Add explicit --json to peer pair/accept with versioned strict success/data and error schemas, one JSON object on stdout, human review/prompts on stderr, unchanged confirmation/one-use authorization and nonzero failure exits. T168 must consume only typed JSON and bind peer/project identities, never localized prose or prompt framing. Preserve human defaults, private diagnostic codes, failed receipts and current provider/MCP protocols. Audit other machine boundaries in parallel; distinguish automation contracts from native TUI/external porcelain. No blanket protocol migration or acceptance inference.
 
 FR148/SC132 (T170, proposed after T169/T168): Reproduce cao agent non-TTY final-result inconsistency with its _machine_mode contract, including handoff. Make result emission consistent for pipes/explicitJSON while retaining TTY rendering, operation-specific payloads, heartbeat privacy and exit/state semantics. Do not globally replace MCP/HTTP/AG-UI envelopes or infer task completion from transport success. Source audit alone is not implementation.
+
+FR149/SC133 (T171, bounded explicit-wait reconnect): Recover connection failures
+only for a positive-duration cao_wait_for_user_answers request, with identical
+group, capability and event cursor, inside its existing wait_seconds+5 HTTP
+budget. Use a monotonic deadline and bounded backoff, decrease each attempt's
+timeout/server wait and preserve zero-duration probe behavior. Never retry
+Timeout (including ConnectTimeout), HTTP errors, ask, ACK or other mutations.
+Persistent outage retains the original structured error. A wait replay after a
+committed but lost response preserves receipt identity without another delivery
+transition/event or ACK. Offline/real-PostgreSQL replay evidence does not close
+native acceptance; no deadline or criterion increase.

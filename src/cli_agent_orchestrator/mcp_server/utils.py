@@ -98,11 +98,16 @@ def _read_interaction_capability() -> str:
 
 
 def _interaction_headers(
-    *, idempotency_key: Optional[str] = None, if_match: Optional[str] = None
+    *,
+    idempotency_key: Optional[str] = None,
+    if_match: Optional[str] = None,
+    capability: Optional[str] = None,
 ) -> Dict[str, str]:
     """Return service-hop plus per-source identity headers for agent routes."""
     headers = _auth_headers()
-    headers[INTERACTION_CAPABILITY_HEADER] = _read_interaction_capability()
+    headers[INTERACTION_CAPABILITY_HEADER] = (
+        _read_interaction_capability() if capability is None else capability
+    )
     if idempotency_key is not None:
         headers["Idempotency-Key"] = idempotency_key
     if if_match is not None:
@@ -138,6 +143,7 @@ def interaction_post_json(
     idempotency_key: Optional[str] = None,
     if_match: Optional[str] = None,
     timeout: Optional[float] = None,
+    capability: Optional[str] = None,
 ) -> Any:
     """POST typed content directly to the local API without proxy forwarding."""
     with requests.Session() as client:
@@ -146,7 +152,9 @@ def interaction_post_json(
             "POST",
             _local_api_url(path),
             json=body,
-            headers=_interaction_headers(idempotency_key=idempotency_key, if_match=if_match),
+            headers=_interaction_headers(
+                idempotency_key=idempotency_key, if_match=if_match, capability=capability
+            ),
             timeout=_mcp_timeout() if timeout is None else timeout,
             allow_redirects=False,
         )

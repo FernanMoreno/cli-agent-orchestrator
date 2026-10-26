@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T171: la espera explícita MCP compartida recupera solo errores de conexión dentro del presupuesto original.137 pruebas/PG replay y arquitectura5/0 pasan; sin nueva aceptación nativa de este proveedor. [Evidencia](../specs/025-provider-mcp-profiles/validation-t171.md).
+
 ## Estado específico del proveedor · 2026-10-26
 
 R7 sobre671c9c8f: preflight real PASS229,855s y resultado/replay PASS34,101s. Las167 capturas muestran una ventana processing/pending, pero el marcador textual no aparece antes delcompleted; no se llegó a llamar a cancelar. El ensayo depende de estilo/longitud del modelo y sigue sin aceptar la cancelación activa. Fallo conservado y recursos propios cerrados; nueva sonda determinista solo propuesta, no implementada ni aceptada.

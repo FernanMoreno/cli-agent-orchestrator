@@ -1,5 +1,19 @@
 # Plan: provider MCP profiles
 
+## Explicit wait reconnect · T171
+
+Current native Codex on7079a7a8 failed45.5s with three exact connection_error
+waits, noACK, two human answers, oneAPIrestart and verified cleanup. Reconstructed
+service and real HTTP worker restart both work without a model. Localize recovery
+to the explicit wait operation, never shared mutators: one monotonic existing
+budget, fixed250ms backoff, decreasing HTTP/server wait, same capability/group/
+cursor; zero probes and nonconnection errors unchanged. Test the production MCP
+boundary with fake time before implementation, plus real-PG ambiguous-response
+replay without a second transition. Verify contracts/composition, independent
+review and fresh source-bound native diagnostics. No prompt or budget changes.
+Graph lacks current harness nodes; verify actual server→utils→HTTP and service
+delivery/receipt paths in source. Existing imports suffice; no graph rebuild.
+
 ## Native routing policy refusal (2026-10-21)
 
 The native-agent branch deliberately bypasses full CAO MCP serialization. An explicit CAO policy in that resolved profile therefore cannot reach the protected child. Add a presence guard in the native branch, including mapping and supported Pydantic server-model entries; reject known, invalid and null selections with a fixed configuration error. Do not try to inspect/rewrite the user's native-agent store, inject global deny rules or widen native grants. Ordinary native wrappers remain unchanged, as does full CAO decomposition. No credential/login commands or real vendor CLI will run.

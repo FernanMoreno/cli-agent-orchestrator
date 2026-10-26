@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T171: la espera explícita MCP compartida recupera solo errores de conexión dentro del presupuesto original.137 pruebas/PG replay y arquitectura5/0 pasan; sin nueva aceptación nativa de este proveedor. [Evidencia](../specs/025-provider-mcp-profiles/validation-t171.md).
+
 ## Estado específico del proveedor · 2026-10-26
 
 **Diagnóstico Unicode nativo actual PASS** en35a728c1: Claude Code2.1.303/Sonnet4.6 solicitado, HTTP200/21,204s, recibo succeeded/join y limpieza íntegra;1508pins, fuente/binario/operador intactos. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-claude-unicode-current.md). R1harness422 fallido conservado; el504 histórico sigue sin explicarse. La aceptación ampliada de Claude continúa pendiente: catálogo/autorización MCP, interacción/reinicio y mensajes. No alterar login;T032 ampliada sigue aplazada. T168/T169 pertenecen a OpenCode/control plane y no acreditan esos gates.

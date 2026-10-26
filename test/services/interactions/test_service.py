@@ -208,6 +208,48 @@ def test_required_answer_returns_through_same_group_and_ack_is_idempotent(intera
     )
 
 
+def test_lost_wait_response_replays_same_receipt_without_delivery_event_or_ack(interaction_context):
+    context = interaction_context
+    service = context["service"]
+    capability = context["source"].token
+    created = service.create_group(
+        capability,
+        CreateGroupRequest(
+            questions=[QuestionInput(kind="text", prompt="Synthetic replay question")]
+        ),
+        "lost-wait-response-operation-0001",
+    )
+    question = created.questions[0]
+    service.accept_answer(
+        context["owner"],
+        question["question_id"],
+        question["version"],
+        InteractionAnswerPayload(kind="text", text="Synthetic replay answer"),
+        "lost-wait-response-answer-0001",
+    )
+    # The first response is not delivered to the caller, but its transaction committed.
+    lost_response = asyncio.run(service.wait_for_answers(capability, created.group_id, 0))
+    fresh = type(service)(service.repository)
+    fresh.initialize()
+    replayed = asyncio.run(fresh.wait_for_answers(capability, created.group_id, 0))
+    assert replayed == lost_response
+    assert replayed.state == "ready"
+    assert (
+        fresh.get_detail(context["owner"], question["question_id"])["delivery_state"]
+        == "returned_to_mcp"
+    )
+    with fresh.repository.transaction() as connection:
+        count = connection.execute(
+            "SELECT count(*) FROM interaction_events WHERE group_id=%s AND event_type='interaction.answer_returned'",
+            (created.group_id,),
+        ).fetchone()[0]
+        state = connection.execute(
+            "SELECT lifecycle FROM interaction_groups WHERE group_id=%s", (created.group_id,)
+        ).fetchone()[0]
+    assert count == 1
+    assert state == "satisfied"
+
+
 def test_accepted_required_answer_survives_human_expiry_until_source_pull(
     interaction_context, monkeypatch
 ):

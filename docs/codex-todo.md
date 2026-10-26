@@ -2,6 +2,12 @@
 
 ## Estado específico del proveedor · 2026-10-26
 
+T171: corregida la reconexión de la espera MCP con su presupuesto original,
+capacidad/grupo/cursor estables y sin reintentar preguntas/ACK, errores HTTP ni
+timeouts.137 pruebas pasan, incluido replay PostgreSQL sin entrega duplicada;
+arquitectura5/0 y revisión ClaudeGO. Nueva aceptación nativa pendiente.
+[Verificación y límites](../specs/025-provider-mcp-profiles/validation-t171.md).
+
 Diagnóstico actual en74a2ca9b: dos preguntas/respuestas, reinicio y tres snapshots
 AG-UI correctos; siete esperas `unavailable`, sin llamada al ACK. Codex salió0
 en49,18s y la limpieza propia terminó; **aceptación fallida**. La espera sí

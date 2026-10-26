@@ -98,6 +98,7 @@ def test_wait_validates_typed_ready_responses_and_returns_receipt(monkeypatch):
 
 
 def test_wait_rejects_pending_response_that_contains_answer_body(monkeypatch):
+    monkeypatch.setattr(server.mcp_utils, "_read_interaction_capability", lambda: "test-capability")
     request = MagicMock(
         return_value={
             "group_id": GROUP_ID,

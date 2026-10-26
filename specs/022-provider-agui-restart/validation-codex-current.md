@@ -37,6 +37,20 @@ run passed 86 tests and exposed one existing exact-output expectation requiring
 the new nullable field. Final verification: 88 offline tests passed in30.08s,
 including production mapper → MCP wire → provider event → final receipt privacy
 contracts; composition kept all5 architecture contracts. Black/isort and diff
-checks passed; independent Claude review returned GO. The source-bound native
-retry remains pending. No global gate or full application-lifespan acceptance
+checks passed; independent Claude review returned GO. No global gate or full application-lifespan acceptance
 is claimed; the controlled API worker uses production routes with lifespan off.
+
+## Source-bound retry on7079a7a8
+
+The actual retry failed in45.5s, Codex exit0. Its three wait calls all classified
+as `connection_error`, confirming the MCP caller could not connect to the API.
+Two questions and human answers persisted; one restart and three AG-UI snapshots
+preserved identity/redaction. No ACK was called. This establishes a transport
+failure, not an HTTP503/service exception. The exact unreachable-window duration
+and actual wait argument were not retained, so they remain unproven.
+
+The owner verified all1508source pins, binary, operator auth bytes/metadata,
+model command, cleanup and exact own container/network absence. The executed
+descriptor is archived and the execution copy was reclosed by a flag-only
+change. T171 inSpec025 addresses bounded explicit-wait reconnection, keeping
+native acceptance open until a new source-bound run meets every predicate.
