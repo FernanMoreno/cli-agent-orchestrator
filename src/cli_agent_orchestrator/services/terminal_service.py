@@ -3165,6 +3165,8 @@ async def create_terminal(
                 "engine",
                 "session_incarnation_id",
             )
+            matched = False
+            failure_published = False
             try:
                 with (
                     startup_context(startup_owner),
@@ -3191,7 +3193,30 @@ async def create_terminal(
                             return None
                         return current
 
-                    if owns_row() is None:
+                    try:
+                        current = owns_row()
+                    except Exception:
+                        # An unreadable binding is neither absence nor authority
+                        # to mark a replacement. Keep only local admission.
+                        _mark_initial_task_pending(terminal_id)
+                        retain_uncertain_startup(startup_owner)
+                        logger.exception("Failed create %s binding unavailable", terminal_id)
+                        return
+                    if current is None:
+                        return
+                    matched = True
+                    failure_published = _persist_create_failure(
+                        terminal_id,
+                        kind="initialization_error",
+                        message="Terminal initialization failed; reconcile this terminal.",
+                        exception_type=type(e).__name__,
+                    )
+                    if not failure_published:
+                        # No durable admission fence: keep the known attempt's
+                        # local quarantine, without claiming restart safety.
+                        if owns_row() is not None:
+                            _mark_initial_task_pending(terminal_id)
+                            retain_uncertain_startup(startup_owner)
                         return
                     _roll_back_backend_create_locked(
                         session_name, window_name, created_session=session_created
@@ -3226,6 +3251,9 @@ async def create_terminal(
             except Exception:
                 # Never replace the original initialization error with rollback
                 # failure, or infer cleanup authority from an exception.
+                if matched and not failure_published:
+                    _mark_initial_task_pending(terminal_id)
+                    retain_uncertain_startup(startup_owner)
                 logger.exception("Failed create %s retirement deferred", terminal_id)
 
         await _await_provider_operation(finish_failed_create)
@@ -3897,17 +3925,25 @@ def _persist_cancelled_create_failure(terminal_id: str) -> bool:
     both the attempt binding and current incarnation. Reuse deferred-init
     durability so fresh observers do not depend on the status-monitor cache.
     """
-    detail = {
-        "kind": "creation_cancelled",
-        "message": "Terminal creation was cancelled before provider initialization; reconcile this terminal.",
-        "exception_type": "CancelledError",
-    }
+    return _persist_create_failure(
+        terminal_id,
+        kind="creation_cancelled",
+        message="Terminal creation was cancelled before provider initialization; reconcile this terminal.",
+        exception_type="CancelledError",
+    )
+
+
+def _persist_create_failure(
+    terminal_id: str, *, kind: str, message: str, exception_type: str
+) -> bool:
+    """Publish a positively bound attempt's failure before releasing admission."""
+    detail = {"kind": kind, "message": message, "exception_type": exception_type}
     for attempt in range(1, _DEFERRED_INIT_FAILURE_PERSIST_ATTEMPTS + 1):
         try:
             return _persist_deferred_init_failure(terminal_id, **detail) is not None
         except Exception:
             logger.warning(
-                "Cancelled-create failure persistence attempt %d/%d for %s failed",
+                "Create failure persistence attempt %d/%d for %s failed",
                 attempt,
                 _DEFERRED_INIT_FAILURE_PERSIST_ATTEMPTS,
                 terminal_id,
@@ -3918,7 +3954,7 @@ def _persist_cancelled_create_failure(terminal_id: str) -> bool:
         return _publish_deferred_failure_fallback(terminal_id, {"phase": "deferred_init", **detail})
     except Exception:
         logger.exception(
-            "Cancelled-create fallback for %s failed; retaining local admission", terminal_id
+            "Create failure fallback for %s failed; retaining local admission", terminal_id
         )
         return False
 

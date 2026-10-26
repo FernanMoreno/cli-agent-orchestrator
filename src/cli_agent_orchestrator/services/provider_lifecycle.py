@@ -60,7 +60,7 @@ def retain_uncertain_startup(owner: StartupOwner | None) -> None:
         if _startups.get(owner.terminal_id) is owner:
             owner.uncertain = True
     logger.warning(
-        "Terminal %s startup cancelled with unproven worker stop; retaining local ownership",
+        "Terminal %s startup outcome uncertain; retaining local ownership",
         owner.terminal_id,
     )
 
