@@ -200,3 +200,6 @@ Actualización compartida2026-10-26: T158 corrige una carrera local pending→ve
 
 
 Diagnóstico/aceptación acotada2026-10-26: T159 v1 colaboración real **PASS** enb2b56b67: preguntas/respuestas/ACK, mensaje, AG-UI, reinicio/identidad y finalHTTP200 exactos. Generaciónaux27,597s; modelo27,594s/recorrido85,846s, mínimo10207MiB.123preflight/133controles; observadoresAPI completos9/19eventos con witness/CASsatisfactorios, sin409. No prueba causaT157 ni intentosprogramados/etapasv2.537pinsverificados, credencialesintactas, puertas cerradas y propietarioPG/contenedor/red eliminados. Arquitectura5/0, GOClaude/Obsidian. Sigue v2actual; perfilesampliados/OAuth/concurrencia/WorkT143/global separados. [Recibos y límites](../specs/025-provider-mcp-profiles/validation-t159.md).
+
+
+Actualización2026-10-26: T160 añade provider_lifecycle al mapa exacto de orígenes cargados de v2; su archivo ya estaba en el inventario, pero eso no probaba el módulo importado.2RED/2controles→4GREEN,152regresiones pasan, arquitectura5/0, PGcerrado y GOClaude/Obsidian. Solo guard de procedencia; sin fallo nativo ni aceptación v2 nuevos. Repinará el próximo full8 desde el HEAD aceptado. [Recibos y límites](../specs/025-provider-mcp-profiles/validation-t160.md).

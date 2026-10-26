@@ -273,6 +273,7 @@ RUN_SOURCE_MODULES = (
     "cli_agent_orchestrator.api.main",
     "cli_agent_orchestrator.api.interactions",
     "cli_agent_orchestrator.services.terminal_service",
+    "cli_agent_orchestrator.services.provider_lifecycle",
     "cli_agent_orchestrator.services.interactions.service",
     "cli_agent_orchestrator.providers.opencode_cli",
     "cli_agent_orchestrator.providers.mcp_interactions",
@@ -321,6 +322,9 @@ RUN_SOURCE_RELATIVE_PATHS = {
     "cli_agent_orchestrator.api.interactions": "src/cli_agent_orchestrator/api/interactions.py",
     "cli_agent_orchestrator.services.terminal_service": (
         "src/cli_agent_orchestrator/services/terminal_service.py"
+    ),
+    "cli_agent_orchestrator.services.provider_lifecycle": (
+        "src/cli_agent_orchestrator/services/provider_lifecycle.py"
     ),
     "cli_agent_orchestrator.services.interactions.service": (
         "src/cli_agent_orchestrator/services/interactions/service.py"

@@ -1,0 +1,107 @@
+{
+  "task": "T160",
+  "date": "2026-10-26",
+  "base_head": "6a94c4fca3b9ec40f893ddbdcd9627f7f8d9c386",
+  "status": "provenance_guard_validated_offline",
+  "native_acceptance": false,
+  "root_cause": "exact loaded-module origin map was not extended when terminal_service began importing provider_lifecycle; dynamic inventory already included its file",
+  "red": {
+    "failed": 2,
+    "passed": 2,
+    "seconds": 27.24
+  },
+  "green": {
+    "passed": 4,
+    "seconds": 22.57
+  },
+  "regression": {
+    "initial_available_mib": 12492,
+    "selected_test_files": [
+      "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py",
+      "test/live_provider/test_native_v2_response_diagnostic.py"
+    ],
+    "source_sha256": {
+      "src/cli_agent_orchestrator/providers/manager.py": "99802f0cd27a6fa88c05cbc566f4daa017a5bf042f856101a840505d61bae42e",
+      "src/cli_agent_orchestrator/services/terminal_service.py": "05f8e8451e2d55927308e972b239b94daae6ce5a48cad495e131509450ed23f9",
+      "src/cli_agent_orchestrator/services/cleanup_service.py": "ad9ba238c61fdaa20b9d3f46d29f34e6cae4a542f4e1cec5948c6646f0bd6e27",
+      "src/cli_agent_orchestrator/services/session_service.py": "77e7237f42a4d9a1b1e9832773084569bab361fd7e3c696d4277fc21e2f24a35",
+      "src/cli_agent_orchestrator/services/flow_service.py": "81f489f3d5611ce404c845b46fc6b99434c4e47dee8f8568c78a8f9abc3204d0",
+      "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e1520d49f0bcc2f81dce8f0c59d93a42b02e03700d4d2b8ca73304c3110b3df7",
+      "src/cli_agent_orchestrator/runtime_channel/bridge.py": "b2905bd810ff2afeafe53b68e7c661fa50df0a23833c0c5732d9ea078d61d62d",
+      "src/cli_agent_orchestrator/api/main.py": "2f13006a92a913a98e5c0efce7fabdcb91c01d6b3cc3304f2afc5ace32dc3eb8",
+      "src/cli_agent_orchestrator/services/herdr_inbox_service.py": "b6b9743ac9ca4b3f285940a0c5f873bd91fbc42ac54447175d6ee67db287303b",
+      "src/cli_agent_orchestrator/utils/orchestration.py": "1d868ecb337f299ba338c72313d9b71cacbd6d96c040e1731ad06b424b949cfd",
+      "src/cli_agent_orchestrator/services/kiro_profiles.py": "b606a89ba50b2b561fc05f7fde5d72c6d1caf3fa26e90ca802df130959b1479e",
+      "src/cli_agent_orchestrator/providers/kiro_cli.py": "3008f7a4722de4aaa23e97af6914b0766fbeb61c12ec4f001f8452b08e6b421a",
+      "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+      "src/cli_agent_orchestrator/services/remote_terminal_service.py": "9a65db33a7375caa9e0b64eeb6eda064319a699072361251627831d244f78f52",
+      "specs/025-provider-mcp-profiles/fixtures/native_phase_readers.py": "2e4b6b9b9a82de58dbde3808bac481fe65d6b853075acf872162680de230c731",
+      "specs/025-provider-mcp-profiles/fixtures/run_native_v1_human.py": "8d87c86c9cfc1b137bf88a3d7afea435195f4ca3995694faf4607b74fc98e441",
+      "test/live_provider/receipt_verification_observer.py": "156328015547800c25050e98c64868bb4be81703f3762631f3440eb6ff58e7c8",
+      "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "17d121a6db2dd1e0f38a232c3217d1a724f12dd8f2dbc5475639829f463a1de6",
+      "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py": "9de8ae72842d898fbac2e47f9bcc1be550c2798721717ba20c24f6c07a319f3e"
+    },
+    "identity_verified": true,
+    "groups": [
+      {
+        "group": "spec",
+        "returncode": 0
+      },
+      {
+        "group": "project",
+        "returncode": 0
+      }
+    ],
+    "pytest_returncode": 0,
+    "bootstrap_targets_closed": true,
+    "owner_closed": true,
+    "exact_container_absent": true,
+    "elapsed_seconds": 90.001,
+    "sources_unchanged": true
+  },
+  "groups": [
+    {
+      "scope": "nativev2fixture",
+      "passed": 134,
+      "warnings": 3,
+      "seconds": 50.07
+    },
+    {
+      "scope": "response diagnostic",
+      "passed": 18,
+      "seconds": 29.98
+    }
+  ],
+  "changed_files_sha256": {
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "17d121a6db2dd1e0f38a232c3217d1a724f12dd8f2dbc5475639829f463a1de6",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py": "9de8ae72842d898fbac2e47f9bcc1be550c2798721717ba20c24f6c07a319f3e"
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "peer_job": "7911b19e6ec94e1399c1f0abe9e2d566",
+  "composition_review": {
+    "subsystems": "v2 private-runner loaded-module provenance, positive/negative matcher controls",
+    "source_verified": "terminal_service imports provider_lifecycle; actual pre-resource import block loads it before sys.modules/canonicalresolvedpath exactmap loop",
+    "invariants": [
+      "inventory hash and imported origin are distinct proofs",
+      "require new owner in tuple and canonical pathmap; omission/redirect/extra rejected",
+      "defaultclosed flags/profile/API/model budgets and cleanup unchanged",
+      "no providerruntime/schema/SQL change; no native/model invocation"
+    ],
+    "tests": "RED2FAIL/2controls -> GREEN4; broader134spec+18response=152PASS/3warnings; source19 and changed2 unchanged; realPGborrowers/ownerclosed90.001s",
+    "architecture": "5kept/0broken",
+    "peer": "Claude7911b19e6ec94e1399c1f0abe9e2d566 boundedGO, review actualmain patchedsource; rootpins verify exacttestedbytes",
+    "graphify": "readonly201nodes842edges verified againstsource; no canonical regeneration; preserve12foreigntrackedchanges",
+    "limits": [
+      "provenancegap, not nativefailure/T157cause",
+      "nativev2currentacceptance requires freshacceptedHEAD/newlaunchers; no oldT135execution"
+    ]
+  },
+  "obsidian": {
+    "operation_id": "save-20261026-caos-v2-loaded-origin",
+    "strict_lint": 0
+  },
+  "limits": "not a reproduced native failure or T157 cause; v2 current-source actual not yet rerun; future external runners must bind newacceptedHEAD"
+}

@@ -2559,6 +2559,21 @@ def test_current_manifest_contract_binds_source_binary_python_postgres_and_revie
     run_root.rmdir()
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [None, "src/cli_agent_orchestrator/services/provider_lifecycle.py", "shadow/lifecycle.py"],
+)
+def test_runtime_source_map_binds_the_loaded_lifecycle_owner(origin):
+    module = "cli_agent_orchestrator.services.provider_lifecycle"
+    observed = dict(runner.RUN_SOURCE_RELATIVE_PATHS)
+    observed.pop(module, None)
+    if origin is not None:
+        observed[module] = origin
+    assert runner._runtime_source_modules_match(observed) is (
+        origin == "src/cli_agent_orchestrator/services/provider_lifecycle.py"
+    )
+
+
 def test_runtime_source_map_is_complete_and_exact():
     assert runner._runtime_source_modules_match(runner.RUN_SOURCE_RELATIVE_PATHS)
     assert (
