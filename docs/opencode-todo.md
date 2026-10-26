@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+Actualización 2026-10-26 · T168: lector de disponibilidad alineado con T166 (estado tipado y viewport propio),55 controles pasan y admisión endurecida. Cuarto fallo conservado; **nuevo preflight/aceptación nativa pendientes**. [Evidencia](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).
+
 Actualización 2026-10-26 · T168: tercer preflight confirma emparejamiento JSON; inspector de modelo corregido para verificar --model en el proceso propio,44 controles pasan. **Nueva ejecución nativa pendiente**, sin inferencia en los fallos previos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t168-preparation.md).
 
 Actualización 2026-10-26 · T169: peer pair/accept --json y consumidor tipado integrados,39 controles y20 contratos PostgreSQL pasan. Segundo preflight identificó el parser de texto; **nuevo preflight nativo T168 pendiente**. Auditoría propone T170, sin implementarlo. [Resultado](../specs/025-provider-mcp-profiles/validation-t169.md) y [auditoría](../specs/025-provider-mcp-profiles/structured-output-audit.md).

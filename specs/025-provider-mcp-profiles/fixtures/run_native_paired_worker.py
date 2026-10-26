@@ -302,6 +302,44 @@ def worker_configuration(
     return matches[0]
 
 
+def native_startup_observation(server, terminal: dict, tmux, *, deadline: float):
+    """Use production typed readiness and the visible pane, as in the v2 journey."""
+    import requests
+
+    data, in_time = native._read_terminal_before_deadline(
+        requests, server.url, terminal["id"], deadline=deadline
+    )
+    if not in_time or data is None:
+        return None
+    if (
+        data.get("id") != terminal["id"]
+        or data.get("provider") != "opencode_cli"
+        or data.get("session_name") != terminal["session_name"]
+        or data.get("name") != terminal["name"]
+    ):
+        raise protocol.HarnessError("native_preflight_terminal_binding_changed")
+    viewport = tmux.get_history(
+        data["session_name"], data["name"], strip_escapes=True, visible_only=True
+    )
+    if time.monotonic() > deadline:
+        return None
+    checks = {
+        "schema": "caos.spec025.t168.native-startup-observation.v1",
+        "status": data.get("status"),
+        "model_label_present": "GLM-5.3-Flash" in viewport,
+        "provider_label_present": "OpenCode Go" in viewport,
+        "fallback_label_absent": "Big Pickle" not in viewport,
+        "viewport": viewport,
+    }
+    checks["ready"] = (
+        checks["status"] in {"idle", "completed"}
+        and checks["model_label_present"]
+        and checks["provider_label_present"]
+        and checks["fallback_label_absent"]
+    )
+    return checks
+
+
 def cleanup_safe(receipt: dict) -> bool:
     fields = (
         "api_processes_dead",
@@ -315,6 +353,32 @@ def cleanup_safe(receipt: dict) -> bool:
         "source_unchanged",
     )
     return all(receipt.get(k) is True for k in fields) and receipt.get("cleanup_failures") == []
+
+
+def preflight_acceptance(receipt: dict) -> bool:
+    memory = receipt.get("memory_admissions_mib")
+    return (
+        receipt.get("schema") == "caos.spec025.t168.native-paired.v1"
+        and receipt.get("mode") == "preflight"
+        and "error_code" not in receipt
+        and receipt.get("model") == MODEL
+        and receipt.get("binary_sha256") == BINARY_SHA256
+        and all(
+            receipt.get(key) is True
+            for key in (
+                "production_pairing_verified",
+                "caller_controller_created",
+                "native_preflight_passed",
+                "mcp_catalog_exact_twelve",
+                "binary_unchanged",
+                "interpreter_unchanged",
+            )
+        )
+        and isinstance(memory, dict)
+        and bool(memory)
+        and all(type(value) is int and value >= MEMORY_MIB for value in memory.values())
+        and cleanup_safe(receipt)
+    )
 
 
 def acceptance(receipt: dict) -> bool:
@@ -656,6 +720,8 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         )
         ids.append((target, preflight["id"]))
         ready_deadline = time.monotonic() + MODEL_SECONDS
+        ready = False
+        observation_number = 0
         while time.monotonic() < ready_deadline:
             try:
                 configured = worker_configuration(
@@ -666,23 +732,22 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
                 )
             except FileNotFoundError:
                 configured = None
-            full = api(
-                target,
-                "GET",
-                f'/terminals/{preflight["id"]}/output',
-                params={"mode": "full"},
-                deadline=ready_deadline,
+            observation = native_startup_observation(
+                target, preflight, tmux, deadline=ready_deadline
             )
-            text = full.get("output", "")
-            if (
-                configured is not None
-                and "GLM-5.3-Flash" in text
-                and "OpenCode Go" in text
-                and "Big Pickle" not in text
-            ):
+            if observation is None:
+                break
+            private_json(
+                Path(manifest["evidence_dir"])
+                / f"native-startup-{observation_number:04d}.private.json",
+                observation,
+            )
+            observation_number += 1
+            if configured is not None and observation["ready"]:
+                ready = True
                 break
             time.sleep(0.2)
-        else:
+        if not ready:
             raise protocol.HarnessError("native_preflight_not_ready_within_75s")
         api(target, "DELETE", f'/terminals/{preflight["id"]}')
         receipt["native_preflight_passed"] = True
@@ -891,11 +956,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         receipt["cleanup_failures"] = sorted(failures)
         receipt["elapsed_seconds"] = round(time.monotonic() - started, 3)
         receipt["success"] = (
-            acceptance(receipt)
-            if not preflight_only
-            else cleanup_safe(receipt)
-            and receipt.get("native_preflight_passed") is True
-            and "error_code" not in receipt
+            acceptance(receipt) if not preflight_only else preflight_acceptance(receipt)
         )
         private_json(Path(manifest["evidence_dir"]) / "receipt.json", receipt)
     return receipt

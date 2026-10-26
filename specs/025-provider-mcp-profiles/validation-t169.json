@@ -59,6 +59,18 @@
       "caller_controller_created": true,
       "model_inference_started": false,
       "owned_cleanup_confirmed": true
+    },
+    {
+      "head": "50118381bc5c7a5d2aa4ea06079bcc66cfcb86bb",
+      "error": "paired_journey_failed",
+      "exception": "ReadTimeout",
+      "seconds": 254.335,
+      "production_pairing_verified": true,
+      "owned_native_model_argv_verified": true,
+      "native_zero_mcp_configuration_verified": true,
+      "model_inference_started": false,
+      "owned_cleanup_confirmed": true,
+      "historical_timeout_cause": "not_demonstrated"
     }
   ],
   "native_paired_acceptance": "pending",

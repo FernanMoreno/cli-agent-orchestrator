@@ -381,3 +381,102 @@ def test_owned_native_model_gate_reads_exact_process_argv(tmp_path, selection):
         child.wait(timeout=5)
         child.stdin.close()
         child.stdout.close()
+
+
+@pytest.mark.parametrize("case", ["ready", "startup", "fallback", "wrong_session", "late"])
+def test_native_startup_uses_typed_status_and_visible_pane(tmp_path, monkeypatch, case):
+    import time
+
+    import run_native_paired_worker as journey
+
+    terminal = {
+        "id": "deadbeef",
+        "provider": "opencode_cli",
+        "session_name": "private",
+        "name": "0",
+        "status": "idle",
+    }
+    observed = {**terminal}
+    if case == "startup":
+        observed["status"] = "unknown"
+    if case == "wrong_session":
+        observed["session_name"] = "foreign"
+    monkeypatch.setattr(
+        journey.native,
+        "_read_terminal_before_deadline",
+        lambda *_a, **_k: (observed, case != "late"),
+    )
+    calls = []
+
+    def viewport(session, window, **kwargs):
+        calls.append((session, window, kwargs))
+        return "GLM-5.3-Flash · OpenCode Go" + (" · Big Pickle" if case == "fallback" else "")
+
+    tmux = SimpleNamespace(get_history=viewport)
+    server = SimpleNamespace(url="http://127.0.0.1:19002")
+    if case == "wrong_session":
+        with pytest.raises(protocol.HarnessError, match="terminal_binding_changed"):
+            journey.native_startup_observation(
+                server, terminal, tmux, deadline=time.monotonic() + 5
+            )
+        assert calls == []
+        return
+    result = journey.native_startup_observation(
+        server, terminal, tmux, deadline=time.monotonic() + 5
+    )
+    if case == "late":
+        assert result is None and calls == []
+    else:
+        assert calls == [("private", "0", {"strip_escapes": True, "visible_only": True})]
+        assert result["ready"] is (case == "ready")
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "binary_unchanged",
+        "interpreter_unchanged",
+        "mcp_catalog_exact_twelve",
+        "error",
+        "memory",
+    ],
+)
+def test_preflight_cannot_admit_models_without_preservation_and_catalog(fault):
+    import run_native_paired_worker as journey
+
+    proof = {
+        key: True
+        for key in (
+            "api_processes_dead",
+            "tmux_processes_dead",
+            "mcp_client_closed",
+            "private_provider_roots_removed",
+            "worktrees_removed",
+            "database_targets_closed",
+            "private_state_removed",
+            "operator_unchanged",
+            "source_unchanged",
+            "production_pairing_verified",
+            "caller_controller_created",
+            "native_preflight_passed",
+            "mcp_catalog_exact_twelve",
+            "binary_unchanged",
+            "interpreter_unchanged",
+        )
+    }
+    proof.update(
+        schema="caos.spec025.t168.native-paired.v1",
+        mode="preflight",
+        model=journey.MODEL,
+        binary_sha256=journey.BINARY_SHA256,
+        memory_admissions_mib={"initial": 6144},
+        cleanup_failures=[],
+    )
+    if fault == "error":
+        proof["error_code"] = "mcp_tool_refused"
+    elif fault == "memory":
+        proof["memory_admissions_mib"]["initial"] = 6143
+    elif fault is not None:
+        proof[fault] = False
+    assert journey.preflight_acceptance(proof) is (fault is None)
