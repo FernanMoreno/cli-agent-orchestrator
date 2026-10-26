@@ -1,0 +1,115 @@
+{
+  "schema": "caos.codex-inflight-wait-acceptance.v1",
+  "execution_source": "418a98536155d7c008c858a3f01e63061a14689d",
+  "source_pins": 1510,
+  "mode": "--agui-restart --restart-during-wait",
+  "scope": "CX-07 native Codex same MCP invocation across actual in-flight HTTP wait crash/reap/replacement, production routes with lifespan off",
+  "served_model_attested": false,
+  "global_acceptance": false,
+  "other_provider_acceptance": false,
+  "inflight_HTTP_wait_interruption_attested": true,
+  "internal_reconnect_attested": true,
+  "native": {
+    "provider": "codex",
+    "requested_model": "gpt-6-luna",
+    "version": "codex-cli 0.164.0",
+    "result": "completed_and_acknowledged",
+    "exit_code": 0,
+    "question_count": 2,
+    "question_kinds": [
+      "single_choice",
+      "text"
+    ],
+    "human_answers_posted": 2,
+    "elapsed_seconds": 50.03,
+    "api_worker_restarts": 1,
+    "agui_snapshot_count": 3,
+    "agui_identity_stable": true,
+    "agui_projection_redacted": true,
+    "agui_final_acknowledged": true,
+    "inflight_wait_restart_enabled": true,
+    "inflight_wait_interrupted": true,
+    "inflight_wait_recovered": true,
+    "delivery_states": [
+      "agent_acknowledged",
+      "agent_acknowledged"
+    ],
+    "cleanup_status": "complete",
+    "temporary_files_removed": true,
+    "operator_auth_unchanged": true,
+    "agent_tool_scope_exact": true,
+    "ack_identity_diagnostics": {
+      "ready_wait_matches_database": true,
+      "ready_wait_count": 1,
+      "wait_call_count": 1,
+      "created_questions_match_database": true,
+      "created_group_matches_database": true,
+      "create_group_seen": true,
+      "ack_call_count": 1,
+      "ack_checks": [
+        {
+          "group_matches_created": true,
+          "group_matches_waited": true,
+          "question_versions_match_created": true,
+          "question_versions_match_returned": true,
+          "receipt_hashes_match_returned": true,
+          "ack_succeeded": true,
+          "ack_count": 2
+        }
+      ]
+    },
+    "provider_item_type_counts": {
+      "agent_message": 3,
+      "error": 1,
+      "mcp_tool_call": 6
+    },
+    "failure_diagnostics": {
+      "codex_linux_optional_dependency_missing": false,
+      "mcp_spawn_failed": false,
+      "mcp_handshake_failed": false,
+      "mcp_startup_timeout": false,
+      "mcp_process_exited": false,
+      "filesystem_write_denied": false,
+      "provider_configuration_rejected": false,
+      "provider_auth_rejected": false,
+      "provider_rate_limited": false
+    },
+    "sanitized_failure_signals": []
+  },
+  "http_wait_observations": {
+    "entry_count": 2,
+    "worker_count": 2,
+    "worker_changed": true,
+    "same_group": true,
+    "wait_seconds": [
+      19,
+      3
+    ],
+    "ready_return_count": 1,
+    "native_wait_invocation_count": 1
+  },
+  "proof": {
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "operator_auth_bytes_unchanged": true,
+    "operator_auth_identity_unchanged": true,
+    "model_command_verified": true,
+    "owner_context_returned": true,
+    "exact_container_absent": true,
+    "exact_network_absent": true,
+    "destructive_commands_own_only": true,
+    "strict_codex_receipt_accepted": true,
+    "success": true
+  },
+  "execution_descriptor_reclosed": true,
+  "model_free_evidence": {
+    "actual_ConnectionError_witnessed": true,
+    "no_duplicate_rows_delivery_or_ACK_events": true,
+    "first_run_tests": 40,
+    "first_run_seconds": 54.49,
+    "regression_tests": 143,
+    "regression_warnings": 5,
+    "regression_seconds": 104.85,
+    "model_or_native_CLI_invoked_by_those_tests": false
+  }
+}

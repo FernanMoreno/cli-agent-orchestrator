@@ -4,9 +4,9 @@ description: "Tasks for provider-backed AG-UI restart acceptance"
 
 ## Current wait diagnostic increment · 2026-10-26
 
-- [ ] T086 Reproduce the missing wait-entry observation with offline privacy/ordering controls, then add a closed group/PID/duration marker and exact owned-child crash/reap helper.
-- [ ] T087 Verify actual in-flight HTTP interruption/reconnect through real MCP functions, production API worker and PG, with a witnessed ConnectionError, same-group identity and no duplicate question/answer/delivery/ACK.
-- [ ] T088 Add default-off native Codex in-flight restart case and strict receipt predicates; verify contracts, composition and independent review, commit/repin and execute serial source-bound acceptance without changing existing limits.
+- [x] T086 Reproduce the missing wait-entry observation with offline privacy/ordering controls, then add a closed group/PID/duration marker and exact owned-child crash/reap helper.
+- [x] T087 Verify actual in-flight HTTP interruption/reconnect through real MCP functions, production API worker and PG, with a witnessed ConnectionError, same-group identity and no duplicate question/answer/delivery/ACK.
+- [x] T088 Add default-off native Codex in-flight restart case and strict receipt predicates; verify contracts, composition and independent review, commit/repin and execute serial source-bound acceptance without changing existing limits.143contractsPASS; nativePASS50.03s on418a9853,1nativewait/2workerPIDs/HTTP19→3s/1ready/ACK2/AGUI3,1510pins and owned cleanup/operator preservation. [Evidence](validation-cx07-current.md).
 
 - [x] T083 Reproduce loss of the production MCP unavailable cause through actual event and receipt sanitizers, including structured/text wire results and privacy controls.
 - [x] T084 Preserve only the exact fixed-detail cause enum; reject unknown/conflicting content and arbitrary injected receipt categories. Keep error codes, retries, deadlines and acceptance unchanged.

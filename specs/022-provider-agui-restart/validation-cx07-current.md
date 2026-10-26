@@ -1,6 +1,21 @@
 # CX-07 · in-flight HTTP wait recovery · 2026-10-27
 
-Preparation evidence; native acceptance is pending.
+**PASS real Codex on418a98536155d7c008c858a3f01e63061a14689d**,50.03s,
+exit0, CLI0.164.0/requested gpt-6-luna. [Scoped receipt](validation-cx07-current.json).
+
+Exactly one native MCP wait invocation entered the original worker and had no
+successful return when the controller killed/reaped that owned Popen. The same
+invocation reached the replacement for the same group with its HTTP wait reduced
+from19 to3 seconds. There are exactly two private wait-entry records with
+different worker PIDs and one ready return. Both exact receipts were acknowledged
+in one ACK; two deliveries are agent_acknowledged. One API restart and three
+real AG-UI snapshots passed identity/redaction checks.
+
+All1510source pins, binary/operator auth bytes and metadata, exact model command
+and owned container/network absence passed. The execution descriptor was archived
+and reclosed by a flag-only change. This closes CX-07 and T172, with production
+routes and lifespan off. It does not close another provider, negative catalog/
+authorization, Unicode/cancellation, messages or global acceptance.
 
 The earlier CX-06 acceptance remains tied to9d5ba9f8. It did not prove an
 interrupted HTTP request. The new case is default-off, Codex-only and requires
@@ -32,7 +47,8 @@ Validation:
   original controller.1 synthetic positive/12 negative controls pass without
   models/services. Its scoped observer preserves only validated private worker
   observations before cleanup; source/binary/operator and PG ownership guards
-  remain unchanged. Fresh source binding/execution still pending.
+  remain unchanged. The source-bound native execution above then passed.
 
-The model-free MCP caller is a test driver. It does not establish native Codex
-execution, another provider's recovery, full application lifespan or global gates.
+The model-free MCP caller is a test driver. Its ConnectionError witness remains
+separate from the subsequent native same-invocation/PID-entry proof. Neither
+establishes another provider's recovery, full application lifespan or global gates.

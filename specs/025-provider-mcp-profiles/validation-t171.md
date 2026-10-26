@@ -40,3 +40,7 @@ long-poll was interrupted. Those scenarios remain CX-07; injected reconnect and
 real-PG replay evidence stay separately scoped. This shared MCP
 correction applies to every provider using the explicit wait tool; it does not
 establish other Codex gates, Claude/OpenCode native acceptance or global gates.
+
+Subsequent evidence: [T172/CX-07](../022-provider-agui-restart/validation-cx07-current.md)
+passed natively on418a9853 with one MCP wait across two worker PIDs and19→3s
+of HTTP wait. That closes CX-07 separately without relabeling this earlier receipt.

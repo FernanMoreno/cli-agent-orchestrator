@@ -11,7 +11,7 @@ Esta selección cubre contratos usados por los tres proveedores; no ejecuta los 
 | Proveedor | Evidencia nativa relevante | Gates actuales independientes |
 | --- | --- | --- |
 | OpenCode | R7 de esta fuente: preflight229,855s y Unicode/replay34,101s pasan; cancelación no se invocó porque la señal textual faltó antes de completed. Fallo native_model_75_second_deadline y167 capturas conservados; salida original MCP con excepción, cierre físico derivado sin aceptación. | T168 cancelación activa; luego perfiles/escenarios globales restantes. La propuesta de herramienta/hijo vivo es conceptual, no implementación ni cobertura de streaming. |
-| Codex | CX-06 PASS real en9d5ba9f8: Codex0.164.0/gpt-6-luna solicitado, dos preguntas/respuestas, ACK exacto, reinicio y tres snapshots AG-UI;50,23s,1509pins y limpieza propia. [Recibo acotado](../022-provider-agui-restart/validation-codex-current.json). | CX-01–04/CX-AUTH-03 catálogo/autorización nativos; CX-07 interrupción HTTP en curso; CX-08 Unicode/errores/cancelación; CX-05 mensajes persistidos. send_message y cao.work.message se verifican por separado. |
+| Codex | CX-06 PASS9d5ba9f8/50,23s y CX-07 PASS418a9853/50,03s: una llamada MCP recupera la espera HTTP interrumpida entre dos procesos API,19→3s, ACK exacto, AG-UI3 y limpieza propia;1510pins. Codex0.164.0/gpt-6-luna solicitado. [Recibo CX-07](../022-provider-agui-restart/validation-cx07-current.json). | CX-01–04/CX-AUTH-03 catálogo/autorización nativos; CX-08 Unicode/errores/cancelación; CX-05 mensajes persistidos. send_message y cao.work.message se verifican por separado. |
 | Claude | Diagnóstico actual en35a728c1: Unicode sin herramientas, Claude Code2.1.303/Sonnet4.6 solicitado, HTTP200/21,204s, recibo/join y limpieza;1508pins/operador intactos. [Recibo y límites](validation-claude-unicode-current.md). No explica504 ni acepta los recorridos ampliados. | CL-01–04 diagnóstico Unicode/504 actual; CL-05–07/CL-AUTH-03/CL-CATALOG autorización; CL-08/09 mensajes/interacción/reinicio. Login intacto y T032 aplazada. |
 
 ## Fuente y límites de las auditorías
@@ -33,3 +33,9 @@ no se transfiere la ejecución141PASS ni los recibos de otros proveedores.
 La corrección compartida cuenta con137contratos, incluidos PG/HTTP/replay,
 arquitectura5/0 y revisión independiente. El recibo nativo no atestigua cuántos
 reintentos internos ocurrieron ni interrupción HTTP en curso; CX-07 sigue abierto.
+
+Actualización posterior: CX-07 cerrado por su propia ejecución418a9853,
+50,03s y1510pins; un único wait nativo llegó a los procesos original/reemplazo
+con19→3s, una sola respuesta ready y ACK exacto. El ConnectionError y la
+unicidad de filas/eventos también se probaron sin modelo por separado.
+La ejecución141PASS y el anterior reciboCX-06 mantienen sus fuentes y límites.

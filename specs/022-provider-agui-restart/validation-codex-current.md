@@ -1,5 +1,9 @@
 # Codex current interaction diagnostic · 2026-10-26
 
+Follow-up: [CX-07 native in-flight recovery](validation-cx07-current.md) passed
+on418a9853 in50.03s. Its separate receipt attests the interrupted HTTP wait;
+the CX-06 receipt below retains its original source and narrower scope.
+
 ## Current scoped acceptance · 2026-10-27
 
 **PASS on9d5ba9f80d25ef2ef91661fe65806014911d9663** after T171.

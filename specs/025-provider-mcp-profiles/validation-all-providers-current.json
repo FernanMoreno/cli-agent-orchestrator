@@ -18,7 +18,7 @@
   "scope": "Config builders, native policy/filters and in-process/real-Python-stdio MCP contracts; independent native OpenCode/Codex/Claude CLI acceptance not inferred.",
   "native_remaining": {
     "opencode": "T168 active cancellation not exercised: model-text activity predicate never passed before completion; R7 evidence retained.",
-    "codex": "CX-06 PASS on9d5ba9f8 with two questions/answers, exact ACK, production routes/controlled worker restart. Negative native catalog/authorization, inflight HTTP wait interruption/CX-07, Unicode/cancellation/CX-08, separate generic and cao.work.message contracts remain open.",
+    "codex": "CX-06 PASS9d5ba9f8 and CX-07 PASS418a9853: one MCP invocation recovers an interrupted HTTP wait across two owned worker PIDs,19to3secs, exact ACK/AGUI/cleanup. Native catalog/authorization, Unicode/errors/cancellation/CX-08, generic and cao.work.message contracts remain open.",
     "claude": "Current-source bounded Unicode diagnostic passed on35a728c1; historical504 cause remains unproved. NativeMCPcatalog/authorization, interaction/restart/messages and fullacceptance remain open; T032 deferred."
   },
   "architecture_contracts_kept": 5,
@@ -42,6 +42,20 @@
     "seconds": 50.23,
     "source_pins": 1509,
     "CX_06_passed": true,
+    "global_acceptance": false
+  },
+  "subsequent_native_codex_inflight_acceptance": {
+    "execution_source": "418a98536155d7c008c858a3f01e63061a14689d",
+    "receipt": "../022-provider-agui-restart/validation-cx07-current.json",
+    "seconds": 50.03,
+    "source_pins": 1510,
+    "CX_07_passed": true,
+    "native_wait_invocations": 1,
+    "HTTP_worker_count": 2,
+    "HTTP_wait_seconds": [
+      19,
+      3
+    ],
     "global_acceptance": false
   }
 }

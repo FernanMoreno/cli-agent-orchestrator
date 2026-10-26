@@ -2,12 +2,20 @@
 
 ## Estado específico del proveedor · 2026-10-27
 
+**CX-07 PASS real en418a9853**: una única espera MCP nativa atraviesa la caída
+del proceso API y llega al reemplazo con el mismo grupo,19→3s de espera HTTP,
+una respuesta ready y un ACK de dos recibos exactos.50,03s,1510fuentes y limpieza/
+credenciales verificadas;143contratos pasan y arquitectura5/0. La prueba sin
+modelo también observó el ConnectionError real sin duplicar entregas/eventos.
+[Recibo y alcance](../specs/022-provider-agui-restart/validation-cx07-current.json).
+
 **CX-06 PASS real en9d5ba9f8**: Codex0.164.0, gpt-6-luna solicitado,
 dos preguntas/respuestas, una espera ready y un ACK con dos recibos exactos,
 reinicio y tres snapshots AG-UI;50,23s.1509 fuentes, binario y credenciales
 intactos; recursos propios cerrados. El worker usa rutas de producción con
 lifespan desactivado. No acredita catálogo negativo, ciclo completo de API ni
-interrupción de una espera HTTP en curso. CX-07/08 y gates globales siguen abiertos.
+interrupción de una espera HTTP en curso; esa prueba se cerró por separado en
+el CX-07 posterior. CX-08 y gates globales siguen abiertos.
 [Recibo y límites](../specs/022-provider-agui-restart/validation-codex-current.json).
 
 T171: corregida la reconexión de la espera MCP con su presupuesto original,
@@ -24,7 +32,7 @@ de reiniciar. Se conserva el fallo y se añade una categoría cerrada al recibo
 para distinguir transporte/HTTP en la siguiente ejecución, sin cambiar límites.
 [Evidencia y alcance](../specs/022-provider-agui-restart/validation-codex-current.md).
 
-El diagnóstico del19-octubre conserva su fuente; el PASS actual tiene su propio recibo9d5ba9f8. T168 corresponde al trabajador OpenCode y T169 al CLI de emparejamiento. Próximos gates: catálogo/autorización MCP del CLI Codex; interrupción de espera en curso y recuperación; Unicode/errores/cancelación; mensajes persistidos y contrato externo cao.work.message por separado.
+El diagnóstico del19-octubre conserva su fuente; CX-06 y CX-07 tienen recibos propios9d5ba9f8/418a9853. T168 corresponde al trabajador OpenCode y T169 al CLI de emparejamiento. Próximos gates: catálogo/autorización MCP del CLI Codex; Unicode/errores/cancelación; mensajes persistidos y contrato externo cao.work.message por separado.
 
 [Revisión cruzada actual](../specs/025-provider-mcp-profiles/validation-all-providers-current.md):141 comprobaciones pasan; distingue contratos offline, diagnóstico nativo y aceptación por proveedor. Las pruebas reales intensivas siguen serializadas; los perfiles y contratos comunes se comprueban para los tres.
 
@@ -84,7 +92,7 @@ El perfil inicial propuesto combina interacción humana, colaboración básica y
 - [ ] CX-04 Añadir pruebas de catálogo y ejecución: herramienta permitida/denegada, recurso o prompt no autorizado, permisos parciales, aislamiento entre agentes y recuperación de interacciones.
 - [ ] CX-05 Validar mensajes con PostgreSQL, AG-UI y reinicio en la fuente final. Resolver por separado `cao.work.message`, su identidad y autoridad; no tratarlo como alias acreditado de `send_message`.
 - [x] CX-06 Aceptación acotada real de preguntas/respuestas/ACK/AG-UI/reinicio en9d5ba9f8, Codex0.164.0/gpt-6-luna solicitado,50,23s y limpieza verificada; fuente/runner vinculados. Conserva el diagnóstico19-octubre por separado; aceptación global pendiente.
-- [ ] CX-07 Cubrir espera en curso durante caída de API, error de conexión y recuperación acotada del mismo grupo, sin duplicar pregunta, respuesta o ACK. No inferir recuperación de una espera interrumpida solo por observar un reinicio exitoso.
+- [x] CX-07 Espera HTTP en curso interrumpida y recuperada por la misma llamada MCP nativa en418a9853; dos procesos API/grupo estable/presupuesto19→3s/ACK exacto y sin duplicados. ConnectionError real y unicidad PG también validados por separado sin modelo. No se infiere de CX-06 ni acepta otros proveedores/globales. [Evidencia](../specs/022-provider-agui-restart/validation-cx07-current.md).
 - [ ] CX-08 Validar turnos Unicode, extracción de respuesta y recibo, errores explícitos de autenticación/cuota, cancelación y reconciliación de timeout con el CLI fijado.
 - [ ] CX-09 Verificar varios terminales simultáneos: configuración y credenciales aisladas, límites de trabajo/esperas, cancelación por generación y limpieza sin afectar al operador. Medir control y tiempo del proveedor por separado.
 - [ ] CX-10 Ejecutar comprobaciones aplicables de arquitectura/contratos e integración al implementar; actualizar Spec 022/023 y documentación con resultados y limitaciones. No marcar completado código que solo exista en un directorio privado.
