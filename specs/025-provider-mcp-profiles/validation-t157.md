@@ -1,0 +1,19 @@
+# T157 — recorrido mixto v1 actual: fallo en resultado final
+
+2026-10-26. FR135/SC119. Diagnóstico real ejecutado en `70c1ef7a4c8f6b0ba80d040e892a8001a6da8f08`; **aceptación estricta FAILED**. [Recibos sanitizados, fuentes y controles](validation-t157.json).
+
+Se preparó un lanzador nuevo cerrado desde526 archivos de runtime y11 artefactos humanos comprometidos, incluido provider_lifecycle. La copia ejecutada deriva exclusivamente del literal AST de habilitación. Se sustituyeron bindings antiguos sin ejecutar T103/T134 históricos; receptor con catálogo vacío y cero llamadas, emisor colaboración8, mismos75/180s y6144MiB. El observer mide catálogo/protocolo MCP; no demuestra todos los esquemas enviados por HTTP al modelo ni autorización nativa de cada operación ofertada.
+
+99 pruebas existentes pasan en6,778s; sus targets PostgreSQL privados quedaron cerrados en14,533s y el propietario siguió retenido. Además pasan24 controles de cierre,80 controles auxiliares,13 de vinculación de recibo,7 fallos previos al arranque auxiliar y9 del mixto. Revisiones READ Claude/Luna; los hallazgos de re-cierre, vinculación auto-referente y fallo entre habilitación/archivo se corrigieron antes del modelo. Se conserva la preparación cerrada anterior. El recibo auxiliar ahora se compara con bytes ejecutados archivados y plugin real, y se vuelve a cerrar antes de construir el caso mixto.
+
+La generación auxiliar real pasó en30,467s, ligada a fuente/runner/plugin, con grupo nativo detenido, estado privado eliminado y puertas cerradas. Es diagnóstico de transporte/modelo, no aceptación del caso humano.
+
+El mixto real terminó rc1:136,765s del envoltorio,86,857472241s del recorrido medido por el recibo; mínimo10107MiB. Pasaron preguntas exactas, respuestas, ACK/auditoría, las tres instantáneas AG-UI, identidades nativas antes/después del reinicio, mensaje PostgreSQL/API y su identidad a través del reinicio. El resultado final no pasó: GET LAST devolvió53 pendientes202 y luego409, HTTPStatusError/http_status. No se ha observado detail.state del409; no se atribuye a un fallo del modelo, del lector o de reconciliación sin esa evidencia.
+
+Los errores del API posteriores al reinicio fueron «current turn has no verified result» y «output was extractable but its active task receipt was not yet complete». Hay una carrera candidata distinta: el API lee salida, captura indisponibilidad y luego consulta estado; si un verificador cambia a verified entre lecturas, lo clasifica409. También es posible un reconcile duradero legítimo. La prueba actual no distingue ambos; no se convierte409 en pendiente ni se reduce ningún criterio.
+
+Se confirmaron salida del helper,9 indicadores de limpieza/identidad, puertas cerradas, recibo ligado al manifiesto de admisión y propietario PostgreSQL cerrado. Contenedor/red exactos ausentes; contenedores ajenos preservados; estado privado eliminado y credenciales OpenCode/fuentes/binario intactos. Los537 hashes declarados permanecen iguales. Arquitectura5/0 y composición revisada; Graphify canónico preservado por12 cambios ajenos y fixtures verificados contra fuente/AST. No se repite el modelo sin corregir o instrumentar el primer límite observado.
+
+T157 cierra preparación, ejecución y registro de este diagnóstico fallido; **no cierra OC1-05, OC2-04, OC-06, T143, autenticación/modelos ni aceptación global/nativa final**. Próximo: reproducir localmente la transición pending→verified en el handler, conservar conflictos verdaderos y registrar solo el estado cerrado del409/etapas de verificación con el observer existente antes de otro recorrido útil.
+
+Conocimiento guardado mediante save-20261026-caos-v1-final-output-boundary en nota de límites/índice/log/hot; lint estricto0. La revisión de composición acredita el pipeline y su limpieza, no convierte el resultado final fallido en aceptación.
