@@ -3152,85 +3152,81 @@ async def create_terminal(
                 get_backend().stop_pipe_pane(session_name, window_name)
             except Exception:
                 pass  # Ignore cleanup errors
-        # Roll back the DB terminal row so a failed create does not leave an
-        # orphan record: the stale row would still be listed for the session
-        # and report UNKNOWN status even though nothing is running. Idempotent
-        # (DELETE ... WHERE id = ?), so it is a no-op when the failure happened
-        # before the row was written. Runs regardless of session_created so a
-        if session_created and session_name:
-            try:
-                get_backend().kill_session(session_name)
-            except:
-                pass  # Ignore cleanup errors
-            # Session is gone, drop any forwarded env we stashed for it so
-            # secrets don't linger in memory or bleed into a future reuse
-            # of the same name.
-            clear_session_env(session_name)
-        elif window_created and session_name and window_name:
-            # harness-control#186: a window added to an ALREADY-EXISTING session
-            # (new_session=False -- every MCP spawn/assign-into-existing-session
-            # call) has no session-level teardown to fall back on above, since
-            # `session_created` is False and the pre-existing session must stay
-            # up. Live-reproduced without this: a provider init timeout here
-            # (e.g. "Claude Code initialization timed out after 60s") rolls back
-            # the DB row and stops the FIFO/provider/status-monitor above, but
-            # the tmux WINDOW itself — the actual pane, still running whatever
-            # shell/process the provider left behind — was never torn down.
-            # Result: the caller (the spawning agent's MCP tool call) gets a
-            # hard error back, AND a permanently orphaned window is left behind:
-            # invisible to this terminal's own list/tree (the DB row is gone),
-            # never cleaned up, sitting there indefinitely.
-            try:
-                get_backend().kill_window(session_name, window_name)
-            except Exception:
-                pass  # Ignore cleanup errors
 
-        # The process-owning tmux session/window must be stopped before a
-        # provider releases private on-disk state.  In particular Grok can
-        # have an updater still writing $GROK_HOME while its initialization
-        # fails; its cleanup verifies that no such process remains.
+        # A label-stop result is not proof that a failed initializer's runtime
+        # is gone. Preserve its discoverable row and checkout until this attempt
+        # still owns both the binding and positively confirmed retirement.
         def finish_failed_create() -> None:
-            with startup_context(startup_owner):
-                cleanup_complete = True
-                try:
-                    if terminal_id is not None:
-                        cleanup_complete = (
-                            provider_manager.cleanup_provider(terminal_id) is not False
-                        )
-                        if cleanup_complete:
-                            _remove_interaction_capability_files(terminal_id)
-                except Exception:
-                    # Preserve the existing rollback contract for an unexpected
-                    # provider-manager failure. Only an explicit False is a Grok
-                    # cleanup deferral with enough information to retry safely.
-                    cleanup_complete = True
-                # Do not erase the only retry handle before Grok has safely released
-                # its private home.  The original create error is still raised below;
-                # retaining this row makes the failed terminal discoverable and its
-                # deletion retryable rather than leaking credentials/config forever.
-                if cleanup_complete:
-                    try:
-                        if terminal_id is not None:
-                            delete_terminal_row(
-                                terminal_id, get_terminal_metadata(terminal_id), registry=None
-                            )
-                    except Exception:
-                        pass  # Ignore cleanup errors
-                elif terminal_id is not None:
-                    logger.warning(
-                        "Create rollback deferred Grok cleanup for %s; retaining terminal metadata for retry",
-                        terminal_id,
+            fields = (
+                "id",
+                "tmux_session",
+                "tmux_window",
+                "provider",
+                "engine",
+                "session_incarnation_id",
+            )
+            try:
+                with (
+                    startup_context(startup_owner),
+                    session_lifecycle_lock(session_name),
+                    terminal_dispatch_lock(DatabaseTarget.from_settings(scope="main"), terminal_id),
+                    retirement_scope(terminal_id) as admitted,
+                ):
+                    if not admitted or not created_binding:
+                        return
+                    ensure_terminal_is_not_work_owned(terminal_id)
+                    from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+
+                    backend = get_backend()
+                    if isinstance(backend, WorkBackendView):
+                        return
+
+                    def owns_row():
+                        current = get_terminal_metadata(terminal_id)
+                        if current is None or any(
+                            current.get(key) != created_binding.get(key) for key in fields
+                        ):
+                            return None
+                        if not _still_owns_incarnation(session_name, terminal_id):
+                            return None
+                        return current
+
+                    if owns_row() is None:
+                        return
+                    _roll_back_backend_create_locked(
+                        session_name, window_name, created_session=session_created
                     )
-                if worktree_created and worktree_repo_root is not None and terminal_id is not None:
-                    # A worktree WAS created (Step 1b succeeded) before some later step
-                    # failed -- roll it back too, same best-effort posture as everything
-                    # else in this block. Without this, a provider-init timeout (or any
-                    # later failure) on a worktree-backed terminal would leave an orphan
-                    # worktree + branch behind with no CAO-side record pointing at it.
-                    # This whole remaining rollback now runs on its owned worker:
-                    # `git worktree remove` is a blocking subprocess call and this
-                    # parent coroutine remains responsive and retains cancellation ownership.
-                    worktree_service.remove_worktree(worktree_repo_root, terminal_id)
+                    proof = backend.cleanup_terminal_exact(
+                        terminal_id, session_name, window_name, close=False
+                    )
+                    if proof.outcome not in (
+                        TerminalCleanupOutcome.ABSENT,
+                        TerminalCleanupOutcome.DELETED,
+                    ):
+                        logger.warning(
+                            "Failed create %s stop unproven; retaining row/worktree", terminal_id
+                        )
+                        return
+                    if owns_row() is None:
+                        return
+                    if provider_manager.cleanup_provider(terminal_id) is False:
+                        logger.warning(
+                            "Failed create %s provider cleanup deferred; retaining row/worktree",
+                            terminal_id,
+                        )
+                        return
+                    _remove_interaction_capability_files(terminal_id)
+                    current = owns_row()
+                    if current is None:
+                        return
+                    if delete_terminal_row(terminal_id, current, registry=None) is not True:
+                        return
+                    if worktree_created and worktree_repo_root is not None:
+                        worktree_service.remove_worktree(worktree_repo_root, terminal_id)
+            except Exception:
+                # Never replace the original initialization error with rollback
+                # failure, or infer cleanup authority from an exception.
+                logger.exception("Failed create %s retirement deferred", terminal_id)
 
         await _await_provider_operation(finish_failed_create)
 

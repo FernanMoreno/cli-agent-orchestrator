@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
+from cli_agent_orchestrator.clients import database as db
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 
 pytestmark = pytest.mark.usefixtures("isolated_memory_db")
@@ -49,6 +51,12 @@ class TestCreateTerminalCleanup:
         provider, AND roll back the DB terminal row."""
         from cli_agent_orchestrator.services.terminal_service import create_terminal
 
+        # Model acknowledged registration and exact native stop, not only a label kill.
+        mock_db_create.side_effect = db.create_terminal
+        mock_db_delete.side_effect = db.delete_terminal
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT
+        )
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
         mock_tmux.supports_event_inbox.return_value = False
@@ -114,6 +122,12 @@ class TestCreateTerminalCleanup:
         orphaned, unregistered tmux window behind on every such failure."""
         from cli_agent_orchestrator.services.terminal_service import create_terminal
 
+        # Model acknowledged registration and exact native stop, not only a label kill.
+        mock_db_create.side_effect = db.create_terminal
+        mock_db_delete.side_effect = db.delete_terminal
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT
+        )
         mock_tmux.session_exists.return_value = True
         mock_tmux.create_window.return_value = "w1"
         mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
@@ -217,6 +231,11 @@ class TestCreateTerminalCleanup:
         same "ignore cleanup errors" contract as every other cleanup step here."""
         from cli_agent_orchestrator.services.terminal_service import create_terminal
 
+        # Model acknowledged registration and exact native stop, not only a label kill.
+        mock_db_create.side_effect = db.create_terminal
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.STILL_PRESENT
+        )
         mock_tmux.session_exists.return_value = True
         mock_tmux.create_window.return_value = "w1"
         mock_tmux.kill_window.side_effect = Exception("kill_window error")
@@ -236,6 +255,10 @@ class TestCreateTerminalCleanup:
             )
 
         mock_tmux.kill_window.assert_called_once_with("cao-existing", "w1")
+
+        mock_pm.cleanup_provider.assert_not_called()
+        mock_db_delete.assert_not_called()
+        assert db.get_terminal_metadata("tid1") is not None
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
@@ -266,11 +289,14 @@ class TestCreateTerminalCleanup:
         mock_status_monitor,
         mock_delete_terminals_by_session,
     ):
-        """Cleanup errors should be swallowed, original error re-raised. The DB
-        rollback still runs after cleanup_provider raises, and its own error is
-        swallowed too."""
+        """Original init error survives failed cleanup; preserve its retry row."""
         from cli_agent_orchestrator.services.terminal_service import create_terminal
 
+        # Model acknowledged registration and exact native stop, not only a label kill.
+        mock_db_create.side_effect = db.create_terminal
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT
+        )
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
         mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")
@@ -292,8 +318,11 @@ class TestCreateTerminalCleanup:
                 allowed_tools=["*"],
             )
 
-        # DB rollback runs even though cleanup_provider raised first.
-        mock_db_delete.assert_called_once_with("tid1")
+        # Native absence is independently proven; failed provider cleanup still
+        # cannot authorize erasing the discoverable retry handle.
+        mock_pm.cleanup_provider.assert_called_once_with("tid1")
+        mock_db_delete.assert_not_called()
+        assert db.get_terminal_metadata("tid1") is not None
 
     @pytest.mark.asyncio
     @patch("cli_agent_orchestrator.services.terminal_service.delete_terminals_by_session")
@@ -428,6 +457,11 @@ class TestCreateTerminalSessionCleanupGuard:
         """When we successfully created the session but a later step fails, cleanup SHOULD kill it."""
         from cli_agent_orchestrator.services.terminal_service import create_terminal
 
+        # Model acknowledged registration and exact native stop, not only a label kill.
+        mock_db_create.side_effect = db.create_terminal
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT
+        )
         mock_tmux.session_exists.return_value = False
         mock_tmux.create_session.return_value = "w1"
         mock_load_profile.return_value = AgentProfile(name="dev", description="Dev")

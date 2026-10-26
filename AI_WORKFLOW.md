@@ -123,6 +123,7 @@ Use `verification-before-completion` before substantial completion.
 - Bind a generation receipt to its archived executed runner bytes and actual plugin, not expected hashes derived from that receipt itself. Keep executed and re-closed descriptor hashes distinct; verify the flag-only derivation and re-close the generation stage before building the managed stage.
 - Preserve acceptance criteria and coverage. Record durable causes and prevention rules in Obsidian; keep raw logs and temporary execution details in the repository/private receipts instead.
 - When workspace aliases differ from editable-import paths (including OneDrive letter case), run verification from the same canonical checkout path used by imports. Verify coverage measures the executed source; fix the invocation rather than changing coverage settings or thresholds.
+- If a subprocess fixture times out before its protocol starts, measure import startup separately before changing product behavior. On DrvFS, a private Linux `PYTHONPYCACHEPREFIX` primed from the same pinned canonical imports under the held PostgreSQL owner can reduce source-loading overhead. Preserve deadlines, actor/barrier assertions, source hashes and failed receipts; a warm-cache pass does not accept cold-start latency.
 
 ## 7. Significant composition review
 

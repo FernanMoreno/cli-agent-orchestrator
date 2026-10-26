@@ -6,6 +6,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
 from cli_agent_orchestrator.clients.database import (
     IdempotencyRecord,
 )
@@ -1824,6 +1825,10 @@ class TestCreateTerminalWorktree:
         the failure-cleanup path must roll it back too, or a provider-init
         timeout on a worktree-backed terminal leaves an orphan worktree/branch
         with no CAO-side record pointing at it."""
+        mock_db_create.side_effect = db_create_terminal
+        mock_tmux.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+            TerminalCleanupOutcome.ABSENT
+        )
         mock_gen_id.return_value = "test1234"
         mock_gen_session.return_value = "cao-session"
         mock_gen_window.return_value = "developer-abcd"
