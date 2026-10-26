@@ -6,6 +6,16 @@
 
 ## Summary
 
+2026-10-26 diagnostic increment: the failed current Codex receipt collapsed
+seven waits to `unavailable` and deleted the private transcript after verified
+cleanup. Reproduce that information loss with the production MCP error mapper,
+then preserve only an exact fixed-detail enum through event parsing and receipt
+sanitization. Cover structured and JSON text MCP results and reject arbitrary
+content. No runtime retry or deadline change. Graph query has no current harness
+nodes; source confirms `_safe_mcp_result_diagnostics` feeds provider summaries
+and `_safe_provider_receipt` is the final privacy boundary. No graph rebuild is
+needed for this helper-only change with no new subsystem dependencies.
+
 Add an opt-in, test-only composition path to the bounded Codex, Claude, and native OpenCode interaction journeys. The existing standalone AG-UI runner keeps its reviewed 180-second journey and 25-second cleanup windows while owning the provider process tree; the acceptance process then owns its separately spawned API worker. A separately extracted generic standalone controller command retains its reviewed 900/880-second window and requires explicit validated runtime configuration. The worker serves the production interaction and AG-UI routes over the existing isolated PostgreSQL target. The journey captures real metadata-only one-shot SSE snapshots, restarts only that API process while both provider-created questions are pending, reads a fresh snapshot from the replacement process, submits versioned human answers, and lets the provider/MCP invocation own wait and exact receipt acknowledgement.
 
 No product API, database schema, AG-UI projection, provider policy, or normal journey behavior changes are planned.

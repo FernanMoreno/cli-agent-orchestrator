@@ -1600,6 +1600,55 @@ def _safe_mcp_result_error_code(value: Any) -> str | None:
     return None
 
 
+_UNAVAILABLE_DETAIL_CAUSES = {
+    "The interaction service could not complete the request.": "http_error",
+    "The CAO interaction API is unreachable.": "connection_error",
+    "The interaction request could not be completed.": "unexpected_error",
+}
+
+
+def _safe_mcp_unavailable_cause(value: Any) -> str | None:
+    """Classify only exact production error constants, never arbitrary text."""
+    pending = [value]
+    causes: set[str] = set()
+    visited = 0
+    while pending and visited < 64:
+        current = pending.pop()
+        visited += 1
+        if isinstance(current, dict):
+            if current.get("code") == "unavailable":
+                detail = current.get("detail")
+                cause = _UNAVAILABLE_DETAIL_CAUSES.get(detail) if isinstance(detail, str) else None
+                if cause is None:
+                    return None
+                causes.add(cause)
+            for key in ("error", "structuredContent", "structured_content", "result"):
+                nested = current.get(key)
+                if isinstance(nested, dict):
+                    pending.append(nested)
+            content = current.get("content")
+            if isinstance(content, list):
+                if len(content) > 16:
+                    return None
+                pending.extend(content)
+            if current.get("type") == "text":
+                text = current.get("text")
+                if isinstance(text, str) and len(text) <= 4096:
+                    pending.append(text)
+        elif isinstance(current, list):
+            if len(current) > 16:
+                return None
+            pending.extend(current)
+        elif isinstance(current, str) and len(current) <= 4096:
+            try:
+                decoded = json.loads(current)
+            except (ValueError, RecursionError):
+                continue
+            if isinstance(decoded, (dict, list)):
+                pending.append(decoded)
+    return next(iter(causes)) if not pending and len(causes) == 1 else None
+
+
 def _safe_mcp_result_diagnostics(value: Any) -> dict[str, Any]:
     """Return MCP result shape/status enums without arguments or result text."""
     content: Any = None
@@ -1658,6 +1707,7 @@ def _safe_mcp_result_diagnostics(value: Any) -> dict[str, Any]:
         "mcp_content_block_types": sorted(block_types),
         "mcp_structured_content_present": structured_present,
         "mcp_result_error_code": _safe_mcp_result_error_code(value),
+        "mcp_unavailable_cause": _safe_mcp_unavailable_cause(value),
     }
 
 
@@ -2850,6 +2900,7 @@ def _safe_provider_receipt(result: dict[str, Any]) -> dict[str, Any]:
                 "mcp_content_block_types",
                 "mcp_structured_content_present",
                 "mcp_result_error_code",
+                "mcp_unavailable_cause",
             }
             if any(key in call for key in diagnostic_keys):
                 shape = call.get("mcp_result_shape")
@@ -2890,6 +2941,13 @@ def _safe_provider_receipt(result: dict[str, Any]) -> dict[str, Any]:
                     result_error_code
                     if isinstance(result_error_code, str)
                     and result_error_code in _SAFE_MCP_RESULT_ERROR_CODES
+                    else None
+                )
+                unavailable_cause = call.get("mcp_unavailable_cause")
+                safe_call["mcp_unavailable_cause"] = (
+                    unavailable_cause
+                    if isinstance(unavailable_cause, str)
+                    and unavailable_cause in _UNAVAILABLE_DETAIL_CAUSES.values()
                     else None
                 )
             safe_calls.append(safe_call)

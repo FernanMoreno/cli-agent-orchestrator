@@ -85,6 +85,15 @@ As a maintainer, I need one bounded acceptance journey for each real Codex, Clau
 
 ## Coverage boundary
 
+### Diagnostic distinction after a failed wait (2026-10-26)
+
+The sanitized MCP result must distinguish the existing fixed `unavailable`
+details as `http_error`, `connection_error`, or `unexpected_error`. Emit only
+these enums, never the detail, transcript, arguments, or response body. Unknown,
+conflicting, or nonmatching details remain unclassified. This is diagnostic
+evidence, not a change to MCP errors, retries, provider budgets, or acceptance.
+The distinction must survive provider event parsing and final receipt sanitizing.
+
 The harness opens separate, one-shot SSE requests for the pre-restart, post-restart, and post-acknowledgement snapshots, then closes each request after its initial snapshot. It proves that the same two pending questions survive API process replacement and that the same provider/MCP invocation later receives and acknowledges the returned answers. The wait transport phase at replacement is unobserved and may overlap it; interruption, retry, or recovery of a wait across replacement is not proven. Actual provider/API errors fail the acceptance.
 
 The portable outer-controller extraction and its offline lifecycle suite have been validated separately from this live acceptance. The private operator adapter has not yet been bound to this repository revision. No Codex, Claude, or OpenCode provider acceptance is claimed by offline validation.

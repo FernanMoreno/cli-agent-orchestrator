@@ -639,6 +639,7 @@ def test_provider_event_summary_distinguishes_tool_calls_without_exposing_payloa
             "mcp_content_block_types": ["text"],
             "mcp_structured_content_present": True,
             "mcp_result_error_code": "forbidden",
+            "mcp_unavailable_cause": None,
         },
         {
             "server": "cao-mcp-server",
@@ -1074,6 +1075,87 @@ def test_codex_mcp_result_diagnostic_uses_wire_fields_without_payload(
     assert safe_call["mcp_result_error_code"] == "forbidden"
     assert private_marker not in json.dumps(summary)
     assert private_marker not in json.dumps(safe)
+
+
+@pytest.mark.parametrize("wire", ["structuredContent", "structured_content", "text"])
+@pytest.mark.parametrize("cause", ["http_error", "connection_error", "unexpected_error"])
+def test_unavailable_cause_survives_wire_event_and_receipt(tmp_path, wire, cause):
+    import requests
+
+    from cli_agent_orchestrator.mcp_server import server
+
+    response = requests.Response()
+    response.status_code = 503
+    errors = {
+        "http_error": requests.HTTPError(response=response),
+        "connection_error": requests.ConnectionError("PRIVATE_ERROR"),
+        "unexpected_error": RuntimeError("PRIVATE_ERROR"),
+    }
+    failure = server._interaction_tool_error(errors[cause]).model_dump(mode="json")
+    result = (
+        {"content": [{"type": "text", "text": json.dumps(failure)}]}
+        if wire == "text"
+        else {wire: failure}
+    )
+    output = tmp_path / "event.jsonl"
+    output.write_text(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "private-id",
+                    "type": "mcp_tool_call",
+                    "server": "cao-mcp-server",
+                    "tool": "cao_wait_for_user_answers",
+                    "status": "completed",
+                    "result": result,
+                },
+            }
+        )
+        + "\n"
+    )
+    summary = journey._provider_event_summary(output)
+    safe = journey._safe_provider_receipt(summary)
+    assert safe["mcp_tool_calls"][0]["mcp_unavailable_cause"] == cause
+    assert safe["mcp_tool_calls"][0]["mcp_result_error_code"] == "unavailable"
+    assert "PRIVATE_ERROR" not in json.dumps(summary)
+    assert failure["error"]["detail"] not in json.dumps(safe)
+
+
+@pytest.mark.parametrize(
+    "detail", ["PRIVATE_VALUE", None, [], "The CAO interaction API is unreachable. PRIVATE_VALUE"]
+)
+def test_unavailable_cause_does_not_echo_unknown_detail(detail):
+    result = {"structuredContent": {"error": {"code": "unavailable", "detail": detail}}}
+    diagnostics = journey._safe_mcp_result_diagnostics(result)
+    assert diagnostics["mcp_unavailable_cause"] is None
+    assert "PRIVATE_VALUE" not in json.dumps(diagnostics)
+    safe = journey._safe_provider_receipt(
+        {"mcp_tool_calls": [{"mcp_unavailable_cause": ["PRIVATE_VALUE"]}]}
+    )
+    assert safe["mcp_tool_calls"][0]["mcp_unavailable_cause"] is None
+
+
+def test_unavailable_cause_rejects_conflicting_or_unbounded_results():
+    unreachable = {
+        "error": {"code": "unavailable", "detail": "The CAO interaction API is unreachable."}
+    }
+    http_error = {
+        "error": {
+            "code": "unavailable",
+            "detail": "The interaction service could not complete the request.",
+        }
+    }
+    for value in (
+        {
+            "structuredContent": unreachable,
+            "content": [{"type": "text", "text": json.dumps(http_error)}],
+        },
+        [unreachable] + [{}] * 15 + [http_error],
+        {"content": [unreachable] + [{}] * 15 + [http_error]},
+        {"error": {"code": "forbidden", "detail": "The CAO interaction API is unreachable."}},
+    ):
+        assert journey._safe_mcp_result_diagnostics(value)["mcp_unavailable_cause"] is None
 
 
 def test_codex_mcp_result_false_and_absent_flags_preserve_success(

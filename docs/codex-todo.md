@@ -2,6 +2,14 @@
 
 ## Estado específico del proveedor · 2026-10-26
 
+Diagnóstico actual en74a2ca9b: dos preguntas/respuestas, reinicio y tres snapshots
+AG-UI correctos; siete esperas `unavailable`, sin llamada al ACK. Codex salió0
+en49,18s y la limpieza propia terminó; **aceptación fallida**. La espera sí
+funciona en la comprobación sin modelo con PostgreSQL/API real antes y después
+de reiniciar. Se conserva el fallo y se añade una categoría cerrada al recibo
+para distinguir transporte/HTTP en la siguiente ejecución, sin cambiar límites.
+[Evidencia y alcance](../specs/022-provider-agui-restart/validation-codex-current.md).
+
 La aceptación Codex de la fuente actual sigue pendiente. El diagnóstico real de preguntas/ACK/AG-UI/reinicio del19-octubre no se transfiere automáticamente a este HEAD. T168 corresponde al trabajador OpenCode y T169 al CLI de emparejamiento. Próximos gates: catálogo/autorización MCP del CLI Codex; interacción/recuperación actual; mensajes persistidos y contrato externo cao.work.message por separado.
 
 [Revisión cruzada actual](../specs/025-provider-mcp-profiles/validation-all-providers-current.md):141 comprobaciones pasan; distingue contratos offline, diagnóstico nativo y aceptación por proveedor. Las pruebas reales intensivas siguen serializadas; los perfiles y contratos comunes se comprueban para los tres.

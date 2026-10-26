@@ -2,6 +2,12 @@
 description: "Tasks for provider-backed AG-UI restart acceptance"
 ---
 
+## Current wait diagnostic increment · 2026-10-26
+
+- [x] T083 Reproduce loss of the production MCP unavailable cause through actual event and receipt sanitizers, including structured/text wire results and privacy controls.
+- [x] T084 Preserve only the exact fixed-detail cause enum; reject unknown/conflicting content and arbitrary injected receipt categories. Keep error codes, retries, deadlines and acceptance unchanged.
+- [x] T085 Verify focused offline contracts, composition, independent review and record current failed native Codex plus model-free PostgreSQL/HTTP restart evidence separately from acceptance.
+
 # Tasks: Real-Provider AG-UI Restart Acceptance
 
 **Input**: Design documents in `specs/022-provider-agui-restart/`
