@@ -1,6 +1,7 @@
 """Public recovery for every receipt-backed terminal, including supervisors."""
 
 import asyncio
+import logging
 import re
 
 from cli_agent_orchestrator import constants
@@ -16,7 +17,10 @@ from cli_agent_orchestrator.clients.database import (
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import TurnResultUnavailableError
+from cli_agent_orchestrator.providers.base import (
+    TurnResultUnavailableError,
+    cancelled_turn_initialization,
+)
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.event_bus import bus
 from cli_agent_orchestrator.services.status_monitor import status_monitor
@@ -29,6 +33,7 @@ class TurnRecoveryConflict(Exception):
 
 
 _cancel_jobs: set[asyncio.Task] = set()
+logger = logging.getLogger(__name__)
 
 
 def _cancel_finished(task: asyncio.Task) -> None:
@@ -204,11 +209,33 @@ async def _cancel_locked(terminal_id: str, generation: str) -> dict:
                 )
         assert provider is not None
         setattr(provider, "_initialized", False)
-        if await provider.initialize() is not True:
-            raise RuntimeError("provider did not become ready after turn cancellation")
+        with cancelled_turn_initialization(
+            provider, terminal_id, metadata["tmux_session"], metadata["tmux_window"], generation
+        ) as startup:
+            if await provider.initialize() is not True:
+                raise RuntimeError("provider did not become ready after turn cancellation")
         if not await asyncio.to_thread(finish_terminal_turn_cancellation, terminal_id, generation):
             raise TurnRecoveryConflict("turn cancellation could not be confirmed")
         provider.mark_turn_receipt_cancelled()
+        if startup.readiness_observed.is_set():
+            # The independent startup probe deliberately published nothing.
+            # Re-read normally only after durable cancellation and local release,
+            # while dispatch ownership still excludes a new delivery.
+            try:
+                snapshot = await asyncio.to_thread(
+                    backend.get_history,
+                    metadata["tmux_session"],
+                    metadata["tmux_window"],
+                    strip_escapes=True,
+                    visible_only=True,
+                )
+                await asyncio.to_thread(
+                    status_monitor.observe_initial_screen_snapshot, terminal_id, snapshot
+                )
+            except Exception:
+                # Readiness and durable cancellation already succeeded. An
+                # advisory refresh cannot undo them or turn a retry into reset.
+                logger.warning("Post-cancellation status refresh failed for %s", terminal_id)
     except Exception:
         status_monitor.publish_receipt_reconciliation(terminal_id)
         raise

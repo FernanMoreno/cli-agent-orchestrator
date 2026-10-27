@@ -14,7 +14,11 @@ from cli_agent_orchestrator.agent_plugins.mcp_mapping import CODEX_BARE_KEY
 from cli_agent_orchestrator.backends.registry import get_backend
 from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV, CAO_HOME_DIR
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import _TURN_RECEIPT_PATTERN, BaseProvider
+from cli_agent_orchestrator.providers.base import (
+    _TURN_RECEIPT_PATTERN,
+    BaseProvider,
+    cancelled_turn_startup_context,
+)
 from cli_agent_orchestrator.providers.mcp_interactions import is_bundled_cao_mcp_entry
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -1629,6 +1633,11 @@ class CodexProvider(BaseProvider):
         """Initialize Codex provider by starting codex command."""
         from cli_agent_orchestrator.services.status_monitor import status_monitor
 
+        cancellation_startup = cancelled_turn_startup_context(self)
+        if cancellation_startup is not None:
+            pending = self.pending_turn_receipt_state()
+            if pending is None or pending["generation"] != cancellation_startup.generation:
+                raise ValueError("cancellation startup generation changed")
         init_timeout = get_server_settings()["provider_init_timeout"]
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
@@ -1677,22 +1686,83 @@ class CodexProvider(BaseProvider):
         # path can't let an assign/handoff paste the orchestrated task into the live login
         # menu -- the same composition hazard PR #539's review flagged for ClaudeCodeProvider's
         # own choice-prompt widening, fixed here the same way rather than left open.
+        # Native/event backends already report readiness independently of the
+        # receipt-aware transcript detector; preserve their existing path.
+        probe_cancelled_startup = (
+            cancellation_startup is not None and not get_backend().supports_event_inbox()
+        )
+        readiness_options: dict[str, Any] = (
+            {"initialization_probe": self._cancelled_startup_status}
+            if probe_cancelled_startup
+            else {}
+        )
         if not await wait_until_status(
             self.terminal_id,
-            {TerminalStatus.IDLE, TerminalStatus.COMPLETED, TerminalStatus.WAITING_USER_ANSWER},
+            (
+                {TerminalStatus.IDLE}
+                if probe_cancelled_startup
+                else {
+                    TerminalStatus.IDLE,
+                    TerminalStatus.COMPLETED,
+                    TerminalStatus.WAITING_USER_ANSWER,
+                }
+            ),
             timeout=float(get_server_settings()["provider_init_timeout"]),
             polling_interval=1.0,
+            **readiness_options,
         ):
             raise TimeoutError(f"Codex initialization timed out after {init_timeout} seconds")
 
         self._initialized = True
         return True
 
+    def _cancelled_startup_status(self) -> TerminalStatus:
+        """Observe replacement transport readiness without settling its old task."""
+        startup = cancelled_turn_startup_context(self)
+        pending = self.pending_turn_receipt_state()
+        if startup is None or pending is None or pending["generation"] != startup.generation:
+            return TerminalStatus.UNKNOWN
+        backend = get_backend()
+        try:
+            command = backend.get_pane_current_command(self.session_name, self.window_name)
+            if not command or not self.shell_baseline or command == self.shell_baseline:
+                return TerminalStatus.UNKNOWN
+            snapshot = backend.get_history(
+                self.session_name, self.window_name, strip_escapes=True, visible_only=True
+            )
+        except Exception:
+            return TerminalStatus.UNKNOWN
+        clean = strip_terminal_escapes(snapshot).rstrip()
+        banners = list(re.finditer(r"(?m)^[^\S\n]*>_ OpenAI Codex \(v[^()\n]+\)[^\S\n]*$", clean))
+        if not banners:
+            return TerminalStatus.UNKNOWN
+        current = clean[banners[-1].start() :]
+        cutoff = _compute_tui_footer_cutoff(current.splitlines())
+        transcript = current[:cutoff]
+        if (
+            not _has_startup_idle_composer(current)
+            or re.search(UPDATE_DIALOG_PATTERN, current)
+            or re.search(UPDATE_DIALOG_MENU_PATTERN, current)
+            or re.search(USER_PREFIX_PATTERN, transcript, re.I | re.M)
+            or _find_assistant_marker(transcript) is not None
+        ):
+            return TerminalStatus.UNKNOWN
+        # No ContextVar lookup occurs in the ordinary detector: to_thread copies
+        # contexts, including into status monitors that can publish detections.
+        if self._get_status(current, startup_without_task=True) != TerminalStatus.IDLE:
+            return TerminalStatus.UNKNOWN
+        startup.readiness_observed.set()
+        return TerminalStatus.IDLE
+
     def get_status(self, output: str) -> TerminalStatus:
         return self._get_status(output)
 
     def _get_status(
-        self, output: str, *, post_response_error: Optional[TerminalStatus] = None
+        self,
+        output: str,
+        *,
+        post_response_error: Optional[TerminalStatus] = None,
+        startup_without_task: bool = False,
     ) -> TerminalStatus:
         # Native status (herdr): trust the backend's agent state when available;
         # on herdr the buffer is never fed, so buffer parsing can't leave UNKNOWN.
@@ -1881,7 +1951,7 @@ class CodexProvider(BaseProvider):
             if re.search(TUI_PROGRESS_PATTERN, tail_output, re.MULTILINE):
                 return TerminalStatus.PROCESSING
 
-            if self.pending_turn_receipt_state() is not None:
+            if not startup_without_task and self.pending_turn_receipt_state() is not None:
                 # Commentary and a temporarily absent spinner share the idle
                 # composer with a final reply. Do not spend the receipt's
                 # bounded verification budget on these intermediate redraws.

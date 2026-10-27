@@ -25,8 +25,12 @@ import re
 import secrets
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from threading import Event
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.mcp_interactions import (
@@ -66,6 +70,50 @@ _TURN_RECEIPT_PATTERN = re.compile(
 )
 _TURN_RECEIPT_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _TURN_GENERATION_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+
+
+@dataclass(frozen=True)
+class CancelledTurnStartup:
+    """Transport readiness authority after recovery acknowledged an owned reset."""
+
+    provider: object
+    terminal_id: str
+    session_name: str
+    window_name: str
+    generation: str
+    readiness_observed: Event = field(default_factory=Event, compare=False, repr=False)
+
+
+_cancelled_turn_startup: ContextVar[Optional[CancelledTurnStartup]] = ContextVar(
+    "cancelled_turn_startup", default=None
+)
+
+
+@contextmanager
+def cancelled_turn_initialization(
+    provider: object, terminal_id: str, session_name: str, window_name: str, generation: str
+) -> Iterator[CancelledTurnStartup]:
+    """Recovery alone enters this scope after reset, retaining the old receipt."""
+    if not _TURN_GENERATION_PATTERN.fullmatch(generation):
+        raise ValueError("invalid cancellation startup generation")
+    startup = CancelledTurnStartup(provider, terminal_id, session_name, window_name, generation)
+    token = _cancelled_turn_startup.set(startup)
+    try:
+        yield startup
+    finally:
+        _cancelled_turn_startup.reset(token)
+
+
+def cancelled_turn_startup_context(provider: object) -> Optional[CancelledTurnStartup]:
+    startup = _cancelled_turn_startup.get()
+    if startup is None or startup.provider is not provider:
+        return None
+    if any(
+        getattr(provider, key, None) != getattr(startup, key)
+        for key in ("terminal_id", "session_name", "window_name")
+    ):
+        raise ValueError("cancellation startup terminal binding changed")
+    return startup
 
 
 class OutputExtractionError(ValueError):

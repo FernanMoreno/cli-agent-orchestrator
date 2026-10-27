@@ -127,6 +127,8 @@ Use `verification-before-completion` before substantial completion.
 - When workspace aliases differ from editable-import paths (including OneDrive letter case), run verification from the same canonical checkout path used by imports. Verify coverage measures the executed source; fix the invocation rather than changing coverage settings or thresholds.
 - When formatting repository files together with private diagnostic files, pass the repository formatter configuration explicitly. Mixed roots can select default settings; review the diff and remove unrelated formatting before validation.
 - If a subprocess fixture times out before its protocol starts, measure import startup separately before changing product behavior. On DrvFS, a private Linux `PYTHONPYCACHEPREFIX` primed from the same pinned canonical imports under the held PostgreSQL owner can reduce source-loading overhead. Preserve deadlines, actor/barrier assertions, source hashes and failed receipts; a warm-cache pass does not accept cold-start latency.
+- Cancellation/reinitialization checks must exercise the real provider's receipt-aware detector as well as controlled lifecycle barriers. A fake `initialize=True` cannot establish replacement readiness while the previous task receipt remains fenced; distinguish transport startup from task completion without releasing that fence early.
+- Keep preflight attempt inventories separate from managed-run inventories. Reaping the launcher does not establish descendant exit: verify retirement of the exact owned session/process identities within a bounded wait. When deriving a capture fixture, retain line indentation and row boundaries and record the producer hash and exact suffix boundary.
 
 ## 7. Significant composition review
 

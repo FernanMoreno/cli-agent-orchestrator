@@ -1,5 +1,17 @@
 # Plan: provider MCP profiles
 
+## T184 · reproduce the pending-receipt readiness circularity
+
+T183 R1 on ee3567bd failed its unchanged managed gate after an actual fresh
+replacement appeared with zero HTTP requests. Its captured viewport classifies
+IDLE without a receipt but PROCESSING with one, as cancellation intentionally
+retains that receipt across initialize. Reproduce initialize with this exact
+fixture, then add a reset-only provider/generation ContextVar around initialize
+and a separate visible startup probe; do not clear receipts, weaken ordinary
+status, or publish readiness before durable finish. Preserve original failure,
+add context/negative/readiness regressions and real-PG service ordering checks,
+then repeat T183 in a fresh source-bound root under the held verified PG owner.
+
 ## T183 · actual stream-to-reset boundary
 
 Reuse the source-bound T181 private wrapper/backend/API fixture and T182

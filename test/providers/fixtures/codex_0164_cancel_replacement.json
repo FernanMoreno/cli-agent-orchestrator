@@ -1,0 +1,9 @@
+{
+  "schema": "caos.native-viewport.v1",
+  "producer_source": "ee3567bd9c4132b3a8db8a221a45474a0eec517f",
+  "pane_size": [
+    220,
+    50
+  ],
+  "frame": "  >_ OpenAI Codex (v0.164.0)\n     ~\n\n  To get started, describe a task or try one of these commands:\n\n  /init - create an AGENTS.md file with instructions for Codex\n  /status - show current session configuration\n  /permissions - choose what Codex is allowed to do\n  /model - choose what model and reasoning effort to use\n  /review - review any changes and find issues\n\n\n› Ask Codex to do anything\n\n  GPT-6-Luna default · ~                                                                                                                                                                           ⚠ 1 warning · f2 to view\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+}

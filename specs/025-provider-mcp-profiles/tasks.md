@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T184 [US4] [FR162/SC146] Reproduce/fix Codex cancellation startup circularity using the captured T183 replacement frame. Keep local/durable receipt fences, normal progress classification, reset/generation authority and budgets. Scope the independent startup probe to provider/generation/task; verify negative frames, context lifetime/isolation and service ordering, then a fresh source-bound T183 native retry.
+
 - [ ] T183 [US4] [FR161/SC145] Execute source-bound actual Codex cancellation during an isolated active SSE stream: strict API generation/child ownership, wrong-generation refusal, old-process exit, fresh replacement CLI/ready frame, bounded zero replacement requests, cancelled child/join and explicit cleanup/parent continuity. Add negative observer controls and per-attempt private ledgers; preserve180s/6144MiB/login/isolation and independent FIFO/timeout/global gates.
 
 - [x] T182 [US4] [FR160/SC144] Verify shared cancellation ownership with real PostgreSQL/event barriers across reset, readiness, duplicate/disconnected callers and final CAS; preserve stale-generation refusal, no resend, per-terminal concurrency, receipt/child fencing and publication after lock release. Record offline composition limits separately from native Codex cancellation and stale-FIFO hypotheses.

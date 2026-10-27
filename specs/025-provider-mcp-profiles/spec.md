@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Cancellation startup without early receipt release · T184
+
+FR162/SC146: After acknowledged owned reset, initialization must distinguish
+fresh CLI readiness from completion of the cancelled task. Retain its local
+receipt and durable cancelling fence until readiness and final CAS succeed.
+Authorize a separate Codex pipe-pane startup probe only in a task-local context bound to
+the provider instance and generation, entered by recovery after reset. Ordinary
+status/extraction remains receipt-aware. Require a visible fresh banner,
+strict empty/known composer with footer, no current task/activity/dialog/error,
+and a process beyond the replacement shell. Native/event readiness retains its
+existing authority. Refresh normal status only after durable/local release; an
+advisory refresh failure must not undo confirmed cancellation. Context must reset on success,
+errors/cancellation and never affect another provider/task. Preserve budgets.
+
 ## Native active cancellation · T183
 
 FR161/SC145: A pinned real Codex CLI must cancel its active generation through

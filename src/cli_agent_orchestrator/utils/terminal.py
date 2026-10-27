@@ -188,6 +188,8 @@ async def wait_until_status(
     target_status: "TerminalStatus | set[TerminalStatus]",
     timeout: float = 30.0,
     polling_interval: float = 1.0,
+    *,
+    initialization_probe: Optional[Callable[[], TerminalStatus]] = None,
 ) -> bool:
     """Wait until terminal reaches target status by polling status_monitor.
 
@@ -201,6 +203,10 @@ async def wait_until_status(
     status_monitor.py), and on herdr it shells out to the herdr CLI. Offload each poll via
     asyncio.to_thread so that blocking I/O can't fork/exec on the shared event loop —
     matches the pattern GET /terminals/{id} (api/main.py) uses for the identical hazard.
+
+    An explicit initialization_probe is the sole readiness authority for that
+    invocation and publishes nothing. Recovery uses this only after an owned
+    reset while the previous task receipt must remain fenced.
     """
     from cli_agent_orchestrator.services.status_monitor import status_monitor
 
@@ -211,6 +217,15 @@ async def wait_until_status(
     )
     start = time.time()
     while time.time() - start < timeout:
+        if initialization_probe is not None:
+            # An acknowledged reset can retain a semantic task fence while its
+            # replacement becomes ready. Its scoped transport probe is the sole
+            # readiness source; cached task status must not satisfy this wait.
+            detected = await asyncio.to_thread(initialization_probe)
+            if detected in targets:
+                return True
+            await asyncio.sleep(polling_interval)
+            continue
         current = await asyncio.to_thread(status_monitor.get_status, terminal_id)
         if current in targets:
             logger.info(f"wait_until_status [{terminal_id}]: reached {current.value}")
