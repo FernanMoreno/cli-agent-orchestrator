@@ -1,5 +1,24 @@
 # Plan: provider MCP profiles
 
+## T177 · partial stream followed by native failure
+
+Use Graphify as pointers and verify source: Codex get_status gates generic errors
+and quota after any assistant marker, retaining assistant-quotation protection.
+First extend the proven isolated native PTY capture with Responses SSE text then
+failure; preserve CLI retries,180s budget, native config preflight and exact
+source/binary/executed-descriptor bindings. No database or operator credentials
+are needed for this first observation. Classify the captured native frame through
+both production adapters and preserve active-receipt state. Only then decide
+whether a distinguishable correction is possible; no managed acceptance inferred.
+The implemented guard keeps the established compact dialog windows and passes
+only a separately computed native cell-boundary observation into the shared
+status detector. Native backend/shell/dialog priority remains unchanged. Require
+a left-gutter assistant bullet; indented multiline user content is not a reply.
+Review controls must cover blank-heavy dialogs as well as native error/quote
+frames. Wrapped errors, absent footer, partial quota and post-fix managed
+acceptance remain separate observations.
+
+
 ## T176 · managed API/native-child error lifecycle
 
 Reuse T174's actual matrix fixture, canonical run-step API/schema and explicit

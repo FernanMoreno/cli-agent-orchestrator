@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Native partial-response error boundary · T177
+
+FR155/SC139: A partial assistant message is not evidence that a subsequent native
+failure succeeded. Capture actual current CLI output after a controlled partial
+stream and failure, with synthetic credentials and isolated loopback. Compare
+buffer/screen classification with and without an active receipt, preserving the
+receipt. Keep quoted error text, stale failures and successful assistant output
+as independent negative controls. Do not broaden matching when a native failure
+and model quotation are indistinguishable in available text. Record the first
+missing structural observation rather than claiming a parser or managed fix.
+
+
 ## Managed native Codex error receipts · T176
 
 FR154/SC138: Through the production run-step route, observe controlled native

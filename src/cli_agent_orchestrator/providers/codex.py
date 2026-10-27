@@ -907,6 +907,36 @@ def _transcript_before_active_rate_limit_dialog(script_output: str) -> Optional[
     return "".join(lines[:header_index]).rstrip()
 
 
+def _has_post_response_http_error(clean_output: str) -> bool:
+    """Recognize a separate native HTTP error cell after a partial reply.
+
+    Native 0.164 puts the error at column zero after a blank row. Model
+    continuation/quoted text is indented under its bullet. Require the error
+    to be the final transcript row; adjacent ambiguous quotes and completed
+    replies with a subsequent finished marker retain their prior semantics.
+    Keep the original rendered rows for this check, independently of the
+    compact nonblank rows used by the screen adapter's dialog detectors.
+    """
+    all_lines = clean_output.splitlines()
+    cutoff = _compute_tui_footer_cutoff(all_lines)
+    users = list(
+        re.finditer(USER_PREFIX_PATTERN, clean_output[:cutoff], re.IGNORECASE | re.MULTILINE)
+    )
+    if not users:
+        return False
+    current_turn = clean_output[users[-1].start() : cutoff]
+    lines = current_turn.rstrip().splitlines()
+    if len(lines) < 3 or lines[-2].strip():
+        return False
+    if re.match(CODEX_HTTP_ERROR_CELL_PATTERN, lines[-1], re.IGNORECASE) is None:
+        return False
+    # Echoed multiline user content and model continuation are indented.
+    # Only a native reply bullet in the left gutter establishes this path.
+    return any(
+        _find_assistant_marker(line) is not None for line in lines[:-2] if line.startswith("•")
+    )
+
+
 def _has_active_exhausted_quota(
     clean_output: str, *, active_user_start: Optional[int] = None
 ) -> bool:
@@ -1632,6 +1662,9 @@ class CodexProvider(BaseProvider):
         return True
 
     def get_status(self, output: str) -> TerminalStatus:
+        return self._get_status(output)
+
+    def _get_status(self, output: str, *, separated_http_error: bool = False) -> TerminalStatus:
         # Native status (herdr): trust the backend's agent state when available;
         # on herdr the buffer is never fed, so buffer parsing can't leave UNKNOWN.
         native = self._resolve_native_status(output)
@@ -1788,6 +1821,10 @@ class CodexProvider(BaseProvider):
         # Only treat ERROR/WAITING prompts as actionable if they appear after the last user message
         # and are not part of an assistant response.
         if last_user is not None:
+            if assistant_after_last_user and (
+                separated_http_error or _has_post_response_http_error(clean_output)
+            ):
+                return TerminalStatus.ERROR
             if not assistant_after_last_user:
                 if re.search(
                     WAITING_PROMPT_PATTERN,
@@ -1885,10 +1922,15 @@ class CodexProvider(BaseProvider):
         detector against the rendered screen; cursor-erased startup frames are
         absent here, which prevents a stale spinner from pinning PROCESSING.
         """
-        rows = [line.rstrip() for line in screen_lines if line.strip()]
-        if not rows:
+        # Preserve cell boundaries for native errors without changing the
+        # existing nonblank-row windows for trust/update/approval dialogs.
+        frame = "\n".join(line.rstrip() for line in screen_lines).strip("\n")
+        if not frame:
             return TerminalStatus.UNKNOWN
-        return self.get_status("\n".join(rows))
+        rows = [line for line in frame.splitlines() if line.strip()]
+        return self._get_status(
+            "\n".join(rows), separated_http_error=_has_post_response_http_error(frame)
+        )
 
     def probe_processing_from_screen(self, screen_lines: list[str]) -> bool:
         """Report whether a half-drawn Codex frame shows a working turn.
@@ -1917,7 +1959,7 @@ class CodexProvider(BaseProvider):
         frame = "\n".join(rows)
         if not re.search(TUI_PROGRESS_PATTERN, frame, re.MULTILINE):
             return False
-        return self.get_status(frame) == TerminalStatus.PROCESSING
+        return self.get_status_from_screen(screen_lines) == TerminalStatus.PROCESSING
 
     def extract_current_composer(self, rendered_pane: str) -> Optional[str]:
         """Return Codex's bottom composer without admitting transcript prompts."""
