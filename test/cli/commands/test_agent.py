@@ -16,6 +16,9 @@ from click.testing import CliRunner
 from cli_agent_orchestrator.cli.commands.agent import agent
 from cli_agent_orchestrator.mcp_server.models import HandoffResult
 
+# Every orchestration implementation is mocked; no runtime DB is exercised here.
+pytestmark = pytest.mark.offline_database
+
 
 @pytest.fixture
 def runner():
@@ -359,7 +362,10 @@ class TestResult:
             "output": "line one\nline two",
         }
 
-        result = runner.invoke(agent, ["result", "a1b2c3d4"])
+        # This is the human renderer contract; captured pipe mode is JSON.
+        # Real TTY detection is covered for every operation in the mode matrix.
+        with patch("cli_agent_orchestrator.cli.commands.agent._machine_mode", return_value=False):
+            result = runner.invoke(agent, ["result", "a1b2c3d4"])
 
         assert result.exit_code == 0
         assert "output:" in result.output
@@ -442,6 +448,7 @@ class TestHandoffMachineModeGating:
 
         assert result.exit_code == 0
         assert "Waiting for" not in result.output
+        assert json.loads(result.stdout)["success"] is True
 
 
 @patch("cli_agent_orchestrator.cli.commands.agent._verify_impl")

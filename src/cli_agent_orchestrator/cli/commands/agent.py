@@ -50,7 +50,7 @@ def _machine_mode(as_json: bool) -> bool:
 
 
 def _emit(result: dict, as_json: bool) -> bool:
-    """Render an impl-function result dict (human or --json) and return its success flag.
+    """Render an impl result (human TTY or machine JSON) and return its success flag.
 
     Deliberately generic: assign/send-message/status/result/cancel each
     return a differently-shaped dict -- no MCP tool ever standardized one
@@ -60,7 +60,7 @@ def _emit(result: dict, as_json: bool) -> bool:
     ``key: value`` line. ``success`` itself is never printed as a line -- the
     command's exit code already carries it.
     """
-    if as_json:
+    if _machine_mode(as_json):
         click.echo(_json.dumps(result, indent=2))
         return bool(result.get("success"))
     for key, value in result.items():

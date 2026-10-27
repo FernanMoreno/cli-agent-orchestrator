@@ -756,4 +756,4 @@ T165 validado:2RED raíz/hijo por error real de SessionLocal→2GREEN;112 contro
 
 - [x] T169 [US4] [FR147/SC131] Implement strict versioned JSON outputs for peer pair/accept and migrate T168 off localized CLI prose; preserve explicit authorization/error exits/human defaults/private code handling, audit other machine boundaries, validate producer/consumer/real-PG authorization contracts before fresh native preflight.
 
-- [ ] T170 [US4] [FR148/SC132] Reproduce and correct cao agent final-output non-TTY contract (including handoff) after current T169/T168; verify TTY/pipe/explicitJSON success/failure and heartbeat/exit compatibility. Audit proposal, not implemented.
+- [x] T170 [US4] [FR148/SC132] Reproduce and correct cao agent final-output non-TTY contract (including handoff) after current T169/T168; verify TTY/pipe/explicitJSON success/failure and heartbeat/exit compatibility. Implemented:18RED/54controls before correction;107finalPASS including all9commands,TTY/pipe/JSON/error/interrupt compatibility; architecture5/0 and scoped review. [Evidence](validation-t170.md).

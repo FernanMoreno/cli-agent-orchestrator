@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T170 compartido: corregida la salida de `cao agent` para tuberías/automatización; JSON según su política existente y texto humano en TTY.107 pruebas pasan en los9subcomandos, incluidos errores/interrupción/hilos; arquitectura5/0 y revisión sin bloqueos. Conserva los payloads, permisos y transportes; no añade aceptación nativa de proveedores. [Evidencia](../specs/025-provider-mcp-profiles/validation-t170.md).
+
 T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t186.md).
 
 T185: timeout nativo Codex180s PASS en5f034ca3; HTTP504 en208,728s con arranque, verify200/pending sin reenvío, generación ajena409 y cancelación actual200 en25,875s. Cinco procesos viejos retirados, reemplazo listo/0peticiones y limpieza completa; hijo conserva reconcile/timeout/settled_at.323PASS/5avisos,26controles nuevos incluidos, arquitectura5/0,1744pins y PG cerrado. Backend sintético; todaCX08/otros proveedores/global siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t185.md).

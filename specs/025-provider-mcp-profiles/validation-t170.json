@@ -1,0 +1,36 @@
+{
+  "schema": "caos.spec025.t170.agent-machine-output-validation.v1",
+  "date": "2026-10-27",
+  "base_head": "66156943e762fece67a5ed67e60f10006db28a93",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/cli/commands/agent.py": "cf621918a2d4c9fd55f55259366612274a436b4487638b257be9bc1de42c016f",
+    "test/cli/commands/test_agent.py": "c9d8ff5acf8e275b87b30e207e5b8063ee7df38116455c3912be108e158c9d34",
+    "test/cli/commands/test_agent_machine_output.py": "254506703a043427a9d93889e917e23ed6c32fd41268efad44ce2ffa2e05aa43"
+  },
+  "before": {
+    "default_pipe_failures": 18,
+    "tty_and_explicit_json_controls_passed": 54
+  },
+  "after": {
+    "passed": 107,
+    "seconds": 12.28,
+    "new_mode_matrix": 72,
+    "new_interrupt_controls": 4,
+    "existing_cli_cases": 31,
+    "skipped": 0
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "real_database_used": false,
+  "real_provider_or_model_used": false,
+  "scope": "cao agent operation result rendering only; unchanged payloads and exit semantics",
+  "peer_review": {
+    "job_id": "79f04d41b4bb4817882d21895a3819ae",
+    "mode": "read",
+    "status": "completed",
+    "blocking_findings": 0
+  },
+  "t170_complete": true
+}

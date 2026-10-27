@@ -1,5 +1,27 @@
 # Plan: provider MCP profiles
 
+## T170 · consistent machine output for cao agent
+
+FR148/SC132 follows the completed T169/T168 boundary. The actual non-TTY
+status command was reproduced with a mocked orchestration result: exit0 but
+human lines instead of the JSON promised by `_machine_mode`. The first wrong
+boundary is `_emit`, which uses only the explicit flag. Reuse the existing
+machine policy there for all agent operations; preserve each payload and its
+success-derived exit, current JSON formatting and TTY rendering. Handoff already
+uses that policy to suppress waiting/heartbeat output; retain its stderr
+terminal notification and interruption behavior. Do not alter MCP/HTTP/AG-UI
+contracts, authorization or model prompts.
+
+Before changing behavior, cover every agent subcommand with mocked success and
+failure results under real captured non-TTY and a TTY-reporting Click stdout,
+with/without --json. Assert one JSON value on stdout in machine mode, unchanged
+operation data/exit semantics, human multiline output on TTY, and handoff
+progress/heartbeat isolation. Retain the existing wiring/argument tests. The
+tests mock every orchestration implementation or request help; explicitly mark
+that unit scope offline so autouse PostgreSQL setup does not add an unrelated
+service. No DB/provider tests are removed or skipped. Verify source neighbors,
+architecture/composition, final diff and independent review before closure.
+
 ## T185 · full-budget timeout followed by owned cancellation
 
 Reuse T183/T184 isolated native runner and physical witnesses. Hold only the
