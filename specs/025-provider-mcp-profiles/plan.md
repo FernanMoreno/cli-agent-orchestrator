@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T176 · managed API/native-child error lifecycle
+
+Reuse T174's actual matrix fixture, canonical run-step API/schema and explicit
+parent/child profiles. Reuse T175's isolated local HTTP error responses behind a
+per-native-process wrapper, preserving production input delivery and parser.
+Verify 502/error/failed versus409/quota_wait/reconcile, retained terminal, same
+receipt join and explicit DELETE that stamps cleanup without changing verdict.
+The database treats reconcile as settled for join; do not confuse that with task
+success or promise auto-resume. Graphify pointers were checked against the real
+agent_step exception path, API mapping and database cleanup conditional updates.
+Add credential-free negative contracts, inspect the exact native wrapper/config
+initialization before one serial auth case, then extend only after a sound result.
+Keep operator HOME/auth hidden, no real backend/key, verified owned PG >=6144MiB,
+exact source/binary/archive/resource ownership and scoped independent review.
+
 ## T175 · native auth/quota error boundary
 
 First observe a single controlled 401 frame with the actual pinned CLI before

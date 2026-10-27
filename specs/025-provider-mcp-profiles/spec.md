@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Managed native Codex error receipts · T176
+
+FR154/SC138: Through the production run-step route, observe controlled native
+authentication/throttle failures as HTTP502/error and child failed, and explicit
+capacity exhaustion as HTTP409/quota_wait and child reconcile. Keep the worker
+for inspection, delivery uncertainty true, retryable false and native-child
+identity stable. Require join's durable verdict without inferring success;
+reconcile is settled for receipt-join purposes, not a completed provider task.
+Only after those checks explicitly delete this owned terminal and prove cleanup
+preserves the failed/reconcile verdict. Use synthetic credentials/backend,
+unchanged180s/no-redelivery, source-bound native wrappers and verified private PG.
+Do not credit live-account exhaustion, automatic quota resume, active cancellation
+or timeout reconciliation from these controlled error cases.
+
 ## Controlled native Codex error classification · T175
 
 FR153/SC137: Observe the pinned native CLI's terminal frames after controlled
