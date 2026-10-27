@@ -1,0 +1,285 @@
+{
+  "schema": "caos.spec025.t187.native-http-acceptance.v1",
+  "recorded_at_utc": "2026-10-27T22:29:05.701593+00:00",
+  "source_head": "fc13a8aa53a65ebb077e583e422fc2045b1b1760",
+  "generations": {
+    "preflight": {
+      "receipt": {
+        "schema": "caos.spec025.t168.native-paired.v1",
+        "mode": "preflight",
+        "activity_case": "native_http_stream",
+        "source_head": "fc13a8aa53a65ebb077e583e422fc2045b1b1760",
+        "model": "opencode-go/glm-5.3-flash",
+        "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+        "execution_sha256": "2fe30149f2554803c60d4dc15a0d0ea7bd66efdc364f0a7e3ce803606a283afb",
+        "interpreter_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+        "production_pairing_verified": true,
+        "caller_controller_created": true,
+        "mcp_catalog_exact_twelve": true,
+        "native_preflight_passed": true,
+        "memory_admissions_mib": {
+          "initial": 10700,
+          "native_preflight": 10141
+        },
+        "confirmed_terminal_retirements": 2,
+        "git_baseline_unchanged": true,
+        "binary_unchanged": true,
+        "interpreter_unchanged": true,
+        "operator_unchanged": true,
+        "source_unchanged": true,
+        "api_processes_dead": true,
+        "tmux_processes_dead": true,
+        "mcp_client_closed": true,
+        "private_provider_roots_removed": true,
+        "worktrees_removed": true,
+        "database_targets_closed": true,
+        "private_state_removed": true,
+        "cleanup_failures": [],
+        "elapsed_seconds": 195.562,
+        "success": true
+      },
+      "manifest_sha256": "993e4cd81598f005a77e417e804b5269f9f9f2f55881baf55fe54dc4b3228c5e",
+      "receipt_sha256": "362a46a1940786bb7ea45c344327e053d18008cb6f14fd2dbafb8d81c15ac1f0",
+      "source_file_count": 576,
+      "source_inventory_sha256": "4ddfc2df1bb166d1cd910e60f34c775c0d80ff446ec210bb737c6f9c50328c74",
+      "owner_cleanup": {
+        "owner_context_closed": true,
+        "exact_owned_container_absent": true,
+        "exact_owned_network_absent": true,
+        "destructive_commands_own_only": true,
+        "unrelated_resources_preserved": true,
+        "destructive_commands": [
+          [
+            "container",
+            "3856d71ccf4a9489be95afb35d0565e3e9fca2683e18f1ada6d81d00547eee1b"
+          ],
+          [
+            "network",
+            "f82ab5390b81911895cc1f80d916752c1c5c2ded27f70235959722a6bd3990c9"
+          ]
+        ],
+        "operator_resources_touched": false,
+        "foreign_snapshot_observation_only": true
+      },
+      "owner_cleanup_sha256": "9c1b558ac19d72eafae37c6b50fdc7ebd39d4bb870e32a3a4816c00137bd4882",
+      "postgres_identity": {
+        "container_id": "3856d71ccf4a9489be95afb35d0565e3e9fca2683e18f1ada6d81d00547eee1b",
+        "network_id": "f82ab5390b81911895cc1f80d916752c1c5c2ded27f70235959722a6bd3990c9",
+        "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+        "new_owned_service": true
+      }
+    },
+    "execute": {
+      "receipt": {
+        "schema": "caos.spec025.t168.native-paired.v1",
+        "mode": "execute",
+        "activity_case": "native_http_stream",
+        "source_head": "fc13a8aa53a65ebb077e583e422fc2045b1b1760",
+        "model": "opencode-go/glm-5.3-flash",
+        "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+        "execution_sha256": "2fe30149f2554803c60d4dc15a0d0ea7bd66efdc364f0a7e3ce803606a283afb",
+        "interpreter_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+        "production_pairing_verified": true,
+        "caller_controller_created": true,
+        "mcp_catalog_exact_twelve": true,
+        "native_preflight_passed": true,
+        "native_success_exact": true,
+        "same_key_replay_exact": true,
+        "http_stream_growth_witnessed": true,
+        "http_stream_final_fence_verified": true,
+        "http_stream_worker_stopped": true,
+        "cancelled_worker_stopped": true,
+        "task_seconds": [
+          31.436,
+          33.153
+        ],
+        "memory_admissions_mib": {
+          "initial": 10627,
+          "native_http_stream_cancel": 9598,
+          "native_preflight": 10039,
+          "task_0": 9955,
+          "task_1": 9651
+        },
+        "confirmed_terminal_retirements": 4,
+        "git_baseline_unchanged": true,
+        "binary_unchanged": true,
+        "interpreter_unchanged": true,
+        "operator_unchanged": true,
+        "source_unchanged": true,
+        "api_processes_dead": true,
+        "tmux_processes_dead": true,
+        "mcp_client_closed": true,
+        "private_provider_roots_removed": true,
+        "worktrees_removed": true,
+        "database_targets_closed": true,
+        "private_state_removed": true,
+        "cleanup_failures": [],
+        "elapsed_seconds": 261.138,
+        "success": true
+      },
+      "manifest_sha256": "c21860727e8cf2468b4edd7d2880468eb4649180449a050f5350f9d2a303536b",
+      "receipt_sha256": "4919f1887fa84f23be8ba8731c5b84673f27dc68b433287fc84ec264a0be774b",
+      "source_file_count": 576,
+      "source_inventory_sha256": "4ddfc2df1bb166d1cd910e60f34c775c0d80ff446ec210bb737c6f9c50328c74",
+      "owner_cleanup": {
+        "owner_context_closed": true,
+        "exact_owned_container_absent": true,
+        "exact_owned_network_absent": true,
+        "destructive_commands_own_only": true,
+        "unrelated_resources_preserved": true,
+        "destructive_commands": [
+          [
+            "container",
+            "0e7dba28e439db6c9920aea7e5e6cdb723d3e153a8587b7c409b5eca3aea9d15"
+          ],
+          [
+            "network",
+            "173ebb21723e36a85304abb53b586aeadd8edcfaae74b6219417546cfc5f48fa"
+          ]
+        ],
+        "operator_resources_touched": false,
+        "foreign_snapshot_observation_only": true
+      },
+      "owner_cleanup_sha256": "b295a3e7c9f37def1c84cb9583b4a89aa791c18f5e55610e77bdb79cd8d4ea41",
+      "postgres_identity": {
+        "container_id": "0e7dba28e439db6c9920aea7e5e6cdb723d3e153a8587b7c409b5eca3aea9d15",
+        "network_id": "173ebb21723e36a85304abb53b586aeadd8edcfaae74b6219417546cfc5f48fa",
+        "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+        "new_owned_service": true
+      }
+    }
+  },
+  "http_witness": {
+    "final": {
+      "directory_identity": [
+        75,
+        542591
+      ],
+      "event_count": 18,
+      "generation": "36472295984db087fa7db83eab64bc7b",
+      "receipt_sha256": "97fc8c368c857c6762108c3f95ede01794fba90fd02bff3ef37402bf48d8193c",
+      "request_ordinal": 1,
+      "sequence": 5,
+      "terminal_id": "41deedd2",
+      "text_bytes": 399,
+      "text_events": 8,
+      "wire_bytes": 5122
+    },
+    "first": {
+      "directory_identity": [
+        75,
+        542591
+      ],
+      "event_count": 13,
+      "generation": "36472295984db087fa7db83eab64bc7b",
+      "receipt_sha256": "97fc8c368c857c6762108c3f95ede01794fba90fd02bff3ef37402bf48d8193c",
+      "request_ordinal": 1,
+      "sequence": 4,
+      "terminal_id": "41deedd2",
+      "text_bytes": 178,
+      "text_events": 3,
+      "wire_bytes": 3796
+    },
+    "process": {
+      "birth": 20945272,
+      "pid": 957590,
+      "uid": 1000
+    },
+    "second": {
+      "directory_identity": [
+        75,
+        542591
+      ],
+      "event_count": 18,
+      "generation": "36472295984db087fa7db83eab64bc7b",
+      "receipt_sha256": "97fc8c368c857c6762108c3f95ede01794fba90fd02bff3ef37402bf48d8193c",
+      "request_ordinal": 1,
+      "sequence": 5,
+      "terminal_id": "41deedd2",
+      "text_bytes": 399,
+      "text_events": 8,
+      "wire_bytes": 5122
+    }
+  },
+  "http_witness_file_sha256": "bb69e04ab8225460a7a0b2cbcae2588663be9f4631707baef7f43ad703172956",
+  "http_poll_count": 8,
+  "owned_process_inventory_count": 10,
+  "old_owned_identities_still_alive": 0,
+  "admission_corrections_before_native_start": [
+    "separate archive created from verified generated bytes",
+    "launch via verified venv symlink; resolved binary alone lacks venv dependencies"
+  ],
+  "live_descriptors_reclosed": true,
+  "scoped_t187_complete": true,
+  "scoped_t168_worker_complete": true,
+  "served_model_attested": false,
+  "native_coordinator_accepted": false,
+  "global_oc2_04_complete": false,
+  "work_t143_complete": false,
+  "turns": [
+    {
+      "index": 0,
+      "purpose": "exact_unicode_success_with_same_key_replay",
+      "seconds": 31.436
+    },
+    {
+      "index": 1,
+      "purpose": "active_http_stream_cancellation_with_same_key_replay",
+      "seconds": 33.153
+    }
+  ],
+  "prior_controls": [
+    "validation-t187-native-store.json",
+    "validation-t187-controller.json",
+    "validation-t187-runner.json"
+  ],
+  "composite_fence_contract": {
+    "reported_by": "http_stream_final_fence_verified",
+    "source_enforced_checks": [
+      "pidfd_open_before_final_api_pg_capture",
+      "strict_reader_active_no_observed_finish_done_eof_error_or_closed_trace",
+      "same_sent_pg_receipt_generation_before_and_after_live_read",
+      "fresh_api_pending_processing_generation_after_capture",
+      "exact_native_terminal_executable_agent_model_pid_birth_recheck",
+      "live_pidfd_immediately_before_production_cancel",
+      "typed_production_cancel_receipt_validated_then_physical_exit"
+    ],
+    "source_head": "fc13a8aa53a65ebb077e583e422fc2045b1b1760",
+    "independently_recorded_per_check_fields": false
+  },
+  "peer_review": {
+    "initial": "1c9b360749354dffb51a5981ccfb1a4d",
+    "source_scope_clarification": "b1f7fd2c07114649b14721eb8e5066f8",
+    "mode": "read",
+    "status": "completed",
+    "blocking_findings": 0,
+    "verdict": "T187 and T168 complete at FR146 controller/worker scope; no native coordinator/global inference"
+  },
+  "descriptor_closures": [
+    {
+      "generation": "preflight",
+      "archive_sha256": "2fe30149f2554803c60d4dc15a0d0ea7bd66efdc364f0a7e3ce803606a283afb",
+      "reclosed_live_sha256": "52d38bb0ed27e338daec53d9d7cf87b703c688f13ac4ea74430be78366070c94"
+    },
+    {
+      "generation": "execute",
+      "archive_sha256": "2fe30149f2554803c60d4dc15a0d0ea7bd66efdc364f0a7e3ce803606a283afb",
+      "reclosed_live_sha256": "52d38bb0ed27e338daec53d9d7cf87b703c688f13ac4ea74430be78366070c94"
+    },
+    {
+      "descriptor": "prepare-activation",
+      "executed_archive_sha256": "db12021d8cbd32fc296d22d8649a7298e3a80f26399f8d094e66a3d7e0c683f6",
+      "reclosed_sha256": "343ca55f37d8fd7d30d6f378ee07151c1465de23a679abf31e0f033d48f10fc8"
+    },
+    {
+      "descriptor": "postgres-parent/postgres-owner",
+      "executed_archive_sha256": "accf2b9ffd3857896ae316b0ef8a9d0438a515dcfffb49867a1a7deb24820a99",
+      "reclosed_sha256": "4cafd83dea529065e34bb3d862d66d7bbdc8916f1b673db98b169abe4a91fc69"
+    }
+  ],
+  "launch_interpreter_context": {
+    "entrypoint_kind": "verified_project_virtualenv",
+    "resolved_executable_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+    "closed_archive_imports_verified": true
+  }
+}

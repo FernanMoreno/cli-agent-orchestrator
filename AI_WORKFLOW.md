@@ -113,6 +113,8 @@ Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics
 
+- An interpreter digest binds executable bytes, not its virtual environment. Validate the exact invocation through closed imports before activation; use the verified virtualenv entrypoint when its resolved binary alone lacks dependencies. A generated enabled runner is not yet its executed archive: create that separate0600 archive from independently verified bytes before launch, retain its actual hash, and reclose only operational descriptors after owner closure while preserving executed evidence unchanged.
+
 - State the first unobserved boundary and the one observation that will distinguish the current hypotheses. Prefer instrumenting an existing working real journey over constructing a surrogate journey.
 - When deriving a synthetic native-provider control, carry forward the demonstrated context/output limits and request multiplicity from the successful control for that exact binary. Auxiliary requests can share model, nonce and stream settings with the primary request; ordinal1 is not primary identity. Review these preconditions before execution and distinguish completed-result capability from pre-finish activity.
 - Reuse production configuration, startup/readiness gates and protocol schemas. Before a real run, exercise the actual controller-to-service initialization boundary and verify the required tool is discovered/offered; configuration declarations and isolated packet-builder tests are insufficient.

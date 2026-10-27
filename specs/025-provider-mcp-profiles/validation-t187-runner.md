@@ -1,8 +1,9 @@
 # T187 — installed HTTP controller and runner wiring
 
-Status: `native_http_stream` is implemented as a separately selected diagnostic;
-the runner remains default-closed. Source-bound native preflight and actual
-paired HTTP cancellation are not yet accepted.
+Initial runner preparation: `native_http_stream` is implemented as a separately
+selected default-closed diagnostic. Subsequent source-bound native preflight
+and actual paired HTTP cancellation now pass; see the
+[native acceptance report](validation-t187-native.md).
 
 The run installs the exact production-derived observer before native startup,
 commits its0644 loader to the private Git project, then records the baseline.
