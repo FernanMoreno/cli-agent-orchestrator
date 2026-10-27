@@ -1,0 +1,267 @@
+{
+  "schema": "caos.validation.codex-managed-narrow-errors.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "source_head": "436dc0ae212df3a9cba88b8932fe459d9f8ea602",
+  "source_files_pinned": 1737,
+  "manifest_sha256": "b6cb1a7ab3be520d6faade656c16467eb4e5b9e49633c049b0a0ca996b5b5f1b",
+  "private_root": "/home/felni/.cache/caos-codex-managed-narrow-20261027",
+  "cli": "Codex 0.164.0",
+  "model_requested": "gpt-6-luna",
+  "synthetic_backend": true,
+  "operator_auth_staged": false,
+  "layout_override": {
+    "before_default_size": "220x50",
+    "selected_default_size": "80x50",
+    "parent_before": [
+      220,
+      50
+    ],
+    "parent_after_override": [
+      220,
+      50
+    ],
+    "only_owned_session_option": true
+  },
+  "results": [
+    {
+      "schema": "caos.managed-native-error.v1",
+      "case": "auth",
+      "terminal_id": "596b0c44",
+      "http_status": 502,
+      "kind": "error",
+      "step_seconds": 34.325,
+      "timeout_seconds": 180,
+      "prompt_redelivery": false,
+      "request_schema_validated": true,
+      "delivery_may_have_occurred": true,
+      "retryable": false,
+      "provider_may_resume": false,
+      "receipt_state": "failed",
+      "same_child_join_verified": true,
+      "child_retained_before_explicit_cleanup": true,
+      "cleanup_preserved_verdict": true,
+      "scenario": "narrow_partial_auth",
+      "startup_tty_verified": [
+        80,
+        50
+      ],
+      "all_provider_requests_tty_verified": true,
+      "rendered_witness": {
+        "partial_reply_observed": true,
+        "wrapped_native_error_observed": true,
+        "native_finished_marker_absent": true,
+        "wrapped_cell_rows": 2,
+        "viewport_sha256": "7ac41f451adf816396de6f15b8e99d792ed716f8b936837a0c0aeeb98df16aee",
+        "visible_capture_count": 1,
+        "pane_width": 80,
+        "pane_height": 50
+      },
+      "child_pane_absent_after_delete": true,
+      "parent_alive_after_child_delete": true,
+      "partial_stream_finished": true,
+      "native_http_responses": 12,
+      "one_backend_receipt_generation": true,
+      "wrapper_exited_after_delete": true,
+      "operator_home_masked": true,
+      "loopback_only": true
+    },
+    {
+      "schema": "caos.managed-native-error.v1",
+      "case": "quota",
+      "terminal_id": "8ce6760b",
+      "http_status": 409,
+      "kind": "quota_wait",
+      "step_seconds": 28.69,
+      "timeout_seconds": 180,
+      "prompt_redelivery": false,
+      "request_schema_validated": true,
+      "delivery_may_have_occurred": true,
+      "retryable": false,
+      "provider_may_resume": false,
+      "receipt_state": "reconcile",
+      "same_child_join_verified": true,
+      "child_retained_before_explicit_cleanup": true,
+      "cleanup_preserved_verdict": true,
+      "scenario": "narrow_partial_quota",
+      "startup_tty_verified": [
+        80,
+        50
+      ],
+      "all_provider_requests_tty_verified": true,
+      "rendered_witness": {
+        "partial_reply_observed": true,
+        "wrapped_native_error_observed": true,
+        "native_finished_marker_absent": true,
+        "wrapped_cell_rows": 3,
+        "viewport_sha256": "1c2eef2ddfe2be2b67d8aecb037669d08aff891ce27549d5f8c3b50f4d5c90ab",
+        "visible_capture_count": 1,
+        "pane_width": 80,
+        "pane_height": 50
+      },
+      "child_pane_absent_after_delete": true,
+      "parent_alive_after_child_delete": true,
+      "partial_stream_finished": true,
+      "native_http_responses": 3,
+      "one_backend_receipt_generation": true,
+      "wrapper_exited_after_delete": true,
+      "operator_home_masked": true,
+      "loopback_only": true
+    }
+  ],
+  "checks": {
+    "regression": {
+      "passed": 435,
+      "seconds": 52.47,
+      "skipped": 0
+    },
+    "final_witness_suite": {
+      "passed": 24,
+      "seconds": 7.79,
+      "overlaps_regression": true
+    },
+    "red_witness_cases": 24,
+    "composition": {
+      "kept": 5,
+      "broken": 0
+    },
+    "managed_suite": {
+      "passed": 1,
+      "seconds": 116.02,
+      "serial_cases": 2
+    }
+  },
+  "memory": {
+    "memory_before_launch_mib": 9441
+  },
+  "cleanup": {
+    "home_removed": true,
+    "tmux_roots_removed": true,
+    "api_process_dead": true,
+    "registered_owner_absent": true,
+    "owned_native_sessions_absent": true,
+    "observed_native_processes_absent": true,
+    "observed_native_process_count": 26,
+    "sampler_errors": [],
+    "sampler_stopped": true,
+    "physical_cleanup_verified": true,
+    "wrapper_processes_exited": true
+  },
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "python_unchanged": true,
+  "sql_borrowers": 0,
+  "private_databases": 0,
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true
+  },
+  "descriptors_closed": true,
+  "private_sha256": {
+    "scripts/error_backend.py": "8ed7eb8c20559b1c39920ae89e16a451b313dee4ef06ef97aaebbd41667ecef7",
+    "scripts/witness.py": "5d9685d3b2f7f81fe43f0d5be11cb4ac65911737b9d4f172229de934ea7fda19",
+    "scripts/test_managed_errors.py": "70891dee07e4727fe44ba1da634eabbda96a50491e75030816dd961b5b6de2d0",
+    "scripts/conftest.py": "e97c31e620a23b42905a556888f9b5f0ef071e174c24cc94e8eab2cea7e6010d",
+    "scripts/preflight_wrapper.py": "9637324b0fa701a6a34f55e62c0f415e874bf36ffaca493430af3180b067bb20",
+    "base-config.template": "27aeb88411a7b2b4308cdbde425254ec79b4678d7e459a558c0abfa9dc15f84b"
+  },
+  "launcher_execution_sha256": "9cf1e03d3545b6cd14b0818acdb27b3a9046f56663a66b678b7ce5c18147a01d",
+  "launcher_closed_sha256": "f0c9cba9351c1917e3e6df9fc2db09b7096edc3d9ac0042e130f4aea4d3354e7",
+  "wrapper_execution_sha256": "7f1875648566386634e095e47a812993953d437bcfe58977b3f5245957ba237f",
+  "wrapper_closed_sha256": "ed54db89e48c4e1a98ac0a95b8afe3e712edbdae26dff606815009a9cb09dc94",
+  "native_result_sha256": "68fc06075198e9a19681d17542b768c180e298216b064a3d1f1082c6b5195b77",
+  "preflights": {
+    "auth": {
+      "schema": "caos.codex-managed-wrapper-preflight.v1",
+      "case": "auth",
+      "native_profile_loaded": true,
+      "native_tty_ready": true,
+      "native_partial_then_failure_observed": true,
+      "pane_dimensions": [
+        80,
+        50
+      ],
+      "startup_tty": [
+        80,
+        50
+      ],
+      "request_tty_count": 12,
+      "all_request_ttys_80x50": true,
+      "served_statuses": [
+        200,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401,
+        401
+      ],
+      "requests": 12,
+      "operator_home_masked": true,
+      "loopback_only": true,
+      "outer_wrapper_reaped": true,
+      "seconds": 9.331
+    },
+    "quota": {
+      "schema": "caos.codex-managed-wrapper-preflight.v1",
+      "case": "quota",
+      "native_profile_loaded": true,
+      "native_tty_ready": true,
+      "native_partial_then_failure_observed": true,
+      "pane_dimensions": [
+        80,
+        50
+      ],
+      "startup_tty": [
+        80,
+        50
+      ],
+      "request_tty_count": 3,
+      "all_request_ttys_80x50": true,
+      "served_statuses": [
+        200,
+        429,
+        429
+      ],
+      "requests": 3,
+      "operator_home_masked": true,
+      "loopback_only": true,
+      "outer_wrapper_reaped": true,
+      "seconds": 3.055
+    }
+  },
+  "tty_fault_controls": {
+    "failure_persisted": true,
+    "original_oserror_propagated": true,
+    "retry_does_not_clear_failure": true,
+    "normal_geometry_recorded": true
+  },
+  "limits": [
+    "Synthetic loopback provider responses; real native CLI and production managed API.",
+    "No real-account quota/auth, auto-resume, raw-pipe-only, arbitrary dimensions, footerless, cancellation, timeout, full CX-08 or global acceptance.",
+    "No production default geometry change or acceptance transfer to OpenCode/Claude."
+  ],
+  "native_binary": {
+    "binary": "/home/felni/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/bin/codex",
+    "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+    "model": "gpt-6-luna"
+  },
+  "peer_review": {
+    "job_id": "0d1a3c3c20694afdaafc3626b956a2cd",
+    "mode": "read",
+    "status": "completed",
+    "verdict": "GO",
+    "scope": "native-result, public Markdown, backend sticky TTY guard and managed assertions; no independent command execution or full manifest audit"
+  },
+  "obsidian": {
+    "operation_id": "save-20261027-caos-managed-narrow-errors",
+    "pages": 4,
+    "strict_lint_issues": 0
+  }
+}

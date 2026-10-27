@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T181 [US4] [FR159/SC143] Validate current-source managed partial HTTP/quota errors at80x50. Override only the owned fixture session before children, prove child TTY geometry at startup/every request, inspect one bound wrapped viewport per child before DELETE, and verify502/failed versus409/quota_wait/reconcile, stable join/cleanup and parent continuity. Keep production220x50, limits/login/isolation, and cancel/timeout/global gates intact.
+- [x] T181 [US4] [FR159/SC143] Validate current-source managed partial HTTP/quota errors at80x50. Override only the owned fixture session before children, prove child TTY geometry at startup/every request, inspect one bound wrapped viewport per child before DELETE, and verify502/failed versus409/quota_wait/reconcile, stable join/cleanup and parent continuity. Keep production220x50, limits/login/isolation, and cancel/timeout/global gates intact.
+
+T181: API gestionada Codex80×50 PASS en436dc0ae: parcial→401 da502/error/failed34,325s; parcial→cuota da409/quota_wait/reconcile28,690s. TTY80desde arranque y cada petición, capturas2/3líneas, join/veredicto y limpieza estables; padre220accesible.435regresiones/24controles finales solapados/arquitectura5/0,1737pins y recursos propios cerrados. Backend sintético; cancelación/timeout/footerless/global siguen separados. [Evidencia](validation-t181.md).
 
 - [x] T180 [US4] [FR158/SC142] Capture pinned native partial HTTP/quota cells and legitimate quoted text at narrow width; reproduce/fix wrapped-cell classification while preserving row/cell boundaries, quotes, stale/user content, dialogs and receipts. Validate final-source consumption and regressions; keep managed narrowpane, footerless/cancel/timeout/global acceptance separate.
 
