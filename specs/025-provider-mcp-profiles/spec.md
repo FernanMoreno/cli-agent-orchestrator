@@ -1,5 +1,20 @@
 # Provider MCP profiles and current acceptance
 
+## Managed narrow native cells · T181
+
+FR159/SC143: The production managed API must retain HTTP failure502/failed and
+quota409/quota_wait/reconcile when the child starts and sends every provider
+request at80x50. Change only a verified fixture-owned session's default-size
+before children; source production creation remains220x50. Record original and
+post-override parent dimensions without assuming they stay equal. Require one
+owned visible wrapped viewport per child after response/receipt/join binding,
+then404, stable verdict/settled_at plus cleanup stamp, child pane/process exit
+and parent continuity. Use synthetic partial SSE then401/429, no operator login,
+unchanged180s/default retries/6144MiB and source/actual backend hashes. Reconcile
+settled does not imply task success or automatic resume. Other layouts, raw-only
+classification, cancel/timeout/global/other-provider gates remain independent.
+
+
 ## Wrapped native error cells · T180
 
 FR158/SC142: At explicitly selected narrow dimensions, native HTTP failure or

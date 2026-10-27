@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T181 [US4] [FR159/SC143] Validate current-source managed partial HTTP/quota errors at80x50. Override only the owned fixture session before children, prove child TTY geometry at startup/every request, inspect one bound wrapped viewport per child before DELETE, and verify502/failed versus409/quota_wait/reconcile, stable join/cleanup and parent continuity. Keep production220x50, limits/login/isolation, and cancel/timeout/global gates intact.
+
 - [x] T180 [US4] [FR158/SC142] Capture pinned native partial HTTP/quota cells and legitimate quoted text at narrow width; reproduce/fix wrapped-cell classification while preserving row/cell boundaries, quotes, stale/user content, dialogs and receipts. Validate final-source consumption and regressions; keep managed narrowpane, footerless/cancel/timeout/global acceptance separate.
 
 T180 PASS acotado:24RED/84controles→216enfocadas;668regresiones/3opt-in previos/2avisos y60controles extra (276enfocadas finales),168nuevos. Capturas80x50 e7129f7a, consumidor2cc5c66b/1735pins/24clasificaciones; código y AST iniciales conservados, arquitectura5/0 y PG/procesos cerrados. No es una suite única de728ni aceptación gestionada estrecha/raw/footerless/cancelación/global. [Evidencia](validation-t180.md).

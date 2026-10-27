@@ -1,5 +1,19 @@
 # Plan: provider MCP profiles
 
+## T181 · owned session geometry before delivery
+
+A model-free private tmux probe proves session default-size propagation before
+any provider work; process/pidfd and kernel endpoint closure are distinct from
+stale socket filenames. Reuse T178/T179 managed observers/backends with two
+serial partial cases, a strict independent wrapped-view validator and negative
+contracts. Bind parent id/session/window/option on the private socket, require
+initial220x50/default-size220x50, set only that exact session to80x50, then verify
+backend startup and each request's inherited TTY dimensions. Capture once per
+bound child before cleanup; do not resize after the API response. Reuse one held
+verified PG owner and production schemas/limits. Graphify pointers are checked
+against create_session/create_window, FULL output semantics and receipt cleanup.
+
+
 ## T180 · narrow native cells
 
 Use the T178/T179 proven private wrappers/backends with only preflight geometry
