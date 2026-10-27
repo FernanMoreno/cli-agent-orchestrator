@@ -913,6 +913,18 @@ T186 actualR1 on5509599b: fresh native_tool preflightPASS183.757s; actualUnicode
 
 ### T187: genuine native text streaming for T168
 
+The HTTP alternative now has bounded installed-Bun capability and actual
+PostgreSQL/strict-reader evidence on44eb8660; see the T187 preparation report.
+The next controller must retain the first active sample while polling within
+the original deadline, because producer publication is limited to750ms. Require
+same-binding TEXT growth, then open the exact owned native worker pidfd before
+the final fresh API/PG capture and full process revalidation. Descriptor lifetime
+must outlast every waiter; use nonblocking pidfd polling so cancelling the
+coroutine cannot close an fd still held by a background select thread. Keep this
+controller disconnected until executable installed-controller checks and a
+separately reviewed runner adapter pass. Legacy marker/native_tool cases and
+their criteria remain unchanged; no new CAOS SQLite store or permission grant.
+
 R7's literal computed-marker activity barrier was not met before completion; product cancellation was not exercised. Reuse the now-tested paired journey, strict exclusive per-event writer, native process binding and normal ownership cleanup. First use a namespace-isolated local synthetic SSE provider with current production v2 configuration and pinned native binary to determine actual in-progress session_message metadata/persistence. Prototype a bounded readonly live observer using existing schema/authorizer and ownership primitives, binding the unique diagnostic user to the current active receipt digest and generation. Require two separate snapshots of the same unfinished assistant with positive increasing TEXT byte counts; reject history, later-user/message, reasoning/tool-only output and completed/finished rows. Keep text internal to the exact bounded diagnostic-user binding and export only shape evidence. A fresh third snapshot, pending API generation and native identity/pidfd must still match before actual peer-task cancel. Test the installed controller through multiple real writer events and real SQLite transactions before integration; no guessed schemas. Luna Max ECC source/control/test audits substitute for Claude's actual quota refusal, without retrying login/quota. Commit/push/repin and complete native no-model admission before serial real-model acceptance. No production correction unless a distinct defect is reproduced.
 
 T187 actual control: corrected R3 completes9.989s, two synthetic POSTs and strict final-reader81bytes, but40 pre-finish SQLite snapshots contain an empty TEXT part. Do not activate the DB prototype or infer HTTP activity from it. Preserve R1 compaction-context failure and R2 one-request-cap/title failure; all groups retired. The contingent HTTP observer must reuse primary-kind/provider/model selection and exact Request WeakMap correlation from the existing response observer, bind unique task prompt/nonce and extracted receipt digest to the current PG generation/sent row, incrementally validate bounded SSE TEXT deltas, and preserve original Response identity and consumer progress. Review clone cancellation/deadline/error/finish ordering and negative controls before implementation; ordinal1 does not identify the primary request. Revalidate API/PG/process ownership before cancellation. No real retry until the installed observer/controller path is demonstrated.

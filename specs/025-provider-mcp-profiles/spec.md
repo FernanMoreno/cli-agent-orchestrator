@@ -751,4 +751,23 @@ T186 observation storage must use one exclusive0600 file per poll with a unique 
 
 FR165/SC149 (T187, original T168 streaming gate): Add a separately selected native_stream diagnostic to the existing paired OpenCode worker journey without changing the legacy marker or accepted native_tool cases. A model-free delayed-provider control using the pinned installed native binary must first establish whether an unfinished assistant TEXT row is visible and grows across fresh readonly native-store snapshots. Only then use the same-session/message/user/seq text growth, active CAO receipt SHA/generation, expected agent, owned root/database identity and absence of completion/finish/later message as the activity witness. Recheck pending/processing generation and exact owned native process/pidfd immediately before task cancellation; require physical retirement, unchanged Unicode/replay/CLI pairing/MCP/Git/cleanup/operator/source gates. Export only bounded counts, categories, IDs and digests, never prompt/response contents. Native persisted-text growth does not attest upstream HTTP liveness or served-model identity. If native storage exposes only final text, retain that result and review a transparent HTTP-stream observer separately rather than inventing a DB streaming signal. Preserve75s/6144MiB and all failed receipts; T168 closes only after actual source-bound native_stream acceptance.
 
+FR165/SC149 HTTP alternative: the retained negative native-store control permits
+a separately selected `native_http_stream` diagnostic. Require at least two
+strictly growing TEXT observations of one exact primary Request, phase2 task
+and receipt digest, bound to the same active sent PostgreSQL generation and
+owned private ledger identity. Expected agent/model/terminal ownership belongs
+to the exact native executable/argv/process witness. Retain the first sample
+across producer-cadence polls within75s. Open that process's pidfd before the
+final fresh API/PG capture; the strict HTTP reader must still report active,
+with no observed finish/DONE/EOF/error/closed trace. Recheck process identity
+and pidfd liveness immediately before cancellation, validate the production
+cancel receipt and physically retire the exact owned process identities under
+the original deadline and cleanup gates. A clone's TEXT growth establishes
+visibility at that observer, not upstream network liveness, native consumption,
+arithmetic correctness or served-model identity. Legacy marker and native_tool
+cases, phase1 Unicode/replay, pairing/MCP/Git/operator/source gates and6144MiB
+remain unchanged. Keep the runner disconnected until installed-controller
+composition checks pass; neither synthetic capability nor mocked controllers
+close actual source-bound paired cancellation.
+
 T187 HTTP alternative: CAOS state and authoritative receipts remain exclusively in PostgreSQL. A diagnostic observer may only clone the exact primary request/response, preserving original object identity and consumer progress. Correlate provider/model context, exact diagnostic task and nonce, extracted receipt digest and the current PG generation/sent phase. Incremental SSE processing exports only bounded metadata: at most1MiB wire data,64KiB per event/TEXT and4096 events, fatal UTF8 and duplicate-key JSON checks, stable stream identity and one choice/index0. Do not publish activity before processing the entire received chunk; a terminal/error in that chunk or an incomplete trailing frame prevents active evidence. Role/reasoning/tool-only fragments cannot supply TEXT activity. Finish, EOF, ambiguity, malformed/oversized data, deadline or cleanup invalidate live authority. Keep75s and bounded clone-only cleanup, never hold or replace the original response. Validate installed hook/controller composition and physical retirement independently; a clone's observed progress does not attest upstream network liveness or served-model identity.

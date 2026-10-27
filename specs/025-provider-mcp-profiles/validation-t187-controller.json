@@ -1,0 +1,38 @@
+{
+  "schema": "caos.spec025.t187.disconnected-controller-report.v1",
+  "date": "2026-10-27",
+  "base_head": "915e073479822135db1bc85258cb2335973e3d0e",
+  "source_sha256": {
+    "fixtures/native_http_stream_controller.py": "5cdb12dc4123bce3d14256ec1d36721ed8c21d12e0bf99e3d96728ec04c8eaa0",
+    "fixtures/test_native_http_stream_controller.py": "3ae3f3a3dcbc929a92e613a84e62ecbbd2eb3751e14f620d031df871ec6dd164"
+  },
+  "focused_python": {
+    "passed": 45,
+    "seconds": 13.0,
+    "controller_cases": 13,
+    "real_owned_python_pidfd_cases": 2,
+    "activity_and_observer_cases": 32
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "draft_fd_wait_race_reproduced": true,
+  "root_reds": {
+    "untyped_truthy_cancel_receipt": 3,
+    "api_completed_after_final_capture": 1,
+    "expired_pidfd_retirement_observation": 1
+  },
+  "runner_integrated": false,
+  "installed_controller_accepted": false,
+  "actual_paired_http_cancellation_accepted": false,
+  "t187_accepted": false,
+  "t168_accepted": false,
+  "peer_review": {
+    "job_id": "e9583406cef548e7abe6d69d5c2d688a",
+    "status": "completed",
+    "mode": "read",
+    "blocking_findings": 0,
+    "scope": "controller/spec source review; tests independently executed by root"
+  }
+}
