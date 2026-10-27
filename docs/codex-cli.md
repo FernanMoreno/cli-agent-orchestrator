@@ -149,7 +149,7 @@ By default, CAO also passes `--yolo` (alias for `--dangerously-bypass-approvals-
 >
 > To actually contain a Codex worker:
 >
-> - **`codexProfile`** drops `--yolo`, so your named `[profiles.<name>]` block governs sandbox and
+> - **`codexProfile`** drops `--yolo`, so your selected native profile governs sandbox and
 >   approvals. Note that `allowedTools: ["*"]` overrides it and forces `--yolo`; CAO logs a
 >   warning when that happens, so the discard is not silent.
 > - **`use_worktree=true`** puts writes in a throwaway git worktree behind review instead of the
@@ -157,7 +157,9 @@ By default, CAO also passes `--yolo` (alias for `--dangerously-bypass-approvals-
 
 ### Custom Codex Profile
 
-The `codexProfile` field on an agent profile names a `[profiles.<name>]` block in your `~/.codex/config.toml`. When set, CAO drops `--yolo` and passes `--profile <name>` instead, letting the user's named profile govern sandbox and approval behavior. Unrestricted allowed tools (`allowedTools: ["*"]`, `--allowed-tools '*'`, or `cao launch --yolo`) override this field and always force `--yolo`.
+The `codexProfile` field selects a native Codex configuration profile. With Codex CLI 0.164.0, put its settings in `$CODEX_HOME/<name>.config.toml` (normally `~/.codex/<name>.config.toml`), beside `config.toml`. Older CLIs used `[profiles.<name>]` blocks; 0.164.0 rejects that legacy layout when `--profile` is selected. See the [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+When set, CAO drops `--yolo` and passes `--profile <name>` instead, letting the user's named profile govern sandbox and approval behavior. Unrestricted allowed tools (`allowedTools: ["*"]`, `--allowed-tools '*'`, or `cao launch --yolo`) override this field and always force `--yolo`. CAO does not migrate or rewrite operator configuration files.
 
 **Important — non-interactive only**: CAO's status detector cannot interact with Codex's current boxed approval UI (`Command Approval Required / [a] Accept / [d] Decline`). Any `codexProfile` you reference MUST resolve to a non-interactive permission tier, or CAO sessions will time out waiting for input that nothing can deliver. Safe shapes:
 
@@ -181,10 +183,9 @@ codexProfile: cao_reviewer
 You review code for quality and correctness.
 ```
 
-Matching `~/.codex/config.toml`:
+Matching `~/.codex/cao_reviewer.config.toml` for CLI 0.164.0:
 
 ```toml
-[profiles.cao_reviewer]
 sandbox_mode = "read-only"
 approval_policy = "never"
 ```

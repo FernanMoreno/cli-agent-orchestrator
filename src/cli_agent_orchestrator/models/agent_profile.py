@@ -81,7 +81,8 @@ class AgentProfile(BaseModel):
     permissionMode: Optional[PermissionMode] = None
     native_agent: Optional[str] = None  # Claude Code native agent name (thin-wrapper mode)
 
-    # Codex-only. Names a [profiles.<name>] block in ~/.codex/config.toml.
+    # Codex-only. Selects a native --profile. CLI 0.164 uses
+    # $CODEX_HOME/<name>.config.toml; older CLIs used [profiles.<name>] blocks.
     # Used as --profile <name> when yolo mode is not active; unrestricted
     # allowed tools still force --yolo. min_length=1 prevents an explicit
     # empty string from silently degrading to --yolo, since this is a
