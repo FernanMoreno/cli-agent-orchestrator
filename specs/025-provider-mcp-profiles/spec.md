@@ -1,5 +1,18 @@
 # Provider MCP profiles and current acceptance
 
+## Text-command filter enforcement · T173
+
+FR151/SC135: A selected CAO MCP profile with explicit enabled_tools must enforce
+the same profile intersection in native client configuration and the server's
+catalog/direct-call middleware, for text and array command dialects. Empty means
+no tools, partial means exactly the intersection, absent/None preserves the full
+profile. Preserve text-client enabled_tools and canonical launch/capability/
+override fences; non-CAO servers must not receive internal policy. Verify all
+seven profiles, actual native Codex catalogs/direct calls, and negative resource/
+prompt/unknown-name behavior. Catalog permission never replaces operation
+authority or grants native shell/filesystem permissions. Source-bound CLI
+evidence without a model remains separate from model/native-task acceptance.
+
 Date: 2026-10-20. Status: incremental implementation in main; no live acceptance inferred.
 
 ## User scenarios

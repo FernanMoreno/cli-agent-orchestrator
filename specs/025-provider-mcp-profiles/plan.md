@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T173 · native Codex catalog and text filter
+
+The array dialect propagates explicit enabled_tools to the server environment,
+but the text dialect leaves it only on the client. Reproduce direct dispatch of
+an excluded profile member through production Codex TOML→server middleware,
+then propagate the filter for both dialects while preserving each native field.
+Use RED/GREEN across all seven profiles, existing authority/config contracts and
+actual pinned Codex app-server JSON-RPC catalog/tool calls without model turns.
+Generated schemas from the installed binary define the protocol; use private
+HOME/auth overlays and existing production provider builder, serialize real
+runs and bind source/binary/interpreter/operator/cleanup. Operation-authority
+effects require real isolated PG/API; do not infer them from a catalog listing.
+Graph lacks the current overlay node; source confirms overlay→Codex TOML/env→
+server startup→immutable middleware. No new production dependency or graph rebuild.
+
 ## Explicit wait reconnect · T171
 
 Current native Codex on7079a7a8 failed45.5s with three exact connection_error

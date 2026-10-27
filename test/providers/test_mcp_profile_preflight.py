@@ -151,6 +151,65 @@ def test_codex_profile_preserves_fail_closed_client_filter_validation(monkeypatc
         CodexProvider("test1234", "session", "window", "test")._build_codex_command()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", list(TOOL_PROFILES))
+@pytest.mark.parametrize("enabled", [None, [], ["cao_ask_user"], ["assign"]])
+async def test_codex_text_filter_reaches_server_catalog_and_direct_dispatch(
+    monkeypatch, profile, enabled
+):
+    from fastmcp import Client, FastMCP
+    from fastmcp.exceptions import ToolError
+
+    from cli_agent_orchestrator.mcp_server import server
+    from cli_agent_orchestrator.utils.mcp_tool_policy import MCP_TOOL_FILTER_ENV
+
+    agent = AgentProfile(
+        name="test",
+        description="test",
+        mcpServers={
+            "cao": {
+                "command": "cao-mcp-server",
+                "cao_tool_profile": profile,
+                "enabled_tools": enabled,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "cli_agent_orchestrator.providers.codex.load_agent_profile", lambda _: agent
+    )
+    command = CodexProvider("test1234", "session", "window", "test")._build_codex_command()
+    overrides = [v for v in shlex.split(command) if v.startswith("mcp_servers.cao.env=")]
+    assert len(overrides) == 1
+    env = tomllib.loads(overrides[0])["mcp_servers"]["cao"]["env"]
+    monkeypatch.delenv(MCP_TOOL_FILTER_ENV, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    expected = (
+        TOOL_PROFILES[profile] if enabled is None else TOOL_PROFILES[profile].intersection(enabled)
+    )
+    dispatched = []
+    mcp = FastMCP("codex-text-filter")
+    for name in TOOL_PROFILES[profile]:
+
+        def make_tool(operation):
+            async def call() -> str:
+                dispatched.append(operation)
+                return "called"
+
+            return call
+
+        mcp.tool(name=name)(make_tool(name))
+    assert server._install_tool_profile_middleware_if_requested(mcp)
+    async with Client(mcp) as client:
+        for name in sorted(TOOL_PROFILES[profile] - expected):
+            with pytest.raises(ToolError):
+                await client.call_tool(name)
+        assert {t.name for t in await client.list_tools()} == expected
+        for name in expected:
+            assert (await client.call_tool(name)).data == "called"
+    assert set(dispatched) == expected
+
+
 def test_codex_legacy_marker_narrows_advertised_collaboration_profile(monkeypatch):
     import sys
 

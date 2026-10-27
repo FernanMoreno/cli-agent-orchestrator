@@ -177,13 +177,12 @@ def overlay_interaction_capability_file(
                 target_env = environment if uses_environment_field else env
                 if has_tool_profile:
                     target_env[MCP_TOOL_PROFILE_ENV] = tool_profile
-                    if (
-                        isinstance(config.get("command"), (list, tuple))
-                        and config.get("enabled_tools") is not None
-                    ):
+                    if config.get("enabled_tools") is not None:
                         target_env[MCP_TOOL_FILTER_ENV] = encode_tool_filter(
-                            config.pop("enabled_tools"), tool_profile
+                            config["enabled_tools"], tool_profile
                         )
+                        if isinstance(config.get("command"), (list, tuple)):
+                            config.pop("enabled_tools")
                 if isinstance(capability_file, str) and capability_file:
                     target_env[CAO_INTERACTION_CAPABILITY_FILE] = capability_file
                 if (
