@@ -728,7 +728,9 @@ async def _tasks(
                         }
                     )
                     private_json(
-                        Path(receipt["evidence_dir"]) / "native-tool-polls.private.json", polls
+                        Path(receipt["evidence_dir"])
+                        / f"native-tool-poll-{len(polls)-1:04d}.private.json",
+                        polls[-1],
                     )
                     if await cancel_witnessed_tool(
                         client,

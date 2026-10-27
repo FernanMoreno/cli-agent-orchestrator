@@ -368,3 +368,80 @@ def test_probe_failure_code_survives_structured_exception_projection():
 
     report = journey.exception_report(activity.ActivityError("probe_ancestry_mismatch"))
     assert report["harness_codes"] == ["probe_ancestry_mismatch"]
+
+
+def test_three_native_tool_polls_use_distinct_owned_private_files(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    import stat
+    from types import SimpleNamespace
+
+    import run_native_paired_worker as journey
+
+    from cli_agent_orchestrator.services.worktree_service import worktree_path_for
+
+    target = SimpleNamespace(url="http://owned")
+    calls = []
+    tasks = {}
+    receipt = {"activity_case": "native_tool", "evidence_dir": str(tmp_path)}
+
+    class Client:
+        async def call(self, name, body):
+            if name == "assign_local_cao_task":
+                index = int(body["operation_key"].rsplit("-", 1)[1])
+                tid = "abcdef0" + str(index)
+                tasks[tid] = {"task_id": tid, "terminal_id": tid}
+                return tasks[tid]
+            assert name == "get_local_cao_task"
+            if body["task_id"] == "abcdef00":
+                return {"state": "succeeded", "result": {"output": journey.EXPECTED}}
+            return {"state": "running"}
+
+    def api(server, method, route, **kwargs):
+        tid = route.split("/")[2]
+        if route.endswith("/working-directory"):
+            return {"working_directory": worktree_path_for(str(tmp_path), tid)}
+        return {
+            "id": tid,
+            "provider": "opencode_cli",
+            "status": "processing",
+            "turn": {
+                "terminal_id": tid,
+                "provider": "opencode_cli",
+                "state": "pending",
+                "generation": "a" * 32,
+            },
+        }
+
+    async def cancel(*args):
+        calls.append(1)
+        return len(calls) == 3
+
+    monkeypatch.setattr(journey, "api", api)
+    monkeypatch.setattr(journey, "admit_memory", lambda *_: None)
+    monkeypatch.setattr(journey, "worker_configuration", lambda *_a, **_kw: tmp_path)
+    monkeypatch.setattr(journey, "retire_terminal", lambda *_a: None)
+    monkeypatch.setattr(journey, "cancel_witnessed_tool", cancel)
+    asyncio.run(
+        journey._tasks(
+            Client(),
+            None,
+            target,
+            tmp_path,
+            tmp_path,
+            SimpleNamespace(target_instance_id="peer"),
+            "caller",
+            receipt,
+            [],
+            {},
+            set(),
+        )
+    )
+    files = sorted(tmp_path.glob("native-tool-poll-*.private.json"))
+    assert len(files) == 3 and len(calls) == 3
+    assert len(receipt["native_tool_observations"]) == 3
+    assert all(
+        json.loads(p.read_text())["turn_state"] == "pending"
+        and stat.S_IMODE(p.stat().st_mode) == 0o600
+        for p in files
+    )
