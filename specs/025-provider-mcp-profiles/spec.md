@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Native active cancellation · T183
+
+FR161/SC145: A pinned real Codex CLI must cancel its active generation through
+the production API while an isolated synthetic SSE stream remains open. Require
+same-child/parent binding, wrong-generation refusal before effects, cancelled
+turn and native-child/join, old UID/birth/pidfd exit, a fresh replacement CLI
+frame/ready state and zero replacement HTTP requests over a recorded bounded
+observation. Explicit cleanup must preserve verdict and parent continuity. Use
+per-process attempt ledgers because reset reuses terminal identity. No text
+canary pickup predicate, operator login, global tmux mutation, prompt resend,
+reduced180s/min6144MiB or timeout/global/FIFO-drain acceptance inferred.
+
 ## Shared cancellation ownership · T182
 
 FR160/SC144: Public turn cancellation must keep its generation and dispatch

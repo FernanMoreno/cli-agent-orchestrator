@@ -1,5 +1,17 @@
 # Plan: provider MCP profiles
 
+## T183 · actual stream-to-reset boundary
+
+Reuse the source-bound T181 private wrapper/backend/API fixture and T182
+ownership contracts. Add strict reusable cancellation observer plus negative
+identity/generation/join/cleanup controls. Allocate separate private attempt
+ledgers atomically; active SSE saves generation-token hashes and remains open
+without completion, with sticky instrumentation errors. Preflight actual named
+native config and active stream with an owned PTY; native run begins only after
+review, memory/PG identity, hashes, formatting and production schema admission.
+Bind owned pane/process before cancel and new attempt/native frame afterward;
+never treat pending API state or a text canary alone as active execution.
+
 ## T182 · cancellation across asynchronous ownership boundaries
 
 Use event barriers around backend reset and provider initialize with a real
