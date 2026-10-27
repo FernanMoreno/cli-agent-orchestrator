@@ -1,0 +1,175 @@
+{
+  "schema": "caos.validation.codex-timeout-recovery.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "source_head": "5f034ca357bdd1f1582a255c64d37d761cbf242c",
+  "source_files_pinned": 1744,
+  "private_inputs_pinned": 7,
+  "manifest_sha256": "b3fc85f86b46662da0597178d71384ea68e1c20652256ef305fdd1e517192eda",
+  "native_binary": {
+    "binary": "/home/felni/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/bin/codex",
+    "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306"
+  },
+  "model_requested": "gpt-6-luna",
+  "synthetic_http_backend": true,
+  "production_changed": false,
+  "operator_auth_staged": false,
+  "result": {
+    "schema": "caos.managed-native-timeout.v1",
+    "terminal_id": "8b5ebd3f",
+    "timeout_seconds": 180,
+    "http_seconds_including_initialization": 208.728,
+    "timeout_http_status": 504,
+    "receipt_state": "reconcile",
+    "receipt_error_kind": "timeout",
+    "turn_before_cancel": "pending",
+    "turn_after_cancel": "cancelled",
+    "cancel_http_status": 200,
+    "cancel_seconds": 25.875,
+    "stale_generation_http_status": 409,
+    "verify_existing_evidence_http_status": 200,
+    "prompt_redelivery": false,
+    "wait_diagnostics": {
+      "phase": "completion",
+      "last_status": "processing",
+      "observed_working": true,
+      "receipt_probe_errors": 0,
+      "receipt_candidate_seen": false,
+      "stable_receipt_observations": 0,
+      "idle_extraction_attempted": false,
+      "receipt_probe_calls": 167,
+      "prompt_redelivery_attempts": 0,
+      "delivery_verified": false
+    },
+    "timeout_disposition_and_settled_at_preserved": true,
+    "cleanup_preserved_verdict": true,
+    "parent_alive_after_child_delete": true,
+    "active_stream_and_stale_refusal_verified": true,
+    "replacement": {
+      "old_pidfd_exit": true,
+      "old_owned_processes_absent": 5,
+      "new_attempt_bound": true,
+      "fresh_ready_frame": true,
+      "no_requests_observation_seconds": 3.149,
+      "replacement_requests": 0,
+      "visible_snapshot_sha256": [
+        "88cf657f219d83c797fd916264ae7c2d74005a612db5dcb1d0736f094fe5be96",
+        "88cf657f219d83c797fd916264ae7c2d74005a612db5dcb1d0736f094fe5be96",
+        "88cf657f219d83c797fd916264ae7c2d74005a612db5dcb1d0736f094fe5be96"
+      ],
+      "private_session_environment_verified": true
+    },
+    "post_cleanup_replacement_requests": 0,
+    "operator_home_masked": true,
+    "loopback_only": true
+  },
+  "http_observations": [
+    {
+      "operation": "run_step",
+      "http_status": 504,
+      "seconds": 208.728,
+      "failure": {
+        "http_status": 504,
+        "kind": "timeout",
+        "wait_diagnostics": {
+          "phase": "completion",
+          "last_status": "processing",
+          "observed_working": true,
+          "receipt_probe_errors": 0,
+          "receipt_candidate_seen": false,
+          "stable_receipt_observations": 0,
+          "idle_extraction_attempted": false,
+          "receipt_probe_calls": 167,
+          "prompt_redelivery_attempts": 0,
+          "delivery_verified": false
+        }
+      }
+    },
+    {
+      "operation": "verify",
+      "http_status": 200,
+      "seconds": 0.139,
+      "returned_turn_state": "pending"
+    },
+    {
+      "operation": "cancel",
+      "http_status": 409,
+      "seconds": 0.09,
+      "returned_turn_state": "pending"
+    },
+    {
+      "operation": "cancel",
+      "http_status": 200,
+      "seconds": 25.875,
+      "returned_turn_state": "cancelled"
+    }
+  ],
+  "native_total_seconds": 297.274,
+  "memory_mib": {
+    "memory_before_parent_mib": 8340,
+    "memory_before_step_mib": 8296,
+    "memory_before_cancel_mib": 8276
+  },
+  "memory_before_launch_mib": 8614,
+  "verification": {
+    "regression_passed": 323,
+    "regression_warnings": 5,
+    "regression_seconds": 185.76,
+    "new_observer_controls": 26,
+    "focused_passed": 75,
+    "focused_seconds": 9.0,
+    "counts_overlap": true,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0
+  },
+  "closure": {
+    "borrower_exited": true,
+    "physical_cleanup_verified": true,
+    "sql_borrowers": 0,
+    "private_databases": 0,
+    "wrapper_descriptor_closed": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "python_unchanged": true
+  },
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers": 0,
+    "private_databases": 0
+  },
+  "launcher_descriptor_closed": true,
+  "preserved_pre_native_failure": {
+    "native_started": false,
+    "error": "ModuleNotFoundError: test",
+    "correction": "explicit canonical PYTHONPATH at launcher invocation"
+  },
+  "limits": [
+    "synthetic backend; no provider-account timeout attestation",
+    "no entire CX-08/CX-09/global acceptance",
+    "no other-provider native acceptance",
+    "no historical reconcile job changes",
+    "no universal FIFO or HTTP disconnect acceptance"
+  ],
+  "review": {
+    "job_id": "5c64425e06614ffab6e2e7d9f36f394b",
+    "mode": "read",
+    "verdict": "no blockers",
+    "scope": "public observer and receipts; no independent execution/private witness/worklist audit",
+    "lead_verified_private_witnesses": true
+  },
+  "obsidian": {
+    "operation_id": "save-20261027-caos-timeout-disposition",
+    "pages": 4,
+    "hot_words": 483,
+    "strict_lint_issues": 0
+  },
+  "evidence_notes": [
+    "summary fields follow passed assertions; raw physical witnesses remain private",
+    "verify no-resend uses source review and private request counter, not run-step diagnostics alone",
+    "delivery_verified false refers to unverified final result; delivery_may_have_occurred true preserves uncertainty",
+    "no assertion of absent recovery row before timeout"
+  ],
+  "native_pytest_seconds": 288.43
+}

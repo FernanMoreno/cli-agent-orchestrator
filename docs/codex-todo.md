@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T185: timeout nativo Codex180s PASS en5f034ca3; HTTP504 en208,728s con arranque, verify200/pending sin reenvío, generación ajena409 y cancelación actual200 en25,875s. Cinco procesos viejos retirados, reemplazo listo/0peticiones y limpieza completa; hijo conserva reconcile/timeout/settled_at.323PASS/5avisos,26controles nuevos incluidos, arquitectura5/0,1744pins y PG cerrado. Backend sintético; todaCX08/otros proveedores/global siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t185.md).
+
 T183/T184: corregida la circularidad entre el recibo pendiente y el arranque tras cancelar. Codex nativo en49297912 PASS:409 para generación ajena,200/cancelled26,075s para la actual; salida de cinco procesos viejos, reemplazo disponible y0peticiones en3,161s, join/limpieza estables y padre API200.1116PASS/3opt-in previos;28controles nuevos, arquitectura5/0 y mypy canónico4archivos. Primer FAIL conservado; timeout/global/otros proveedores siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t183.md).
 
 T182: validada la propiedad de cancelación compartida con PostgreSQL real y barreras: desconexión del llamante, duplicados, fallos de reset/readiness/CAS, generaciones obsoletas y progreso de otro terminal.11controles nuevos y157regresiones PASS, arquitectura5/0, GOClaude y PG cerrado. Sin cambio productivo ni aceptación de cancelación nativa/FIFO/timeout/global. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t182.md).
