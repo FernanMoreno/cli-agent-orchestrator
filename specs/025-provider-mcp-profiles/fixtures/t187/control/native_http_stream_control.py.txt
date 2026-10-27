@@ -1,0 +1,1275 @@
+from __future__ import annotations
+
+import argparse
+import collections
+import hashlib
+import importlib.metadata
+import json
+import os
+import re
+import pathlib
+import signal
+import stat
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+
+REPO = pathlib.Path("/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS")
+DRAFT = pathlib.Path("/home/felni/.cache/caos-opencode-stream-20261027/http-control-draft")
+BASE_CONTROL = pathlib.Path(
+    "/home/felni/.cache/caos-opencode-stream-20261027/control-draft/t168_stream_control_r3.py"
+)
+BASE_CONTROL_SHA = "eaae725334610879a686db6e5a451843d85e05c143fce869998b65d18e98ab05"
+# Current source head is a pre-commit placeholder. Root must repin after committing the core.
+HEAD = "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058"
+BINARY = pathlib.Path("/home/felni/.cache/caos-opencode-native-tool-20261027-r2/bin/opencode")
+BINARY_SHA = "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f"
+BWRAP = pathlib.Path("/usr/bin/bwrap")
+BWRAP_SHA = "523da3e7399044be5163aee6f57a77a6bef7454376e28f0a0627920bae1b76b6"
+INNER_PY = pathlib.Path("/usr/bin/python3.14")
+INNER_PY_SHA = "52e0a13e60a981d8c4b6478be2ba5176f69da07948a056bf49cf6f077e30cb41"
+INNER_LIBPY = pathlib.Path("/usr/lib/x86_64-linux-gnu/libpython3.14.so.1.0")
+INNER_LIBPY_SHA = "982cb3768d1d8b00126255ee2785bccf8360c68b197fb3dec95858ab56195f87"
+HOST_PY = pathlib.Path(
+    "/home/felni/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13"
+)
+HOST_PY_SHA = "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f"
+UV_LOCK_SHA = "5b15d71bf7dba9e05a5016d8c8ed8f613b7e712fb2db997dadfb6ab84b465252"
+PINS = {
+    "src/cli_agent_orchestrator/utils/opencode_v2.py": "c12244f9e62d0326a039d35530187842dfd4e478560c0222f9904228a8876c3c",
+    "src/cli_agent_orchestrator/utils/mcp_tool_policy.py": "9accde7733cb29b7b1ad6f05ee7672c51288e9030932f2d317fa0a27d2952645",
+    "src/cli_agent_orchestrator/utils/opencode_policy.py": "8d8ad26b41a4d4a907de87379b7544b1d7d7d3c403388913f4b4d3efad6a41e9",
+    "src/cli_agent_orchestrator/utils/path_validation.py": "00d8bfae96d810f7874d9d8138354083c8299d8efbf0567e3ac261dee90ee355",
+    "src/cli_agent_orchestrator/constants.py": "a736d6d62ea647ff566404f83bfbeef310fd04bd8ef1a23e6b277fd2180f13d7",
+    "src/cli_agent_orchestrator/providers/mcp_interactions.py": "2f8e8eae0ad4d2bc2449996818edbf944226f85747a2eff9e1c2dace96a0eb16",
+    "src/cli_agent_orchestrator/providers/base.py": "5eb6eeab38b53e0ef6f6fd05be3da4dfba4ca0fe4cffa7826d4f8e3840b13a40",
+    "test/live_provider/opencode_http_text_stream_observer.js": "8026e6c5879311bd6e0a5975cedce27865f169b810d14e10c2cc25a8cbbb676c",
+    "test/live_provider/opencode_http_text_response_monitor.js": "b469c016754c6ec061754a16c517bb61e8d7f678d97a6ca8259a285ee89eb952",
+    "test/live_provider/opencode_http_stream_protocol.js": "d28ce3b4f10c374f13e5b6a515dff9cb5af7b3110f448cd53d302f186a0976b0",
+    "test/live_provider/opencode_http_prompt_observer.js": "fbd7e670c5d70fb5b1f65013ecb4214161f9956f0996f2573dd1c11286f96578",
+    "test/live_provider/opencode_http_text_stream_observer.py": "be017e8f9c2e36aa128ab1c46fe801c22b57e640cae2ec2f27d77d01507759ce",
+    "test/live_provider/opencode_http_prompt_observer.py": "4e06cb7dba5a65887caf96804e6bf35b3f31ce45925804564b0d7410cd9ad367",
+    "test/live_provider/opencode_http_response_argument_observer.py": "c35b13003907d9f8ee51e03f7971f2f870ad46cff8a640ad11aa42a07c2b235e",
+}
+WRITER = "src/cli_agent_orchestrator/utils/opencode_v2.py"
+MODEL, AGENT, PORT = "t168fake/stream-probe", "t168_stream_probe", 40168
+TERMINAL_ID = "0123abcd"
+TOKEN_PREFIX, CANARY = "CAO-TURN-RECEIPT-", "T168_STREAM_CANARY:"
+DEADLINE_SECONDS, OUTER_DEADLINE_SECONDS, MEMORY_FLOOR_MIB = 75, 90, 6144
+SAMPLE_INTERVAL_SECONDS = 0.2
+MAX_BODY_BYTES = 1024 * 1024
+
+
+def sha(path: pathlib.Path) -> str:
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_nlink != 1:
+        raise RuntimeError("pinned_file_identity_invalid")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def pin(path: pathlib.Path, expected: str) -> None:
+    if sha(path) != expected:
+        raise RuntimeError("pinned_input_mismatch")
+
+
+def private_write(path: pathlib.Path, raw: bytes, mode: int = 0o600) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    os.fchmod(fd, mode)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def replace_private_constants(path: pathlib.Path) -> str:
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_nlink != 1
+        or stat.S_IMODE(info.st_mode) != 0o600
+    ):
+        raise RuntimeError("private_module_identity_invalid")
+    raw = path.read_bytes()
+    replacements = (
+        (b'const PROVIDER_ID = "opencode-go"', b'const PROVIDER_ID = "t168fake"'),
+        (b'const MODEL_ID = "glm-5.3-flash"', b'const MODEL_ID = "stream-probe"'),
+    )
+    for old, new in replacements:
+        if raw.count(old) != 1:
+            raise RuntimeError("private_provider_specialization_marker_invalid")
+        raw = raw.replace(old, new, 1)
+    fd = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb", closefd=False) as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(fd)
+    return sha(path)
+
+
+def check_inputs(root: pathlib.Path, binary: pathlib.Path) -> dict:
+    if root != REPO or pathlib.Path.cwd() != REPO or root.resolve(strict=True) != REPO:
+        raise RuntimeError("canonical_repository_path_mismatch")
+    if binary != BINARY or binary.resolve(strict=True) != BINARY:
+        raise RuntimeError("pinned_binary_path_mismatch")
+    git = lambda *argv: subprocess.check_output(
+        ["git", "-C", str(root), *argv], stderr=subprocess.DEVNULL, timeout=3, text=True
+    ).strip()
+    if git("rev-parse", "HEAD") != HEAD or git("status", "--porcelain", "--", *PINS):
+        raise RuntimeError("source_head_or_worktree_pin_mismatch")
+    for relative, digest in PINS.items():
+        pin(root / relative, digest)
+    pin(BASE_CONTROL, BASE_CONTROL_SHA)
+    pin(binary, BINARY_SHA)
+    info = binary.stat()
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise RuntimeError("native_binary_metadata_mismatch")
+    pin(BWRAP, BWRAP_SHA)
+    pin(INNER_PY, INNER_PY_SHA)
+    pin(INNER_LIBPY, INNER_LIBPY_SHA)
+    host_python = root / ".venv/bin/python"
+    if (
+        host_python.resolve(strict=True) != HOST_PY
+        or sha(host_python.resolve(strict=True)) != HOST_PY_SHA
+        or pathlib.Path(sys.executable).resolve(strict=True) != host_python.resolve(strict=True)
+        or importlib.metadata.version("python-frontmatter") != "1.1.0"
+        or sha(root / "uv.lock") != UV_LOCK_SHA
+    ):
+        raise RuntimeError("host_python_environment_mismatch")
+    return {
+        "head": HEAD,
+        "base_control_sha256": BASE_CONTROL_SHA,
+        "cli_wire_framing_codepoints": [34, 34],
+        "cli_framing_scope": "pinned synthetic opencode run control only",
+        "parent_private_control_sha256": "376922a1eb5dbc96a93fc3adf2b3b3de7ecd443c64a1a4834f66418375879752",
+        "diagnostic_parent_run": "503fe09b80b74dc4bfd51031c6d5cd6e",
+        "binary_sha256": BINARY_SHA,
+        "pinned_source_sha256": PINS,
+    }
+
+
+def repo_modules(root: pathlib.Path):
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(root))
+    sys.path.insert(0, str(root / "src"))
+    import cli_agent_orchestrator.utils.opencode_v2 as writer_module
+    from cli_agent_orchestrator.providers.base import BaseProvider
+    from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+    from test.live_provider import opencode_http_text_stream_observer as installer
+
+    if pathlib.Path(writer_module.__file__).resolve(strict=True) != root / WRITER:
+        raise RuntimeError("production_writer_origin_mismatch")
+    if (
+        pathlib.Path(installer.__file__).resolve(strict=True)
+        != root / "test/live_provider/opencode_http_text_stream_observer.py"
+    ):
+        raise RuntimeError("private_installer_origin_mismatch")
+    return BaseProvider, write_v2_configuration, installer
+
+
+def formatted_prompt(BaseProvider, actual_message: str, token: str) -> tuple[str, str, str]:
+    body_marker, receipt_marker = "__SOURCE_BODY__", "__SOURCE_RECEIPT__"
+    template = BaseProvider._format_turn_receipt_input(
+        SimpleNamespace(terminal_id="{{CAO_TERMINAL_ID}}"), body_marker, receipt_marker
+    )
+    if template.count(body_marker) != 1 or template.count(receipt_marker) != 1:
+        raise RuntimeError("receipt_formatter_markers_invalid")
+    suffix_from_body = template.split(body_marker, 1)[1]
+    receipt_prefix, receipt_suffix = suffix_from_body.split(receipt_marker, 1)
+    prepared = BaseProvider._format_turn_receipt_input(
+        SimpleNamespace(terminal_id=TERMINAL_ID), actual_message, token
+    )
+    if prepared.count(token) != 1 or "{{CAO_TERMINAL_ID}}" in prepared:
+        raise RuntimeError("native_prompt_receipt_invalid")
+    return prepared, receipt_prefix, receipt_suffix
+
+
+def setup_run(root: pathlib.Path, run: pathlib.Path, run_id: str) -> dict:
+    BaseProvider, write_v2_configuration, installer = repo_modules(root)
+    runtime, project = run / "http-runtime", run
+    nonce = run_id
+    diagnostic = "T168-DIAG-" + uuid.uuid4().hex
+    token = TOKEN_PREFIX + uuid.uuid4().hex
+    actual_message = (
+        f"Diagnostic: {diagnostic}\nReturn the configured synthetic response exactly; no tools."
+    )
+    prompt, receipt_prefix, receipt_suffix = formatted_prompt(BaseProvider, actual_message, token)
+    private_write(run / "http-prompt.txt", prompt.encode("utf-8"))
+
+    copied_python = run / "python/test/live_provider"
+    for directory in (run / "python", run / "python/test", copied_python):
+        directory.mkdir(mode=0o700)
+    private_write(run / "python/test/__init__.py", b"")
+    private_write(copied_python / "__init__.py", b"")
+    for relative in (
+        "test/live_provider/opencode_http_text_stream_observer.py",
+        "test/live_provider/opencode_http_prompt_observer.py",
+        "test/live_provider/opencode_http_response_argument_observer.py",
+    ):
+        source = root / relative
+        private_write(copied_python / pathlib.Path(relative).name, source.read_bytes())
+
+    result = installer.install(
+        private_root=runtime,
+        project=project,
+        nonce=nonce,
+        phase_prompts=['"Unused Diagnostic:', '"' + actual_message],
+        receipt_prefix=receipt_prefix,
+        receipt_suffix=receipt_suffix + '"',
+        last_instruction="Diagnostic:",
+    )
+    specialized = {}
+    for name in ("opencode_http_text_stream_observer.js", "opencode_http_prompt_observer.js"):
+        candidate = (
+            runtime
+            / ".opencode"
+            / (
+                "plugins"
+                if name == "opencode_http_text_stream_observer.js"
+                else "http-stream-support"
+            )
+            / name
+        )
+        specialized[name] = replace_private_constants(candidate)
+
+    opencode_plugins = run / ".opencode/plugins"
+    opencode_plugins.mkdir(mode=0o700, parents=True)
+    loader = opencode_plugins / "stream-loader.js"
+    private_write(loader, result.project_loader_bytes, mode=0o644)
+
+    agents = run / "agents"
+    agents.mkdir(mode=0o700)
+    private_write(
+        agents / f"{AGENT}.md",
+        b"---\ndescription: T168 synthetic stream probe\nmode: all\n---\nNo tools. Return the configured response.\n",
+    )
+    source_config = {
+        "providers": {
+            "t168fake": {
+                "name": "T168 isolated synthetic SSE",
+                "package": "@opencode/ai/providers/openai-compatible",
+                "env": ["T168_FAKE_API_KEY"],
+                "settings": {"baseURL": f"http://127.0.0.1:{PORT}/v1"},
+                "models": {
+                    "stream-probe": {
+                        "name": "T168 stream probe",
+                        "limit": {"context": 65536, "output": 512},
+                        "tool_call": False,
+                    }
+                },
+            }
+        }
+    }
+    config_dir = run / "config"
+    config_dir.mkdir(mode=0o700)
+    config_input_sha = hashlib.sha256(
+        json.dumps(source_config, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    write_v2_configuration(
+        config_dir,
+        source_agents=agents,
+        source_config=source_config,
+        session_id="t168_" + run_id[:20],
+        source_auth=None,
+        source_credential_db=None,
+        selected_model=MODEL,
+    )
+    config_path = config_dir / "opencode.json"
+    rendered = json.loads(config_path.read_text(encoding="utf-8"))
+    if (
+        rendered.get("mcp") != {"servers": {}}
+        or rendered.get("agents", {}).get(AGENT, {}).get("permissions") != []
+        or rendered.get("providers", {}).get("t168fake", {}).get("settings", {}).get("baseURL")
+        != f"http://127.0.0.1:{PORT}/v1"
+        or rendered.get("providers", {})
+        .get("t168fake", {})
+        .get("models", {})
+        .get("stream-probe", {})
+        .get("limit", {})
+        .get("context")
+        != 65536
+    ):
+        raise RuntimeError("synthetic_configuration_contract_mismatch")
+    derivation = {
+        "base_control_sha256": BASE_CONTROL_SHA,
+        "cli_wire_framing_codepoints": [34, 34],
+        "cli_framing_scope": "pinned synthetic opencode run control only",
+        "parent_private_control_sha256": "376922a1eb5dbc96a93fc3adf2b3b3de7ecd443c64a1a4834f66418375879752",
+        "diagnostic_parent_run": "503fe09b80b74dc4bfd51031c6d5cd6e",
+        "source_sha256": result.source_sha256,
+        "installer_installed_sha256": result.installed_sha256,
+        "private_specialized_sha256": specialized,
+        "private_loader_sha256": result.project_loader_sha256,
+        "project_loader_written_sha256": sha(loader),
+        "expectation_sha256": result.expectation_sha256,
+        "helper_python_source_sha256": {
+            path.name: sha(path) for path in (root / x for x in PINS if x.endswith(".py"))
+        },
+        "helper_python_copy_sha256": {path.name: sha(path) for path in copied_python.glob("*.py")},
+        "formatted_prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "source_config_sha256": config_input_sha,
+        "rendered_config_sha256": sha(config_path),
+        "receipt_sha256": hashlib.sha256(token.encode()).hexdigest(),
+    }
+    return {
+        "runtime": runtime,
+        "nonce": nonce,
+        "diagnostic": diagnostic,
+        "token": token,
+        "receipt_sha256": derivation["receipt_sha256"],
+        "loader_path": loader,
+        "config_path": config_path,
+        "derivation": derivation,
+    }
+
+
+def retire_group(proc: subprocess.Popen, wait_seconds: float = 1.0) -> bool:
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=wait_seconds)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=wait_seconds)
+            except subprocess.TimeoutExpired:
+                pass
+    try:
+        os.killpg(proc.pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(proc.pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    try:
+        proc.wait(timeout=wait_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def inner(args) -> int:
+    run_path = pathlib.Path(args.run_path)
+    runtime_path = pathlib.Path(args.runtime_path)
+    if (
+        args.run_root != pathlib.Path("/work")
+        or os.getenv("T168_HTTP_CONTROL_NAMESPACE") != "private-loopback"
+        or run_path.parent != DRAFT / "runs"
+        or run_path.name != args.nonce
+        or runtime_path != run_path / "http-runtime"
+        or len(args.diagnostic) != 42
+        or not args.diagnostic.startswith("T168-DIAG-")
+        or any(char not in "0123456789abcdef" for char in args.diagnostic[10:])
+        or len(args.nonce) != 32
+        or any(char not in "0123456789abcdef" for char in args.nonce)
+        or len(args.receipt_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in args.receipt_sha256)
+    ):
+        raise RuntimeError("private_namespace_required")
+    diagnostic = args.diagnostic
+    if (
+        sha(pathlib.Path("/opencode")) != BINARY_SHA
+        or sha(pathlib.Path(sys.executable)) != INNER_PY_SHA
+    ):
+        raise RuntimeError("inner_runtime_pin_mismatch")
+    if sha(pathlib.Path(__file__)) != args.script_sha:
+        raise RuntimeError("control_bytes_changed")
+    sys.path.insert(0, "/work/python")
+    from test.live_provider.opencode_http_text_stream_observer import read_live
+
+    state = {
+        "lock": threading.Lock(),
+        "stream_lock": threading.Lock(),
+        "posts": 0,
+        "stage": "waiting",
+        "active_post": 0,
+        "finish": False,
+        "chunks": 0,
+        "error": None,
+        "model_match": False,
+        "diagnostic_seen": False,
+        "stream_requested": False,
+        "route_class": "none",
+        "synthetic_sse_sha256": None,
+    }
+
+    def frame(model: str, delta: dict, finish_reason=None) -> bytes:
+        chunk = {
+            "id": "chatcmpl-t168",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": model,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+        }
+        return (
+            b"data: "
+            + json.dumps(chunk, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            + b"\n\n"
+        )
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *_args):
+            pass
+
+        def reply_error(self, status):
+            data = b'{"error":{"message":"synthetic request rejected"}}'
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self):
+            with state["lock"]:
+                state["posts"] += 1
+                ordinal = state["posts"]
+            if self.client_address[0] != "127.0.0.1" or self.path not in {
+                "/chat/completions",
+                "/v1/chat/completions",
+            }:
+                with state["lock"]:
+                    state["error"] = "route_rejected"
+                self.reply_error(404)
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= MAX_BODY_BYTES:
+                    raise ValueError
+                payload = json.loads(self.rfile.read(size))
+                model = payload.get("model") if isinstance(payload, dict) else None
+                messages = payload.get("messages") if isinstance(payload, dict) else None
+                diagnostic_seen = isinstance(messages, list) and diagnostic in json.dumps(
+                    messages, ensure_ascii=True
+                )
+                valid = (
+                    isinstance(payload, dict)
+                    and payload.get("stream") is True
+                    and diagnostic_seen
+                    and isinstance(model, str)
+                    and model.rsplit("/", 1)[-1] == "stream-probe"
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                model, diagnostic_seen, valid = None, False, False
+            with state["lock"]:
+                state["model_match"] = (
+                    isinstance(model, str) and model.rsplit("/", 1)[-1] == "stream-probe"
+                )
+                state["diagnostic_seen"] = diagnostic_seen
+                state["stream_requested"] = (
+                    isinstance(payload, dict) and payload.get("stream") is True
+                    if "payload" in locals()
+                    else False
+                )
+                state["route_class"] = "chat_completion"
+            if not valid:
+                with state["lock"]:
+                    state["error"] = "request_contract_invalid"
+                self.reply_error(422)
+                return
+            if ordinal > 4:
+                with state["lock"]:
+                    state["error"] = "provider_post_limit"
+                self.reply_error(429)
+                return
+            with state["stream_lock"]:
+                with state["lock"]:
+                    state["active_post"] = ordinal
+                    state["stage"] = "starting"
+                    state["finish"] = False
+                text_one = CANARY + " alpha "
+                text_two = "beta\n" + token + "\n"
+                chunks = [
+                    frame(model, {"role": "assistant"}),
+                    frame(model, {"content": text_one}),
+                    frame(model, {"content": text_two}),
+                    frame(model, {}, "stop"),
+                    b"data: [DONE]\n\n",
+                ]
+                with state["lock"]:
+                    state["synthetic_sse_sha256"] = hashlib.sha256(b"".join(chunks)).hexdigest()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Content-Length", str(sum(map(len, chunks))))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                try:
+                    self.wfile.write(chunks[0])
+                    self.wfile.flush()
+                    time.sleep(0.25)
+                    self.wfile.write(chunks[1])
+                    self.wfile.flush()
+                    with state["lock"]:
+                        state["stage"] = "chunk1_held"
+                        state["chunks"] += 1
+                    time.sleep(4.0)
+                    self.wfile.write(chunks[2])
+                    self.wfile.flush()
+                    with state["lock"]:
+                        state["stage"] = "chunk2_held"
+                        state["chunks"] += 1
+                    time.sleep(4.0)
+                    with state["lock"]:
+                        state["stage"] = "finish_sent"
+                        state["finish"] = True
+                    self.wfile.write(chunks[3])
+                    self.wfile.write(chunks[4])
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    with state["lock"]:
+                        state["error"] = "native_closed_stream"
+                finally:
+                    with state["lock"]:
+                        if state["stage"] != "finish_sent":
+                            state["stage"] = "request_error"
+
+        def do_GET(self):
+            self.reply_error(404)
+
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    prompt_path = pathlib.Path("/work/http-prompt.txt")
+    prompt = prompt_path.read_text(encoding="utf-8")
+    tokens = re.findall(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", prompt)
+    if len(tokens) != 1 or hashlib.sha256(tokens[0].encode()).hexdigest() != args.receipt_sha256:
+        raise RuntimeError("synthetic_receipt_binding_invalid")
+    token = tokens[0]
+    env = {
+        "HOME": "/home/t168",
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "TERM": "dumb",
+        "XDG_CONFIG_HOME": "/work/xdg-config",
+        "XDG_DATA_HOME": "/work/data",
+        "XDG_CACHE_HOME": "/work/cache",
+        "XDG_STATE_HOME": "/work/state",
+        "TMPDIR": "/work/tmp",
+        "OPENCODE_CONFIG": "/work/config/opencode.json",
+        "OPENCODE_CONFIG_DIR": "/work/config",
+        "OPENCODE_DB": "/work/data/opencode/opencode.db",
+        "OPENCODE_DISABLE_AUTOUPDATE": "true",
+        "OPENCODE_DISABLE_MOUSE": "true",
+        "OPENCODE_DISABLE_TERMINAL_TITLE": "true",
+        "OPENCODE_API_KEY": "offline-dummy-only",
+        "T168_FAKE_API_KEY": "offline-dummy-only",
+        "CAO_TERMINAL_ID": TERMINAL_ID,
+    }
+    command = [
+        "/opencode",
+        "run",
+        "--standalone",
+        "--agent",
+        AGENT,
+        "--model",
+        MODEL,
+        "--format",
+        "json",
+        prompt,
+    ]
+    proc = None
+    timed_out = False
+    samples, growths, state_counts = [], [], collections.Counter()
+    prior = {}
+    start = time.monotonic()
+    deadline = start + DEADLINE_SECONDS
+    try:
+        proc = subprocess.Popen(
+            command,
+            cwd="/work",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            start_new_session=True,
+        )
+        while time.monotonic() < deadline and proc.poll() is None:
+            now = time.monotonic()
+            with state["lock"]:
+                stage_before, post_before, finish_before = (
+                    state["stage"],
+                    state["active_post"],
+                    state["finish"],
+                )
+            if stage_before in {"chunk1_held", "chunk2_held"} and not finish_before:
+                live = read_live(
+                    run_path / "http-runtime/.opencode/http-text-stream-observation" / TERMINAL_ID,
+                    args.nonce,
+                    args.receipt_sha256,
+                )
+                with state["lock"]:
+                    coherent = (
+                        state["stage"] == stage_before
+                        and state["active_post"] == post_before
+                        and state["finish"] is False
+                    )
+                if coherent:
+                    status = live.get("observer_status", "unavailable")
+                    state_counts[status] += 1
+                    if (
+                        status == "active"
+                        and live.get("active") is True
+                        and live.get("state") == "active"
+                        and live.get("text_bytes", 0) > 0
+                    ):
+                        directory_digest = hashlib.sha256(
+                            json.dumps(live["directory_identity"], separators=(",", ":")).encode()
+                        ).hexdigest()
+                        binding = (live["request_ordinal"], directory_digest)
+                        sample = {
+                            "elapsed_ms": round((now - start) * 1000),
+                            "server_stage": stage_before,
+                            "server_post_ordinal": post_before,
+                            "observer_request_ordinal": live["request_ordinal"],
+                            "observer_sequence": live["sequence"],
+                            "directory_identity_sha256": directory_digest,
+                            "text_bytes": live["text_bytes"],
+                            "text_events": live["text_events"],
+                            "wire_bytes": live["wire_bytes"],
+                            "event_count": live["event_count"],
+                            "request_bound": live["request_bound"],
+                            "phase_ordinal": live["phase_ordinal"],
+                            "receipt_matches": live["receipt_matches"],
+                            "original_not_replaced": live["original_not_replaced"],
+                        }
+                        if not samples or (
+                            samples[-1]["observer_request_ordinal"],
+                            samples[-1]["observer_sequence"],
+                        ) != (sample["observer_request_ordinal"], sample["observer_sequence"]):
+                            samples.append(sample)
+                            old = prior.get(binding)
+                            if (
+                                old
+                                and sample["observer_sequence"] > old["observer_sequence"]
+                                and sample["text_bytes"] > old["text_bytes"]
+                            ):
+                                growths.append(
+                                    {
+                                        "same_observer_request": True,
+                                        "same_directory_identity": True,
+                                        "from_sequence": old["observer_sequence"],
+                                        "to_sequence": sample["observer_sequence"],
+                                        "from_text_bytes": old["text_bytes"],
+                                        "to_text_bytes": sample["text_bytes"],
+                                        "from_stage": old["server_stage"],
+                                        "to_stage": sample["server_stage"],
+                                    }
+                                )
+                            prior[binding] = sample
+            time.sleep(SAMPLE_INTERVAL_SECONDS)
+        timed_out = proc.poll() is None
+    finally:
+        process_group_retired = retire_group(proc) if proc is not None else True
+        exit_code = proc.returncode if proc is not None else None
+        server.shutdown()
+        server.server_close()
+
+    after_finish = read_live(
+        run_path / "http-runtime/.opencode/http-text-stream-observation" / TERMINAL_ID,
+        args.nonce,
+        args.receipt_sha256,
+    )
+    with state["lock"]:
+        provider = {
+            key: state[key]
+            for key in (
+                "posts",
+                "stage",
+                "active_post",
+                "finish",
+                "chunks",
+                "error",
+                "model_match",
+                "diagnostic_seen",
+                "stream_requested",
+                "route_class",
+                "synthetic_sse_sha256",
+            )
+        }
+    distinct_bindings = collections.Counter(
+        (item["observer_request_ordinal"], item["directory_identity_sha256"]) for item in samples
+    )
+    emit(
+        {
+            "schema": "caos.spec025.t168.private-http-text-stream-control.v1",
+            "source_head": HEAD,
+            "binary_sha256": BINARY_SHA,
+            "native_elapsed_seconds": round(time.monotonic() - start, 3),
+            "native_timed_out": timed_out,
+            "native_exit_code": exit_code,
+            "process_group_retired": process_group_retired,
+            "evidence_scope": "private HTTP response clone observer ledger only; no upstream-stream or PostgreSQL authority claim",
+            "provider": provider,
+            "hold_samples": samples,
+            "hold_projection_state_counts": dict(state_counts),
+            "same_binding_text_growth": growths,
+            "distinct_positive_sequence_count": len(
+                {(item["observer_request_ordinal"], item["observer_sequence"]) for item in samples}
+            ),
+            "same_observer_request_directory_bindings": len(distinct_bindings),
+            "two_distinct_positive_sequences": any(
+                len(
+                    {
+                        item["observer_sequence"]
+                        for item in samples
+                        if (item["observer_request_ordinal"], item["directory_identity_sha256"])
+                        == binding
+                    }
+                )
+                >= 2
+                for binding in distinct_bindings
+            ),
+            "text_growth_observed": bool(growths),
+            "after_finish_projection_state": after_finish.get(
+                "reason", after_finish.get("observer_status", "unavailable")
+            ),
+        }
+    )
+    return 0 if process_group_retired else 2
+
+
+def emit(value: dict) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")), flush=True)
+
+
+def prepare_bwrap(
+    run: pathlib.Path,
+    runtime: pathlib.Path,
+    config: pathlib.Path,
+    script: pathlib.Path,
+    script_sha: str,
+    nonce: str,
+    diagnostic: str,
+    receipt_sha: str,
+) -> list[str]:
+    parents = [
+        "/home",
+        "/home/felni",
+        "/home/felni/.cache",
+        "/home/felni/.cache/caos-opencode-stream-20261027",
+        str(DRAFT),
+        str(DRAFT / "runs"),
+        str(run),
+        str(runtime),
+        str(runtime / ".opencode"),
+        "/work",
+        "/work/config",
+        "/work/python",
+        "/work/data",
+        "/work/cache",
+        "/work/state",
+        "/work/tmp",
+        "/work/xdg-config",
+        "/work/.opencode",
+        "/home/t168",
+        "/etc",
+    ]
+    command = [
+        str(BWRAP),
+        "--unshare-all",
+        "--unshare-pid",
+        "--die-with-parent",
+        "--new-session",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--ro-bind",
+        "/lib64",
+        "/lib64",
+        "--symlink",
+        "/usr/bin",
+        "/bin",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+    ]
+    for parent in parents:
+        command.extend(["--dir", parent])
+    command.extend(
+        [
+            "--ro-bind",
+            str(run / "hosts"),
+            "/etc/hosts",
+            "--ro-bind",
+            str(run / "passwd"),
+            "/etc/passwd",
+        ]
+    )
+    command.extend(
+        [
+            "--ro-bind",
+            str(script),
+            "/work/control.py",
+            "--ro-bind",
+            str(config),
+            "/work/config/opencode.json",
+            "--ro-bind",
+            str(run / "http-prompt.txt"),
+            "/work/http-prompt.txt",
+        ]
+    )
+    command.extend(
+        [
+            "--bind",
+            str(run / ".opencode"),
+            "/work/.opencode",
+            "--ro-bind",
+            str(run / "python"),
+            "/work/python",
+        ]
+    )
+    command.extend(
+        [
+            "--bind",
+            str(run / "data"),
+            "/work/data",
+            "--bind",
+            str(run / "cache"),
+            "/work/cache",
+            "--bind",
+            str(run / "state"),
+            "/work/state",
+            "--bind",
+            str(run / "tmp"),
+            "/work/tmp",
+            "--bind",
+            str(run / "xdg-config"),
+            "/work/xdg-config",
+            "--bind",
+            str(run / "home"),
+            "/home/t168",
+        ]
+    )
+    # The plugin loader uses this exact file URI; no host home directory is mounted.
+    command.extend(["--bind", str(runtime), str(runtime)])
+    command.extend(
+        [
+            "--ro-bind",
+            str(BINARY),
+            "/opencode",
+            "--chdir",
+            "/work",
+            "--clearenv",
+            "--setenv",
+            "T168_HTTP_CONTROL_NAMESPACE",
+            "private-loopback",
+            "--setenv",
+            "PATH",
+            "/usr/bin:/bin",
+            "--setenv",
+            "LANG",
+            "C.UTF-8",
+            "--setenv",
+            "HOME",
+            "/home/t168",
+            "--setenv",
+            "TERM",
+            "dumb",
+            "--setenv",
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+            "--",
+            str(INNER_PY),
+            "/work/control.py",
+            "--inside",
+            "--run-root",
+            "/work",
+            "--run-path",
+            str(run),
+            "--runtime-path",
+            str(runtime),
+            "--nonce",
+            nonce,
+            "--diagnostic",
+            diagnostic,
+            "--receipt-sha256",
+            receipt_sha,
+            "--script-sha",
+            script_sha,
+        ]
+    )
+    return command
+
+
+def host(args) -> int:
+    script = pathlib.Path(__file__)
+    info = script.lstat()
+    if (
+        script.parent != DRAFT
+        or stat.S_ISLNK(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_nlink != 1
+    ):
+        raise RuntimeError("private_control_file_metadata_mismatch")
+    script_digest = sha(script)
+    pins = check_inputs(args.repo_root, args.binary)
+    if not args.execute_synthetic_native:
+        emit(
+            {
+                "state": "closed",
+                "native_started": False,
+                "script_sha256": script_digest,
+                "source_head": HEAD,
+                "pins": pins,
+            }
+        )
+        return 0
+    if not args.script_sha or args.script_sha != script_digest:
+        raise RuntimeError("explicit_matching_script_sha_required")
+
+    def available_memory_mib() -> int:
+        with pathlib.Path("/proc/meminfo").open() as stream:
+            return (
+                int(next(line.split()[1] for line in stream if line.startswith("MemAvailable:")))
+                // 1024
+            )
+
+    available = available_memory_mib()
+    if available < MEMORY_FLOOR_MIB:
+        raise RuntimeError("memory_floor_not_met")
+    run_id = uuid.uuid4().hex
+    runs = DRAFT / "runs"
+    if runs.exists():
+        info = runs.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            raise RuntimeError("private_runs_directory_invalid")
+    else:
+        runs.mkdir(mode=0o700)
+    run = runs / run_id
+    run.mkdir(mode=0o700)
+    for name in ("data", "cache", "state", "tmp", "home", "xdg-config"):
+        (run / name).mkdir(mode=0o700)
+    (run / "data/opencode").mkdir(mode=0o700)
+    private_write(run / "hosts", b"127.0.0.1 localhost\n")
+    private_write(
+        run / "passwd",
+        b"root:x:0:0:root:/home/t168:/bin/sh\nt168:x:1000:1000:t168:/home/t168:/bin/sh\n",
+    )
+    setup = setup_run(args.repo_root, run, run_id)
+    runtime, config = setup["runtime"], setup["config_path"]
+    # The ordinary project directory is writable just as in the real worker.
+    # Freeze code/expectation inputs independently of native generated metadata.
+    input_paths = [
+        setup["loader_path"],
+        config,
+        run / "http-prompt.txt",
+        *runtime.rglob("*.js"),
+        runtime / ".opencode/http-prompt-expectations.json",
+        *(run / "python").rglob("*.py"),
+    ]
+    input_hashes = {str(path.relative_to(run)): sha(path) for path in input_paths}
+    # The path created by installer is mode 0700. The live ledger remains writable.
+    for relative in ("data", "cache", "state", "tmp", "home", "xdg-config"):
+        if not (run / relative).is_dir():
+            raise RuntimeError("runtime_directory_missing")
+    args_bwrap = prepare_bwrap(
+        run,
+        runtime,
+        config,
+        script,
+        script_digest,
+        setup["nonce"],
+        setup["diagnostic"],
+        setup["receipt_sha256"],
+    )
+    if available_memory_mib() < MEMORY_FLOOR_MIB:
+        raise RuntimeError("memory_floor_not_met_at_launch")
+    proc = subprocess.Popen(
+        args_bwrap,
+        cwd=str(args.repo_root),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env={"PATH": "/usr/bin:/bin"},
+        start_new_session=True,
+    )
+    outer_timeout = False
+    try:
+        output, _ = proc.communicate(timeout=OUTER_DEADLINE_SECONDS)
+    except subprocess.TimeoutExpired:
+        outer_timeout = True
+        output = b""
+    outer_group_retired = retire_group(proc)
+    if outer_timeout:
+        try:
+            output, _ = proc.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            output = b""
+    try:
+        observation = json.loads(output.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        observation = {"state": "inner_receipt_unavailable"}
+    try:
+        input_preserved = all(sha(run / name) == digest for name, digest in input_hashes.items())
+        source_preserved = sha(script) == script_digest and all(
+            sha(args.repo_root / name) == digest for name, digest in PINS.items()
+        )
+    except (OSError, RuntimeError):
+        input_preserved = source_preserved = False
+    capability_pass = bool(
+        isinstance(observation, dict)
+        and observation.get("native_exit_code") == 0
+        and observation.get("native_timed_out") is False
+        and observation.get("process_group_retired") is True
+        and observation.get("text_growth_observed") is True
+        and observation.get("two_distinct_positive_sequences") is True
+        and observation.get("same_observer_request_directory_bindings") == 1
+        and observation.get("provider", {}).get("error") is None
+        and observation.get("after_finish_projection_state")
+        in {"stream_finished", "observer_closed"}
+        and not outer_timeout
+        and outer_group_retired
+        and input_preserved
+        and source_preserved
+    )
+    receipt = {
+        "schema": "caos.spec025.t168.private-http-control-run.v1",
+        "run_id": run_id,
+        "memory_admission_mib": available,
+        "pins": pins,
+        "input_hashes_before": input_hashes,
+        "private_inputs_preserved": input_preserved,
+        "source_preserved": source_preserved,
+        "native_clone_capability_pass": capability_pass,
+        "t168_accepted": False,
+        "derivation": setup["derivation"],
+        "bwrap_exit_code": proc.returncode,
+        "outer_timeout": outer_timeout,
+        "outer_process_group_retired": outer_group_retired,
+        "observation": observation,
+    }
+    private_write(
+        run / "receipt.json",
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode() + b"\n",
+    )
+    emit(
+        {
+            "state": "finished",
+            "run_id": run_id,
+            "bwrap_exit_code": proc.returncode,
+            "receipt": str(run / "receipt.json"),
+        }
+    )
+    return 0 if proc.returncode == 0 else 2
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-root", type=pathlib.Path, default=REPO)
+    parser.add_argument("--binary", type=pathlib.Path, default=BINARY)
+    parser.add_argument("--execute-synthetic-native", action="store_true")
+    parser.add_argument("--script-sha")
+    parser.add_argument("--inside", action="store_true")
+    parser.add_argument("--run-root", type=pathlib.Path)
+    parser.add_argument("--run-path")
+    parser.add_argument("--runtime-path")
+    parser.add_argument("--nonce")
+    parser.add_argument("--diagnostic")
+    parser.add_argument("--receipt-sha256")
+    args = parser.parse_args()
+    if args.inside:
+        if not all(
+            (
+                args.run_root,
+                args.run_path,
+                args.runtime_path,
+                args.nonce,
+                args.diagnostic,
+                args.receipt_sha256,
+                args.script_sha,
+            )
+        ):
+            raise RuntimeError("inner_arguments_incomplete")
+        return inner(args)
+    return host(args)
+
+
+SAFE_REASON_CODES = [
+    "ambiguous_request",
+    "canonical_repository_path_mismatch",
+    "control_bytes_changed",
+    "explicit_matching_script_sha_required",
+    "host_python_environment_mismatch",
+    "inner_arguments_incomplete",
+    "inner_runtime_pin_mismatch",
+    "memory_floor_not_met",
+    "memory_floor_not_met_at_launch",
+    "native_binary_metadata_mismatch",
+    "native_prompt_receipt_invalid",
+    "observer_closed",
+    "observer_integrity",
+    "pinned_binary_path_mismatch",
+    "pinned_file_identity_invalid",
+    "pinned_input_mismatch",
+    "private_control_file_metadata_mismatch",
+    "private_installer_origin_mismatch",
+    "private_module_identity_invalid",
+    "private_namespace_required",
+    "private_observer_copy_mismatch",
+    "private_observer_directory_changed",
+    "private_observer_directory_required",
+    "private_observer_expectation_already_exists",
+    "private_observer_expectation_copy_mismatch",
+    "private_observer_expectation_shape_invalid",
+    "private_observer_expectation_too_large",
+    "private_observer_expectation_value_invalid",
+    "private_observer_file_changed",
+    "private_observer_file_invalid",
+    "private_observer_ledger_already_exists",
+    "private_observer_ledger_changed",
+    "private_observer_ledger_entries_invalid",
+    "private_observer_ledger_invalid",
+    "private_observer_ledger_too_large",
+    "private_observer_nonce_invalid",
+    "private_observer_plugin_already_exists",
+    "private_observer_record_count_invalid",
+    "private_observer_record_invalid",
+    "private_observer_record_order_invalid",
+    "private_observer_seal_invalid",
+    "private_observer_seal_missing",
+    "private_observer_source_changed",
+    "private_observer_source_invalid",
+    "private_observer_workdir_required",
+    "private_provider_specialization_marker_invalid",
+    "private_response_observer_directory_changed",
+    "private_response_observer_directory_create_failed",
+    "private_response_observer_directory_invalid",
+    "private_response_observer_directory_sync_failed",
+    "private_response_observer_file_changed",
+    "private_response_observer_file_invalid",
+    "private_runs_directory_invalid",
+    "production_writer_origin_mismatch",
+    "prompt_expectation_changed",
+    "prompt_expectation_nonce_mismatch",
+    "prompt_expectation_shape_invalid",
+    "prompt_expectation_unavailable",
+    "prompt_expectation_value_invalid",
+    "prompt_observer_plugin_changed",
+    "receipt_formatter_markers_invalid",
+    "receipt_mismatch",
+    "response_expectation_nonce_mismatch",
+    "response_expectation_shape_invalid",
+    "response_expectation_too_large",
+    "response_observer_default_marker_invalid",
+    "response_observer_destination_exists",
+    "response_observer_destination_invalid",
+    "response_observer_expectation_changed",
+    "response_observer_expectation_invalid",
+    "response_observer_file_changed",
+    "response_observer_file_copy_mismatch",
+    "response_observer_file_invalid",
+    "response_observer_file_too_large",
+    "response_observer_file_write_failed",
+    "response_observer_import_marker_invalid",
+    "response_observer_ledger_changed",
+    "response_observer_ledger_entries_invalid",
+    "response_observer_ledger_invalid",
+    "response_observer_ledger_too_large",
+    "response_observer_nonce_invalid",
+    "response_observer_record_count_invalid",
+    "response_observer_record_invalid",
+    "response_observer_record_order_invalid",
+    "response_observer_seal_invalid",
+    "response_observer_seal_missing",
+    "response_observer_source_changed",
+    "response_observer_source_invalid",
+    "runtime_directory_missing",
+    "source_head_or_worktree_pin_mismatch",
+    "stream_finished",
+    "stream_not_currently_active",
+    "stream_observer_core_import_marker_invalid",
+    "stream_observer_counter_regressed",
+    "stream_observer_default_already_specialized",
+    "stream_observer_default_marker_invalid",
+    "stream_observer_directory_changed",
+    "stream_observer_entries_invalid",
+    "stream_observer_entry_count_invalid",
+    "stream_observer_expectation_readback_mismatch",
+    "stream_observer_external_import_not_allowed",
+    "stream_observer_file_changed",
+    "stream_observer_file_invalid",
+    "stream_observer_import_closure_changed",
+    "stream_observer_input_invalid",
+    "stream_observer_invalid_marker_malformed",
+    "stream_observer_json_shape_invalid",
+    "stream_observer_ledger_too_large",
+    "stream_observer_loader_too_large",
+    "stream_observer_nonce_invalid",
+    "stream_observer_path_invalid",
+    "stream_observer_phase_prompt_not_prepared",
+    "stream_observer_private_parent_invalid",
+    "stream_observer_private_root_exists",
+    "stream_observer_project_loader_exists",
+    "stream_observer_project_not_private",
+    "stream_observer_relocated_closure_invalid",
+    "stream_observer_sample_count_invalid",
+    "stream_observer_sample_invalid",
+    "stream_observer_samples_missing",
+    "stream_observer_seal_count_mismatch",
+    "stream_observer_seal_malformed",
+    "stream_observer_source_too_large",
+    "stream_observer_terminal_template_invalid",
+    "stream_positive_text_required",
+    "stream_unavailable",
+    "synthetic_configuration_contract_mismatch",
+    "synthetic_receipt_binding_invalid",
+]
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        emit(
+            {
+                "state": "closed_error",
+                "error_code": type(exc).__name__,
+                "reason": str(exc) if str(exc) in SAFE_REASON_CODES else "unknown_control_failure",
+            }
+        )
+        raise SystemExit(2)

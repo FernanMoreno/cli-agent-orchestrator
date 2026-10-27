@@ -1,0 +1,462 @@
+#!/usr/bin/env python3
+"""Private, source-pinned PG/reader diagnostic; never provider acceptance."""
+
+from __future__ import annotations
+import hashlib, importlib.util, json, os, secrets, shutil, signal, subprocess, sys, tempfile, time, types
+from pathlib import Path
+
+REPO = Path("/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS")
+HEAD = "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058"
+IMAGE = "postgres@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+IMAGE_ID = "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+PINS = {
+    "test/postgres/fixtures.py": "7318d370ef67be8600804bc1f893bf51a33cd8933e36d465a4fcaa190f9da7b4",
+    "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+    "src/cli_agent_orchestrator/clients/postgres/registry.py": "3e309adb01d70946146998995c40ae56680ca73635539e74bbc72f1040bef779",
+    "src/cli_agent_orchestrator/clients/postgres/migrations.py": "81535c42f94ee83776f5cc71b8a4d473783cd8b738f33f6107f9a597b2913ce4",
+    "src/cli_agent_orchestrator/clients/postgres/config.py": "b508c705e47a1e3139c4cb77c20e84de4122be9272e1fdded75f347adada250a",
+    "src/cli_agent_orchestrator/clients/postgres/connection.py": "901d32b70811bb55e4d0f4d9da1b048e3b2c0a0b3172a57bbba71b4ae65c8f1d",
+    "specs/025-provider-mcp-profiles/fixtures/native_http_stream_activity.py": "96ed9d2ff7375b321862ab192f312bc29367d20931ee2d0d5d46163182410aab",
+    "test/live_provider/opencode_http_text_stream_observer.py": "be017e8f9c2e36aa128ab1c46fe801c22b57e640cae2ec2f27d77d01507759ce",
+    "test/live_provider/opencode_http_response_argument_observer.py": "c35b13003907d9f8ee51e03f7971f2f870ad46cff8a640ad11aa42a07c2b235e",
+    "test/live_provider/opencode_http_prompt_observer.py": "4e06cb7dba5a65887caf96804e6bf35b3f31ce45925804564b0d7410cd9ad367",
+}
+
+
+class GateError(RuntimeError):
+    pass
+
+
+def source_gate():
+    if Path.cwd() != REPO:
+        raise GateError("canonical_workdir_mismatch")
+    top = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=REPO,
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, timeout=15
+    )
+    if (
+        top.returncode
+        or top.stdout.strip() != str(REPO)
+        or head.returncode
+        or head.stdout.strip() != HEAD
+    ):
+        raise GateError("repository_head_or_root_mismatch")
+    for path, expected in PINS.items():
+        if hashlib.sha256((REPO / path).read_bytes()).hexdigest() != expected:
+            raise GateError("source_pin_mismatch")
+
+
+def admit():
+    value = next(
+        (
+            int(x.split()[1]) // 1024
+            for x in Path("/proc/meminfo").read_text().splitlines()
+            if x.startswith("MemAvailable:")
+        ),
+        None,
+    )
+    if value is None or value < 6144:
+        raise GateError("memory_below_6144_mib_floor")
+    return value
+
+
+def docker_json(binary, *args):
+    result = subprocess.run([binary, *args], text=True, capture_output=True, timeout=15)
+    if result.returncode:
+        raise GateError("owned_postgres_identity_unavailable")
+    return json.loads(result.stdout)
+
+
+def owned_network(fixtures, binary, service, receipt):
+    cid, run = service.metadata["container_id"], service.metadata["run_id"]
+    name = f"cao-spec021-test-net-{run}"
+    receipt.update(container_id=cid, run_id=run, network_name=name)
+    containers = docker_json(binary, "inspect", cid)
+    networks = docker_json(binary, "network", "inspect", name)
+    if len(networks) == 1:
+        receipt["network_id"] = networks[0].get("Id")
+    if len(containers) != 1 or len(networks) != 1:
+        raise GateError("owned_identity_ambiguous")
+    c, n = containers[0], networks[0]
+    labels, nlabels = c.get("Config", {}).get("Labels") or {}, n.get("Labels") or {}
+    attached = c.get("NetworkSettings", {}).get("Networks") or {}
+    if (
+        c.get("Id") != cid
+        or c.get("Image") != IMAGE_ID
+        or c.get("Config", {}).get("Image") != IMAGE
+        or c.get("Name") != f"/cao-spec021-pg-{run}"
+        or labels.get(fixtures.OWNER_LABEL) != fixtures.OWNER_VALUE
+        or labels.get(fixtures.RUN_LABEL) != run
+        or list(attached) != [name]
+        or n.get("Name") != name
+        or n.get("Id") != attached[name].get("NetworkID")
+        or nlabels.get(fixtures.OWNER_LABEL) != fixtures.OWNER_VALUE
+        or nlabels.get(fixtures.RUN_LABEL) != run
+    ):
+        raise GateError("owned_identity_mismatch")
+    receipt["identity_verified"] = True
+    return receipt
+
+
+def absent(binary, args):
+    # A successful empty exact-ID inventory proves absence without relying on
+    # Docker CLI's version-dependent localized error messages.
+    kind = "network" if args[:2] == ["network", "inspect"] else "container"
+    identity = args[-1]
+    if len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+        return "unknown"
+    try:
+        result = subprocess.run(
+            [binary, kind, "ls", "--no-trunc", "--quiet", "--filter", "id=" + identity]
+            + (["--all"] if kind == "container" else []),
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        if result.returncode != 0:
+            return "unknown"
+        rows = result.stdout.splitlines()
+        if not rows:
+            return True
+        return False if rows == [identity] else "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def mkdir_private(path):
+    path.mkdir(mode=0o700)
+    os.chmod(path, 0o700)
+
+
+def write_ledger(root, terminal, nonce, digest):
+    current = root
+    mkdir_private(current)
+    for part in (".opencode", "http-text-stream-observation", terminal):
+        current = current / part
+        mkdir_private(current)
+    sample = {
+        "schema_version": 1,
+        "nonce": nonce,
+        "sequence": 1,
+        "request_ordinal": 1,
+        "request_bound": True,
+        "phase_ordinal": 2,
+        "receipt_sha256": digest,
+        "state": "active",
+        "reason": "none",
+        "wire_bytes": 300,
+        "text_bytes": 12,
+        "text_events": 2,
+        "event_count": 3,
+        "original_not_replaced": True,
+    }
+    path = current / "sample-0001.json"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(sample, stream, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(path, 0o600)
+
+
+def api_projection(terminal, generation):
+    # Synthetic GET-shaped fields; the CAO API is not called.
+    return {
+        "id": terminal,
+        "provider": "opencode_cli",
+        "status": "processing",
+        "turn": {
+            "terminal_id": terminal,
+            "provider": "opencode_cli",
+            "state": "pending",
+            "generation": generation,
+        },
+    }
+
+
+def put_receipt(connect, sql, target, terminal, generation, digest, phase, insert=False):
+    table = sql.Identifier(target.schema, "terminal_turn_receipts")
+    with connect(**target.connection_parameters()) as db:
+        if insert:
+            result = db.execute(
+                sql.SQL(
+                    "INSERT INTO {} (terminal_id,provider,generation,receipt_sha256,phase,created_at,updated_at) VALUES (%s,'opencode_cli',%s,%s,%s,now(),now())"
+                ).format(table),
+                (terminal, generation, digest, phase),
+            )
+        else:
+            result = db.execute(
+                sql.SQL(
+                    "UPDATE {} SET generation=%s,receipt_sha256=%s,phase=%s,updated_at=now() WHERE terminal_id=%s"
+                ).format(table),
+                (generation, digest, phase, terminal),
+            )
+        if result.rowcount != 1:
+            raise GateError("receipt_write_count_mismatch")
+
+
+def capture(activity, psycopg, server, root, terminal, metadata, nonce):
+    connect, readonly = psycopg.connect, []
+
+    def observed_connect(**params):
+        conn = connect(**params)
+        if params.get("application_name") == "t187-http-stream-readonly":
+            state = conn.execute("SHOW transaction_read_only").fetchone()[0]
+            readonly.append(state)
+            if state != "on":
+                conn.close()
+                raise GateError("capture_connection_not_read_only")
+        return conn
+
+    psycopg.connect = observed_connect
+    try:
+        result = activity.capture(server, root, terminal, metadata, nonce, time.monotonic() + 10)
+    finally:
+        psycopg.connect = connect
+    return result, readonly
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    if Path(module.__file__) != path:
+        raise GateError("import_root_mismatch")
+    return module
+
+
+def verify_race(raced, reads, wrote, readonly, persisted, replacement):
+    if (
+        raced is not None
+        or reads != 1
+        or wrote is not True
+        or readonly != ["on", "on"]
+        or persisted != [(replacement,)]
+    ):
+        raise GateError("generation_race_or_readonly_check_failed")
+
+
+def run():
+    source_gate()
+    admissions = [admit()]
+    sys.path[:0] = [str(REPO), str(REPO / "src")]
+    import psycopg
+    from psycopg import sql
+
+    fixtures = load("cao_private_pg_fixtures", REPO / "test/postgres/fixtures.py")
+    activity = load(
+        "native_http_stream_activity",
+        REPO / "specs/025-provider-mcp-profiles/fixtures/native_http_stream_activity.py",
+    )
+    import cli_agent_orchestrator.clients.database as database
+    import cli_agent_orchestrator.clients.postgres.registry as registry
+    import cli_agent_orchestrator.clients.postgres.migrations as migrations
+    import cli_agent_orchestrator.clients.postgres.config as config
+
+    for module, relative in (
+        (activity.http_observer, "test/live_provider/opencode_http_text_stream_observer.py"),
+        (database, "src/cli_agent_orchestrator/clients/database.py"),
+        (registry, "src/cli_agent_orchestrator/clients/postgres/registry.py"),
+        (migrations, "src/cli_agent_orchestrator/clients/postgres/migrations.py"),
+        (config, "src/cli_agent_orchestrator/clients/postgres/config.py"),
+    ):
+        if Path(module.__file__) != REPO / relative:
+            raise GateError("import_root_mismatch")
+    docker = shutil.which("docker")
+    if not docker:
+        raise GateError("docker_missing")
+    image = subprocess.run(
+        [docker, "image", "inspect", IMAGE], text=True, capture_output=True, timeout=15
+    )
+    if image.returncode or json.loads(image.stdout)[0].get("Id") != IMAGE_ID:
+        raise GateError("pinned_image_not_already_local")
+    result = {
+        "memory_admissions_mib": admissions,
+        "container": None,
+        "cleanup": None,
+        "prepared_rejected": False,
+        "sent_reader_positive": False,
+        "generation_changed_during_read_rejected": False,
+        "readonly_capture_connections": 0,
+    }
+    with tempfile.TemporaryDirectory(prefix="cao-http-pg-gate-") as temp:
+        private = Path(temp)
+        os.chmod(private, 0o700)
+        bindir = private / "bin"
+        mkdir_private(bindir)
+        wrapper = bindir / "docker"
+        wrapper.write_text(
+            f"#!{sys.executable}\nimport os,sys\nb={docker!r}\na=sys.argv[1:]\nif a and a[0]=='run': a.insert(1,'--pull=never')\nos.execv(b,[b,*a])\n",
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o700)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(bindir) + os.pathsep + old_path
+        owned, failure = None, None
+        try:
+            admissions.append(admit())
+            with fixtures._provision_owned_postgres_service() as service:
+                owned = {
+                    "container_id": service.metadata["container_id"],
+                    "run_id": service.metadata["run_id"],
+                    "network_name": f"cao-spec021-test-net-{service.metadata['run_id']}",
+                }
+                result["container"] = owned
+                owned_network(fixtures, docker, service, owned)
+                # The service owner remains alive until every target/reader borrower exits.
+                home = private / "pg-home"
+                with fixtures._isolated_live_targets(home, ("main",), service=service) as (
+                    targets,
+                    _,
+                ):
+                    target = targets["main"]
+                    terminal = "t187-pg-" + secrets.token_hex(6)
+                    generation, replacement, nonce = (
+                        secrets.token_hex(16),
+                        secrets.token_hex(16),
+                        secrets.token_hex(16),
+                    )
+                    digest = hashlib.sha256(secrets.token_bytes(32)).hexdigest()
+                    root = private / "reader"
+                    write_ledger(root, terminal, nonce, digest)
+                    server = types.SimpleNamespace(
+                        database_targets=types.SimpleNamespace(main=target)
+                    )
+                    metadata = api_projection(terminal, generation)
+                    put_receipt(
+                        psycopg.connect, sql, target, terminal, generation, digest, "prepared", True
+                    )
+                    prepared, ro = capture(
+                        activity, psycopg, server, root, terminal, metadata, nonce
+                    )
+                    if prepared is not None or ro != ["on"]:
+                        raise GateError("prepared_phase_or_readonly_check_failed")
+                    result["prepared_rejected"] = True
+                    result["readonly_capture_connections"] += len(ro)
+                    put_receipt(psycopg.connect, sql, target, terminal, generation, digest, "sent")
+                    sent, ro = capture(activity, psycopg, server, root, terminal, metadata, nonce)
+                    if (
+                        sent is None
+                        or sent.text_bytes <= 0
+                        or sent.text_events <= 0
+                        or len(ro) != 2
+                        or any(x != "on" for x in ro)
+                    ):
+                        raise GateError("sent_reader_or_readonly_check_failed")
+                    result["sent_reader_positive"] = True
+                    result["readonly_capture_connections"] += len(ro)
+                    reader, reads, wrote = activity.http_observer.read_live, [0], [False]
+
+                    def change_after_read(*args, **kwargs):
+                        projection = reader(*args, **kwargs)
+                        reads[0] += 1
+                        put_receipt(
+                            psycopg.connect, sql, target, terminal, replacement, digest, "sent"
+                        )
+                        wrote[0] = True
+                        return projection
+
+                    activity.http_observer.read_live = change_after_read
+                    try:
+                        raced, ro = capture(
+                            activity, psycopg, server, root, terminal, metadata, nonce
+                        )
+                    finally:
+                        activity.http_observer.read_live = reader
+                    with psycopg.connect(**target.connection_parameters()) as independent:
+                        persisted = independent.execute(
+                            sql.SQL("SELECT generation FROM {} WHERE terminal_id=%s").format(
+                                sql.Identifier(target.schema, "terminal_turn_receipts")
+                            ),
+                            (terminal,),
+                        ).fetchall()
+                    verify_race(raced, reads[0], wrote[0], ro, persisted, replacement)
+                    result["generation_mutation_confirmed_independently"] = True
+                    result["generation_changed_during_read_rejected"] = True
+                    result["readonly_capture_connections"] += len(ro)
+        except BaseException as error:
+            failure = error
+        finally:
+            os.environ["PATH"] = old_path
+            if owned:
+                result["cleanup"] = {
+                    **owned,
+                    "container_removed": absent(docker, ["inspect", owned["container_id"]]),
+                    "network_removed": (
+                        absent(
+                            docker,
+                            [
+                                "network",
+                                "inspect",
+                                owned.get("network_id") or owned["network_name"],
+                            ],
+                        )
+                    ),
+                }
+                if failure is None and (
+                    result["cleanup"]["container_removed"] is not True
+                    or result["cleanup"]["network_removed"] is not True
+                ):
+                    failure = GateError("owned_postgres_cleanup_unverified")
+        if failure is not None:
+            if result["cleanup"] is not None:
+                print(
+                    json.dumps({"cleanup_receipt": result["cleanup"]}, sort_keys=True),
+                    file=sys.stderr,
+                )
+            raise failure
+    return result
+
+
+def stop(_signum, _frame):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise KeyboardInterrupt
+
+
+def main():
+    if (
+        len(sys.argv) != 4
+        or sys.argv[1:3] != ["--execute", "--script-sha"]
+        or sys.argv[3] != hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    ):
+        print("gate_closed: explicit --execute required")
+        return 2
+    signal.signal(signal.SIGTERM, stop)
+    try:
+        result = run()
+    except KeyboardInterrupt:
+        print("diagnostic_interrupted", file=sys.stderr)
+        return 130
+    except GateError as error:
+        print("diagnostic_failed:" + str(error), file=sys.stderr)
+        return 1
+    except Exception as error:
+        print("diagnostic_failed:" + type(error).__name__, file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "status": "diagnostic_only",
+                "source_head": HEAD,
+                "api_metadata": "synthetic GET-shaped projection; API not called",
+                "native_provider_invoked": False,
+                "model_invoked": False,
+                "sqlite_used": False,
+                "migration_path": "fixture bootstrap_scope -> core_migrations -> migrate_component",
+                **result,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,122 @@
+{
+  "api_metadata": "synthetic GET-shaped projection; API not called",
+  "cleanup": {
+    "container_id": "011643f3cd25d1c6bee23f5f43e9f2eb5a056ff47a6af9e651971333b87a1c6a",
+    "container_removed": true,
+    "identity_verified": true,
+    "network_id": "09532283fb2201dff383c172e83d85ec277058bdfdafa1ad5bd0c445c1b4d625",
+    "network_name": "cao-spec021-test-net-40cbd799d2fb",
+    "network_removed": true,
+    "run_id": "40cbd799d2fb"
+  },
+  "container": {
+    "container_id": "011643f3cd25d1c6bee23f5f43e9f2eb5a056ff47a6af9e651971333b87a1c6a",
+    "identity_verified": true,
+    "network_id": "09532283fb2201dff383c172e83d85ec277058bdfdafa1ad5bd0c445c1b4d625",
+    "network_name": "cao-spec021-test-net-40cbd799d2fb",
+    "run_id": "40cbd799d2fb"
+  },
+  "generation_changed_during_read_rejected": true,
+  "generation_mutation_confirmed_independently": true,
+  "memory_admissions_mib": [
+    10972,
+    10661
+  ],
+  "migration_path": "fixture bootstrap_scope -> core_migrations -> migrate_component",
+  "model_invoked": false,
+  "native_provider_invoked": false,
+  "prepared_rejected": true,
+  "readonly_capture_connections": 5,
+  "sent_reader_positive": true,
+  "source_head": "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058",
+  "sqlite_used": false,
+  "status": "diagnostic_only",
+  "schema": "caos.spec025.t187.real-postgres-reader-report.v1",
+  "date": "2026-10-27",
+  "executed_control_sha256": "22d77c5acfd8fcb652274c4812824687ad23b8ea36e4fdeb96c0801f38e4daeb",
+  "sources_preserved": true,
+  "source_pins": {
+    "test/postgres/fixtures.py": "7318d370ef67be8600804bc1f893bf51a33cd8933e36d465a4fcaa190f9da7b4",
+    "src/cli_agent_orchestrator/clients/database.py": "c3363f956efeb9ff2b44e80cb9120a2b240912e91597e0685cd66a9293446ff2",
+    "src/cli_agent_orchestrator/clients/postgres/registry.py": "3e309adb01d70946146998995c40ae56680ca73635539e74bbc72f1040bef779",
+    "src/cli_agent_orchestrator/clients/postgres/migrations.py": "81535c42f94ee83776f5cc71b8a4d473783cd8b738f33f6107f9a597b2913ce4",
+    "src/cli_agent_orchestrator/clients/postgres/config.py": "b508c705e47a1e3139c4cb77c20e84de4122be9272e1fdded75f347adada250a",
+    "src/cli_agent_orchestrator/clients/postgres/connection.py": "901d32b70811bb55e4d0f4d9da1b048e3b2c0a0b3172a57bbba71b4ae65c8f1d",
+    "specs/025-provider-mcp-profiles/fixtures/native_http_stream_activity.py": "96ed9d2ff7375b321862ab192f312bc29367d20931ee2d0d5d46163182410aab",
+    "test/live_provider/opencode_http_text_stream_observer.py": "be017e8f9c2e36aa128ab1c46fe801c22b57e640cae2ec2f27d77d01507759ce",
+    "test/live_provider/opencode_http_response_argument_observer.py": "c35b13003907d9f8ee51e03f7971f2f870ad46cff8a640ad11aa42a07c2b235e",
+    "test/live_provider/opencode_http_prompt_observer.py": "4e06cb7dba5a65887caf96804e6bf35b3f31ce45925804564b0d7410cd9ad367"
+  },
+  "t187_accepted": false,
+  "t168_accepted": false,
+  "earlier_attempts": {
+    "R1": {
+      "api_metadata": "synthetic GET-shaped projection; API not called",
+      "cleanup": {
+        "container_id": "4ce7e81d70ad08f6deff355e19e9021d185d90614bb2186809b5b799c47f0e08",
+        "container_removed": true,
+        "identity_verified": true,
+        "network_id": "3d2db207a1a88cc06b1a5db8c4dae026f90f84ec3b3ac5121c9fddf99878470d",
+        "network_name": "cao-spec021-test-net-1fc6864fa065",
+        "network_removed": true,
+        "run_id": "1fc6864fa065"
+      },
+      "container": {
+        "container_id": "4ce7e81d70ad08f6deff355e19e9021d185d90614bb2186809b5b799c47f0e08",
+        "identity_verified": true,
+        "network_id": "3d2db207a1a88cc06b1a5db8c4dae026f90f84ec3b3ac5121c9fddf99878470d",
+        "network_name": "cao-spec021-test-net-1fc6864fa065",
+        "run_id": "1fc6864fa065"
+      },
+      "generation_changed_during_read_rejected": true,
+      "memory_admissions_mib": [
+        10910,
+        10881
+      ],
+      "migration_path": "fixture bootstrap_scope -> core_migrations -> migrate_component",
+      "model_invoked": false,
+      "native_provider_invoked": false,
+      "prepared_rejected": true,
+      "readonly_capture_connections": 5,
+      "sent_reader_positive": true,
+      "source_head": "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058",
+      "sqlite_used": false,
+      "status": "diagnostic_only",
+      "evidence_limit": "reported positive, but generation-race mutation not independently proved; not accepted for race gate",
+      "executed_control_sha256": "5e98b848413b5aa6bac8787d2dbb3b5e35a55830bab9d60248f4d40c8998d28d"
+    },
+    "R2": {
+      "status": "FAILED_CLEANUP_VERIFIER",
+      "cleanup_receipt": {
+        "container_id": "c0de530263a8bcc89ff4256f37d90ef27a5586a62fb3c82081136f3904d5bfa8",
+        "container_removed": "unknown",
+        "identity_verified": true,
+        "network_id": "b44762ebb57f54669b477a23353bba101304076e00c4395cb969c7bf31641837",
+        "network_name": "cao-spec021-test-net-e33da6890b84",
+        "network_removed": "unknown",
+        "run_id": "e33da6890b84"
+      },
+      "reported_error": "diagnostic_failed:owned_postgres_cleanup_unverified",
+      "executed_control_sha256": "76f74ddd3fb87e4f3493a9a28a61c36c8d668f80a0f208dd18bc901d75b91f74",
+      "later_exact_id_inventory_container_absent": true,
+      "later_exact_id_inventory_network_absent": true,
+      "cause": "Docker CLI absence stderr wording differs; R3 uses successful exact-ID inventory, no stderr parsing"
+    }
+  },
+  "offline_regressions": {
+    "old_mutation_false_positive_reproduced": true,
+    "mutation_refusals": 3,
+    "mutation_positive": 1,
+    "exact_id_inventory_controls": 4,
+    "actual_retired_id_checks": 2
+  },
+  "readonly_scope": "SHOW proves these reader sessions are read-only; runtime role still has application write privileges",
+  "peer_review": {
+    "initial": "fc18903095ac4c9ea08dcd63820eaace",
+    "race_and_origins": "70e5ee861a864a1c8798f0c8f72925bc",
+    "inventory": "35546d00b6ad40c8aa3aa84be8b21353",
+    "mode": "read",
+    "final_blocking_findings": 0,
+    "scope": "code review only; root executed controls"
+  }
+}

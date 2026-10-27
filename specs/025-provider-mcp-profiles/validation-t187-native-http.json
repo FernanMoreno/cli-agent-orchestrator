@@ -1,0 +1,265 @@
+{
+  "schema": "caos.spec025.t187.native-http-control-report.v1",
+  "date": "2026-10-27",
+  "scope": "synthetic pinned native CLI HTTP clone capability only; no PostgreSQL/API/model/paired cancellation acceptance",
+  "attempts": [
+    {
+      "run_id": "ec5c09154def42bf937f19aa39e66396",
+      "native_clone_capability_pass": false,
+      "memory_admission_mib": 10056,
+      "outer_process_group_retired": true,
+      "outer_timeout": false,
+      "source_preserved": true,
+      "private_inputs_preserved": true,
+      "attempt": "R4",
+      "receipt_file_sha256": "f2aced434c2052058e8f84742fa3fe98de8a89a5cbf07f6e5b36143f401781e0",
+      "diagnostic_only": false,
+      "source_head": "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058",
+      "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+      "observation": {
+        "native_elapsed_seconds": 18.014,
+        "native_exit_code": 0,
+        "native_timed_out": false,
+        "process_group_retired": true,
+        "text_growth_observed": false,
+        "distinct_positive_sequence_count": 0,
+        "same_observer_request_directory_bindings": 0,
+        "same_binding_text_growth": [],
+        "after_finish_projection_state": "private_evidence_unavailable",
+        "hold_projection_state_counts": {
+          "unavailable": 80
+        },
+        "provider": {
+          "active_post": 2,
+          "chunks": 4,
+          "diagnostic_seen": true,
+          "error": null,
+          "finish": true,
+          "model_match": true,
+          "posts": 2,
+          "route_class": "chat_completion",
+          "stage": "finish_sent",
+          "stream_requested": true,
+          "synthetic_sse_sha256": "c0b1931d199e91ee4bbb0a497762d3e84b1f650f4ed1563f5f2e60d121f1d48d"
+        }
+      },
+      "executed_private_control_sha256": "376922a1eb5dbc96a93fc3adf2b3b3de7ecd443c64a1a4834f66418375879752"
+    },
+    {
+      "run_id": "503fe09b80b74dc4bfd51031c6d5cd6e",
+      "native_clone_capability_pass": false,
+      "memory_admission_mib": 10093,
+      "outer_process_group_retired": true,
+      "outer_timeout": false,
+      "source_preserved": true,
+      "private_inputs_preserved": true,
+      "attempt": "R5",
+      "receipt_file_sha256": "0b3c2a4850d8db1d461456d97dfcd41a1ec1fda33c8105a09c1e6fbbe512823a",
+      "diagnostic_only": true,
+      "source_head": "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058",
+      "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+      "observation": {
+        "native_elapsed_seconds": 17.919,
+        "native_exit_code": 0,
+        "native_timed_out": false,
+        "process_group_retired": true,
+        "text_growth_observed": false,
+        "distinct_positive_sequence_count": 0,
+        "same_observer_request_directory_bindings": 0,
+        "same_binding_text_growth": [],
+        "after_finish_projection_state": "private_evidence_unavailable",
+        "hold_projection_state_counts": {
+          "unavailable": 80
+        },
+        "provider": {
+          "active_post": 2,
+          "chunks": 4,
+          "diagnostic_seen": true,
+          "error": null,
+          "finish": true,
+          "model_match": true,
+          "posts": 2,
+          "route_class": "chat_completion",
+          "stage": "finish_sent",
+          "stream_requested": true,
+          "synthetic_sse_sha256": "f5ba89fdaf40069b65d23926decd66f395e26c784508577db4ace9525f4cb4d8"
+        }
+      },
+      "executed_private_control_sha256": "1a9840f12d82ed18469766d135743311218416c7427ab3bdc191f4ff7219681b",
+      "classification": {
+        "status": "receipt_envelope_unavailable",
+        "phase_ordinal": null,
+        "source_prompt_exact": false,
+        "receipt_envelope_shape_valid": false,
+        "receipt_sha256_present": false,
+        "cli_prefix_codepoints": [
+          34
+        ],
+        "cli_suffix_codepoints": [
+          34
+        ],
+        "hooks_registered_and_disposed": true
+      }
+    },
+    {
+      "run_id": "2ddb8a1dfd8243a4bc925386a7d603e3",
+      "native_clone_capability_pass": true,
+      "memory_admission_mib": 10772,
+      "outer_process_group_retired": true,
+      "outer_timeout": false,
+      "source_preserved": true,
+      "private_inputs_preserved": true,
+      "attempt": "R6",
+      "receipt_file_sha256": "b729ba5fbd7599b534aeccf6bf1947bfd7fe85f4452d9e92aaae488793ba39e9",
+      "diagnostic_only": false,
+      "source_head": "44eb86605c1fb8d82ae8c75cb78d6e4e26a84058",
+      "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+      "observation": {
+        "native_elapsed_seconds": 18.053,
+        "native_exit_code": 0,
+        "native_timed_out": false,
+        "process_group_retired": true,
+        "text_growth_observed": true,
+        "distinct_positive_sequence_count": 2,
+        "same_observer_request_directory_bindings": 1,
+        "same_binding_text_growth": [
+          {
+            "from_sequence": 2,
+            "from_stage": "chunk1_held",
+            "from_text_bytes": 26,
+            "same_directory_identity": true,
+            "same_observer_request": true,
+            "to_sequence": 3,
+            "to_stage": "chunk2_held",
+            "to_text_bytes": 81
+          }
+        ],
+        "after_finish_projection_state": "stream_finished",
+        "hold_projection_state_counts": {
+          "active": 37,
+          "unavailable": 43
+        },
+        "provider": {
+          "active_post": 2,
+          "chunks": 4,
+          "diagnostic_seen": true,
+          "error": null,
+          "finish": true,
+          "model_match": true,
+          "posts": 2,
+          "route_class": "chat_completion",
+          "stage": "finish_sent",
+          "stream_requested": true,
+          "synthetic_sse_sha256": "7576b75108504ba9846afca3d07efa6ccb9761d354243d80b35f91e3744d16a3"
+        }
+      },
+      "control_sha256": "c3d86d1a8521edd1754dd7e25fa8069478832e2100978ff3fe9b3a61afd4a176",
+      "derivation": {
+        "base_control_sha256": "eaae725334610879a686db6e5a451843d85e05c143fce869998b65d18e98ab05",
+        "cli_framing_scope": "pinned synthetic opencode run control only",
+        "cli_wire_framing_codepoints": [
+          34,
+          34
+        ],
+        "diagnostic_parent_run": "503fe09b80b74dc4bfd51031c6d5cd6e",
+        "expectation_sha256": "705f24daf5aa3df270e10d79082f88d2361df0de83325e8bd8a27ac79ca0ece1",
+        "formatted_prompt_sha256": "952004fc9360fc896cee4670c5b2b02da06215888cae74eecab092daa908c2ea",
+        "helper_python_copy_sha256": {
+          "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "opencode_http_prompt_observer.py": "4e06cb7dba5a65887caf96804e6bf35b3f31ce45925804564b0d7410cd9ad367",
+          "opencode_http_response_argument_observer.py": "c35b13003907d9f8ee51e03f7971f2f870ad46cff8a640ad11aa42a07c2b235e",
+          "opencode_http_text_stream_observer.py": "be017e8f9c2e36aa128ab1c46fe801c22b57e640cae2ec2f27d77d01507759ce"
+        },
+        "helper_python_source_sha256": {
+          "base.py": "5eb6eeab38b53e0ef6f6fd05be3da4dfba4ca0fe4cffa7826d4f8e3840b13a40",
+          "constants.py": "a736d6d62ea647ff566404f83bfbeef310fd04bd8ef1a23e6b277fd2180f13d7",
+          "mcp_interactions.py": "2f8e8eae0ad4d2bc2449996818edbf944226f85747a2eff9e1c2dace96a0eb16",
+          "mcp_tool_policy.py": "9accde7733cb29b7b1ad6f05ee7672c51288e9030932f2d317fa0a27d2952645",
+          "opencode_http_prompt_observer.py": "4e06cb7dba5a65887caf96804e6bf35b3f31ce45925804564b0d7410cd9ad367",
+          "opencode_http_response_argument_observer.py": "c35b13003907d9f8ee51e03f7971f2f870ad46cff8a640ad11aa42a07c2b235e",
+          "opencode_http_text_stream_observer.py": "be017e8f9c2e36aa128ab1c46fe801c22b57e640cae2ec2f27d77d01507759ce",
+          "opencode_policy.py": "8d8ad26b41a4d4a907de87379b7544b1d7d7d3c403388913f4b4d3efad6a41e9",
+          "opencode_v2.py": "c12244f9e62d0326a039d35530187842dfd4e478560c0222f9904228a8876c3c",
+          "path_validation.py": "00d8bfae96d810f7874d9d8138354083c8299d8efbf0567e3ac261dee90ee355"
+        },
+        "installer_installed_sha256": {
+          "opencode_http_prompt_observer.js": "fbd7e670c5d70fb5b1f65013ecb4214161f9956f0996f2573dd1c11286f96578",
+          "opencode_http_stream_protocol.js": "d28ce3b4f10c374f13e5b6a515dff9cb5af7b3110f448cd53d302f186a0976b0",
+          "opencode_http_text_response_monitor.js": "b469c016754c6ec061754a16c517bb61e8d7f678d97a6ca8259a285ee89eb952",
+          "opencode_http_text_stream_observer.js": "c34b44327e99875886eee4e771c675798df0f3e900ce91825bc221c8f5298aee"
+        },
+        "parent_private_control_sha256": "376922a1eb5dbc96a93fc3adf2b3b3de7ecd443c64a1a4834f66418375879752",
+        "private_loader_sha256": "25d1df13ab4737e841063317e1c896464bca2372ca66b91274acce03fe46cecf",
+        "private_specialized_sha256": {
+          "opencode_http_prompt_observer.js": "edc986f1569b58b7ad06702ba883568b9cef00f14650352ed169c2a7ac3ae220",
+          "opencode_http_text_stream_observer.js": "5e5227748e4de363636fe65955b49cf5af0105bf89e13ce564fc65c216469088"
+        },
+        "project_loader_written_sha256": "25d1df13ab4737e841063317e1c896464bca2372ca66b91274acce03fe46cecf",
+        "receipt_sha256": "d3ef4300cf84fb7f6f0bee4d148bf3cf4e0433f55d3db705af505425d30b5b34",
+        "rendered_config_sha256": "9d88d77d569ac36bc8271e5bc11d4c3090cc96d7e4dcfefa046f9cf3e287dc76",
+        "source_config_sha256": "fcef68774e33abadd68b7f8dcfcc3b2ae6481467c9e79ddda7df61af2f377ae4",
+        "source_sha256": {
+          "opencode_http_prompt_observer.js": "fbd7e670c5d70fb5b1f65013ecb4214161f9956f0996f2573dd1c11286f96578",
+          "opencode_http_stream_protocol.js": "d28ce3b4f10c374f13e5b6a515dff9cb5af7b3110f448cd53d302f186a0976b0",
+          "opencode_http_text_response_monitor.js": "b469c016754c6ec061754a16c517bb61e8d7f678d97a6ca8259a285ee89eb952",
+          "opencode_http_text_stream_observer.js": "8026e6c5879311bd6e0a5975cedce27865f169b810d14e10c2cc25a8cbbb676c"
+        }
+      },
+      "executed_private_control_sha256": "c3d86d1a8521edd1754dd7e25fa8069478832e2100978ff3fe9b3a61afd4a176"
+    }
+  ],
+  "offline_framing_replay": {
+    "offline_replay_pass": true,
+    "rows": [
+      {
+        "corrected": false,
+        "body": "0001",
+        "status": "receipt_envelope_unavailable",
+        "phase": null,
+        "exact": false,
+        "digest_present": false
+      },
+      {
+        "corrected": false,
+        "body": "0002",
+        "status": "receipt_envelope_unavailable",
+        "phase": null,
+        "exact": false,
+        "digest_present": false
+      },
+      {
+        "corrected": true,
+        "body": "0001",
+        "status": "observed",
+        "phase": 2,
+        "exact": true,
+        "digest_present": true
+      },
+      {
+        "corrected": true,
+        "body": "0002",
+        "status": "observed",
+        "phase": 2,
+        "exact": true,
+        "digest_present": true
+      }
+    ]
+  },
+  "t187_accepted": false,
+  "t168_accepted": false,
+  "peer_review": {
+    "job_id": "fa3fdb5b1e3a475ca5857884a09b3569",
+    "mode": "read",
+    "status": "completed",
+    "scope": "private expectation delta, not executable/native/API/PG acceptance",
+    "blocking_findings": 0
+  },
+  "verification": {
+    "node_passed": 98,
+    "node_duration_ms": 2251.761811,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0,
+    "obsidian_pages_updated": 4,
+    "obsidian_lint_findings": 0
+  }
+}
