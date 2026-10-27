@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T177 [US4] [FR155/SC139] Observe a pinned native Codex partial assistant stream followed by terminal failure; compare rendered frame with production buffer/screen classifiers and active-receipt state. Preserve quoted/stale/error-free negative controls. Fix only a reproduced distinguishable boundary, or document ambiguity and the next observation; keep managed acceptance and full CX08 separate.
+- [x] T177 [US4] [FR155/SC139] Observe a pinned native Codex partial assistant stream followed by terminal failure; compare rendered frame with production buffer/screen classifiers and active-receipt state. Preserve quoted/stale/error-free negative controls. Fix only a reproduced distinguishable boundary, or document ambiguity and the next observation; keep managed acceptance and full CX08 separate.
+
+T177 corregido y validado de forma acotada:4RED/16controles, otros4RED/20controles tras revisión;64enfocadas y399regresiones pasan,3opt-in intactas/2avisos/24nuevos. Capturas nativas5c646430, consumidor de3fc61f/1729pins/8clasificaciones, arquitectura5/0 y recursos cerrados. CitaR1INCOMPLETE preservada. Recorrido gestionado parcial/cuota/cancelación siguen separados. [Evidencia](validation-t177.md).
 
 - [x] T176 [US4] [FR154/SC138] Observe managed Codex auth/throttle/quota HTTP errors, retained child and durable failed/reconcile join; explicitly clean only owned terminals and preserve verdict/identity. Add negative observer contracts and pinned isolated synthetic native acceptance with exact resource closure. Keep auto-resume/cancel/timeout/global gates separate.
 

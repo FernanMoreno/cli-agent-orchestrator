@@ -1,0 +1,226 @@
+{
+  "schema": "caos.validation.codex-partial-native-error.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "consumer": {
+    "source_head": "de3fc61f35ad1e423b621246fc07eca4fd25c216",
+    "source_files_pinned": 1729,
+    "source_manifest_sha256": "89c03b01ee93837dd2b497fec6a852a25258688c30fe3494e7298274583b51ca",
+    "provider_sha256": "b8f5add30fee2e1ca72bd1f86819a4fb7ea7ad8352d506a4d5db46b8471f83ef",
+    "fixtures_sha256": {
+      "test/providers/fixtures/codex_0164_partial_auth_error.txt": "8c658a03fb0755bdb85d51941ee706669f4d38e76147896459fac3baa844da6a",
+      "test/providers/fixtures/codex_0164_successful_error_quote.txt": "e9128eb1d9309fb01357fdad83dd8d70f6dc2b481153884cbbcde91a6ea5cba7"
+    },
+    "classification_cases": 8,
+    "all_expected": true,
+    "cases": [
+      {
+        "case": "partial_auth_error",
+        "active_receipt": false,
+        "screen_adapter": false,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": false,
+        "screen_adapter": true,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": true,
+        "screen_adapter": false,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": true,
+        "screen_adapter": true,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": false,
+        "screen_adapter": false,
+        "status": "completed",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": false,
+        "screen_adapter": true,
+        "status": "completed",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": true,
+        "screen_adapter": false,
+        "status": "processing",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": true,
+        "screen_adapter": true,
+        "status": "processing",
+        "receipt_unchanged": true
+      }
+    ]
+  },
+  "native_cli_version": "0.164.0",
+  "native_runs": [
+    {
+      "case": "partial_then_error",
+      "status": "CAPTURED",
+      "producer_source": "5c6464305a076df4bb7398b3340b3492e8b53aa6",
+      "executed_driver_sha256": "bce263deab3e40752a3fefa32cfc278d59521e709a6cccd906a06fd8d6e28831",
+      "executed_probe_sha256": "cba6f6a54c7ccae249de8f2ca74563b1602cc2178e748a2934c9bf552047fce3",
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "source_files_pinned": 1726,
+      "memory_before_native_mib": 10473,
+      "outer_exit": 0,
+      "outer_process_exited": true,
+      "probe_and_driver_closed": true,
+      "source_binary_python_unchanged_at_capture": true,
+      "observation": {
+        "case": "partial_then_error",
+        "partial_stream_sent": true,
+        "partial_marker_rendered": true,
+        "requests_received": 12,
+        "served_http_statuses": [
+          401,
+          401,
+          401,
+          200,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401
+        ],
+        "prompt_sent": true,
+        "bracketed_paste_and_separate_submit": true,
+        "terminal_error_observed": true,
+        "seconds": 8.468,
+        "native_exit": -15,
+        "server_thread_closed": true,
+        "network_namespace_isolated": true,
+        "operator_home_masked": true,
+        "native_config_loaded_before_pty": true
+      }
+    },
+    {
+      "case": "successful_quote",
+      "status": "INCOMPLETE",
+      "producer_source": "5c6464305a076df4bb7398b3340b3492e8b53aa6",
+      "executed_driver_sha256": "bd1911cb6ecada9fa7458fef6a2bfa5968fe6c6f6217dd51d5fc1016a8df0844",
+      "executed_probe_sha256": "5f10072b66de6cf2f54a353ee92e672e7ef7e754231f32da962e85bd54265460",
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "source_files_pinned": 1726,
+      "memory_before_native_mib": 10094,
+      "outer_exit": 0,
+      "outer_process_exited": true,
+      "probe_and_driver_closed": true,
+      "source_binary_python_unchanged_at_capture": true,
+      "observation": {
+        "case": "successful_quote",
+        "partial_stream_sent": false,
+        "partial_marker_rendered": false,
+        "requests_received": 3,
+        "served_http_statuses": [
+          401,
+          401
+        ],
+        "prompt_sent": true,
+        "bracketed_paste_and_separate_submit": true,
+        "quoted_cell_observed": true,
+        "seconds": 1.706,
+        "native_exit": -15,
+        "server_thread_closed": true,
+        "network_namespace_isolated": true,
+        "operator_home_masked": true,
+        "native_config_loaded_before_pty": true
+      }
+    },
+    {
+      "case": "successful_quote",
+      "status": "CAPTURED",
+      "producer_source": "5c6464305a076df4bb7398b3340b3492e8b53aa6",
+      "executed_driver_sha256": "bd1911cb6ecada9fa7458fef6a2bfa5968fe6c6f6217dd51d5fc1016a8df0844",
+      "executed_probe_sha256": "82b499710f84c4e119e920e2ed503573977d0eaff4cf3edcddda88a65edae91c",
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "source_files_pinned": 1726,
+      "memory_before_native_mib": 10226,
+      "outer_exit": 0,
+      "outer_process_exited": true,
+      "probe_and_driver_closed": true,
+      "source_binary_python_unchanged_at_capture": true,
+      "observation": {
+        "case": "successful_quote",
+        "partial_stream_sent": true,
+        "partial_marker_rendered": true,
+        "requests_received": 2,
+        "served_http_statuses": [
+          200
+        ],
+        "prompt_sent": true,
+        "bracketed_paste_and_separate_submit": true,
+        "quoted_cell_observed": true,
+        "seconds": 2.653,
+        "native_exit": -15,
+        "server_thread_closed": true,
+        "network_namespace_isolated": true,
+        "operator_home_masked": true,
+        "native_config_loaded_before_pty": true
+      }
+    }
+  ],
+  "tests": {
+    "initial_red_failed": 4,
+    "initial_red_passed": 16,
+    "review_red_failed": 4,
+    "review_red_passed": 20,
+    "focused_passed": 64,
+    "new_cases": 24,
+    "final_regression_passed": 399,
+    "existing_opt_in_skips": 3,
+    "warnings": 2,
+    "seconds": 171.64,
+    "workers": 2,
+    "architecture_kept": 5,
+    "architecture_broken": 0
+  },
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers": 0,
+    "private_databases": 0
+  },
+  "reviews": {
+    "claude": "d3b6d2f6843f4d1cb595e8ac090e16a9: code scoped review; blank-window risk subsequently reproduced/corrected",
+    "luna": "GO final narrow code: separate boundary signal retains native/shell/dialog priority; echoed user bullet excluded"
+  },
+  "limits": [
+    "No managed API/native-child partial-error acceptance on corrected source",
+    "Rendered viewport fed to both adapters; native raw pipe-pane path not accepted",
+    "Wrapped terminal HTTP errors and footer-absent layouts not observed",
+    "Partial-response quota failure not accepted",
+    "No active cancellation/timeout reconciliation, auto-resume or fullCX08 acceptance",
+    "Actual CLI with synthetic loopback backend; no real account rejection or operator login"
+  ],
+  "runtime_import_matches_source": true,
+  "obsidian": {
+    "operation_id": "save-20261027-caos-partial-native-error",
+    "pages": 4,
+    "strict_issues": 0
+  }
+}
