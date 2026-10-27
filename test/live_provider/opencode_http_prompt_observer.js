@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import fsSync from "node:fs"
+import { createHash } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -395,11 +396,18 @@ function removeOuterMemory(value) {
   }
 }
 
-function comparePrompt(content, expectations) {
+function comparePrompt(content, expectations, includeReceiptDigest = false, terminalId) {
   const memory = removeOuterMemory(content)
   if (!memory.valid) return null
   const prompt = memory.value
-  const { receipt_prefix: prefix, receipt_suffix: suffix } = expectations
+  const { receipt_prefix: prefix } = expectations
+  let suffix = expectations.receipt_suffix
+  if (terminalId !== undefined) {
+    if (typeof terminalId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(terminalId)) return null
+    const placeholder = "{{CAO_TERMINAL_ID}}"
+    if (occurrenceCount(suffix, placeholder) > 1) return null
+    suffix = suffix.replace(placeholder, terminalId)
+  }
   if (occurrenceCount(prompt, prefix) !== 1) return null
   const prefixAt = prompt.indexOf(prefix)
   const task = prompt.slice(0, prefixAt)
@@ -418,6 +426,9 @@ function comparePrompt(content, expectations) {
     source_prompt_exact: phaseIndex >= 0,
     last_instruction_present: task.includes(expectations.last_instruction),
     receipt_envelope_shape_valid: true,
+    ...(includeReceiptDigest === true
+      ? { receipt_sha256: createHash("sha256").update(token, "utf8").digest("hex") }
+      : {}),
   }
 }
 
@@ -434,7 +445,10 @@ function blankRecord(nonce, ordinal, status) {
   }
 }
 
-export async function inspectRequest(event, { fsApi, opencodeDirectory, nonce, ordinal, signal }) {
+export async function inspectRequest(
+  event,
+  { fsApi, opencodeDirectory, nonce, ordinal, signal, includeReceiptDigest = false, terminalId },
+) {
   try {
     const model = event?.model
     if (
@@ -461,7 +475,7 @@ export async function inspectRequest(event, { fsApi, opencodeDirectory, nonce, o
     if (body.status !== "parsed") return blankRecord(nonce, ordinal, body.status)
     const content = latestUserContent(body.document)
     if (content === null) return blankRecord(nonce, ordinal, "message_shape_unavailable")
-    const comparison = comparePrompt(content, expectations)
+    const comparison = comparePrompt(content, expectations, includeReceiptDigest, terminalId)
     if (comparison === null) return blankRecord(nonce, ordinal, "receipt_envelope_unavailable")
     return {
       ...blankRecord(nonce, ordinal, "observed"),

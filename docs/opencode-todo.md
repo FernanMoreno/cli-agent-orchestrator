@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T187 HTTP: observador incremental, cargador previo a inicialización y lector estricto implementados sin activar cancelación.98 pruebas Node/32 Python y arquitectura5/0 pasan; comprobado el recibo por terminal con formatter real y flujo Node→archivos→lector Python. PG solo simulado: faltan Bun nativo, enlace PG real y cancelación emparejada. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t187-http-preparation.md).
+
 T187: control nativo sintético termina en9,989s y valida el resultado final, pero40 lecturas previas al cierre muestran TEXT vacío; crecimiento activo en SQLite **no observado**. El prototipo no autoriza cancelación.28 contratos offline y arquitectura5/0 pasan; dos falsos positivos del borrador corregidos. T168 sigue abierto: siguiente paso, observador HTTP transparente ligado al turno. [Resultados y fallos conservados](../specs/025-provider-mcp-profiles/validation-t187-preparation.md).
 
 T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t186.md).

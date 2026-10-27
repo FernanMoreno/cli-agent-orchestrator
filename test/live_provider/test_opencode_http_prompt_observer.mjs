@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -86,6 +87,40 @@ function requestFor(messages, extra = {}) {
 function eventFor(request, { model = MODEL, kind = "primary" } = {}) {
   return { model, kind, request, sessionID: "PRIVATE_SESSION_ID", agent: "PRIVATE_AGENT" }
 }
+
+test("receipt digest is opt-in and never exposes the receipt token", async (t) => {
+  const observer = await setupObserver(t)
+  const { inspectRequest } = await import(SOURCE.href)
+  const request = () => eventFor(requestFor([{ role: "user", content: receipt(EXPECTED.phase_prompts[1]) }]))
+  const options = { fsApi: fs, opencodeDirectory: observer.opencode, nonce: NONCE, ordinal: 1 }
+  const ordinary = await inspectRequest(request(), options)
+  assert.equal(Object.hasOwn(ordinary, "receipt_sha256"), false)
+  const bound = await inspectRequest(request(), { ...options, includeReceiptDigest: true })
+  assert.equal(bound.receipt_sha256, createHash("sha256").update("CAO-TURN-RECEIPT-" + "a".repeat(32)).digest("hex"))
+  assert.equal(bound.source_prompt_exact, true)
+  assert.equal(bound.phase_ordinal, 2)
+  assert.equal(JSON.stringify(bound).includes("CAO-TURN-RECEIPT-"), false)
+})
+
+test("per-terminal receipt template is instantiated only for the checked terminal", async (t) => {
+  const placeholder = "{{CAO_TERMINAL_ID}}"
+  const suffix = `\nYour own CAO terminal ID is ${placeholder}; END`
+  const observer = await setupObserver(t, { expected: { ...EXPECTED, receipt_suffix: suffix } })
+  const { inspectRequest } = await import(SOURCE.href)
+  const terminalId = "0123abcd"
+  const makeEvent = () => eventFor(requestFor([{ role: "user", content: EXPECTED.phase_prompts[1] +
+    EXPECTED.receipt_prefix + "CAO-TURN-RECEIPT-" + "a".repeat(32) + suffix.replace(placeholder, terminalId) }]))
+  const options = { fsApi: fs, opencodeDirectory: observer.opencode, nonce: NONCE, ordinal: 1,
+    includeReceiptDigest: true }
+  const matched = await inspectRequest(makeEvent(), { ...options, terminalId })
+  assert.equal(matched.status, "observed")
+  assert.equal(matched.source_prompt_exact, true)
+  assert.equal(matched.receipt_sha256, createHash("sha256").update("CAO-TURN-RECEIPT-" + "a".repeat(32)).digest("hex"))
+  for (const wrong of ["wrong-terminal", "../escape", "", null]) {
+    assert.notEqual((await inspectRequest(makeEvent(), { ...options, terminalId: wrong })).status, "observed")
+  }
+  assert.notEqual((await inspectRequest(makeEvent(), options)).status, "observed")
+})
 
 async function dispatch(observer, request, options = {}) {
   const event = eventFor(request, options)

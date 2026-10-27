@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:caos:spec025:http-text-stream-observation:v1",
+  "title": "Ephemeral diagnostic HTTP TEXT stream evidence; not PostgreSQL turn authority",
+  "description": "Sample ordinal gaps are valid. The consumer also checks matching request/receipt, monotonic counts, stable private filesystem identity and active state; invalid/seal prevent live authority. A seal counts durable files separately from attempts. Only PostgreSQL/API/process fences may authorize cancellation.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/sample"
+    },
+    {
+      "$ref": "#/$defs/invalid"
+    },
+    {
+      "$ref": "#/$defs/seal"
+    }
+  ],
+  "$defs": {
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128
+        },
+        "request_ordinal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "request_bound": {
+          "const": true
+        },
+        "phase_ordinal": {
+          "const": 2,
+          "type": "integer"
+        },
+        "receipt_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "active",
+            "finished",
+            "unavailable"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "pattern": "^[a-z_]{1,80}$"
+        },
+        "wire_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "text_events": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "original_not_replaced": {
+          "const": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "nonce",
+        "sequence",
+        "request_ordinal",
+        "request_bound",
+        "phase_ordinal",
+        "receipt_sha256",
+        "state",
+        "reason",
+        "wire_bytes",
+        "text_bytes",
+        "text_events",
+        "event_count",
+        "original_not_replaced"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "waiting",
+                  "active"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "none"
+              },
+              "wire_bytes": {
+                "maximum": 1048576
+              },
+              "text_bytes": {
+                "maximum": 65536
+              },
+              "text_events": {
+                "maximum": 4096
+              },
+              "event_count": {
+                "maximum": 4096
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "active"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "wire_bytes": {
+                "minimum": 1
+              },
+              "text_bytes": {
+                "minimum": 1
+              },
+              "text_events": {
+                "minimum": 1
+              },
+              "event_count": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "finished"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "stream_finished"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "invalid": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "status": {
+          "const": "unavailable"
+        },
+        "reason": {
+          "const": "observer_integrity"
+        }
+      },
+      "required": [
+        "schema_version",
+        "nonce",
+        "status",
+        "reason"
+      ]
+    },
+    "seal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "trace_complete": {
+          "type": "boolean"
+        },
+        "hook_disposed": {
+          "type": "boolean"
+        },
+        "request_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "eligible_requests": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "sample_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        },
+        "sample_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 128
+        }
+      },
+      "required": [
+        "schema_version",
+        "nonce",
+        "trace_complete",
+        "hook_disposed",
+        "request_count",
+        "eligible_requests",
+        "sample_count",
+        "sample_attempts"
+      ]
+    }
+  }
+}
