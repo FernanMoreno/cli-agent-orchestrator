@@ -1,0 +1,176 @@
+{
+  "schema": "caos.validation.opencode-native-tool-cancel.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "source_head": "169fdc44705949950740652752e2fc3aaa571ecf",
+  "source_files_pinned": 561,
+  "manifest_sha256": "af1298d39300636c1e9df5945343081bbcc51bbbb881ecbdab2bb89def0b6dbe",
+  "activity_case": "native_tool",
+  "production_changed": false,
+  "model_requested": "opencode-go/glm-5.3-flash",
+  "served_model_attested": false,
+  "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "coordinator": "controlled mock_cli identity with production CLI pairing and real MCP stdio, not native model",
+  "native_worker": "OpenCode v2 standalone",
+  "worker_http_model_tool_offer_attested": false,
+  "coordinator_mcp_catalog_count": 12,
+  "preflight": {
+    "success": true,
+    "elapsed_seconds": 224.393,
+    "cleanup_failures": []
+  },
+  "journey": {
+    "success": true,
+    "elapsed_seconds": 259.812,
+    "task_seconds": [
+      31.129,
+      36.761
+    ],
+    "production_pairing_verified": true,
+    "caller_controller_created": true,
+    "mcp_catalog_exact_twelve": true,
+    "native_preflight_passed": true,
+    "native_success_exact": true,
+    "same_key_replay_exact": true,
+    "native_tool_child_witnessed": true,
+    "native_tool_child_stopped_before_natural_expiry": true,
+    "native_tool_worker_stopped": true,
+    "cancelled_worker_stopped": true,
+    "confirmed_terminal_retirements": 4,
+    "git_baseline_unchanged": true
+  },
+  "task_seconds_meaning": [
+    "Unicode exact result and replay including worker startup",
+    "native-tool task including startup/activity/recheck/cancel/physical stop; not cancel HTTP latency"
+  ],
+  "activity_witness": {
+    "poll_count": 63,
+    "state_histogram": {
+      "unknown/none": 2,
+      "idle/none": 43,
+      "idle/pending": 5,
+      "processing/pending": 13
+    },
+    "last_poll_elapsed_seconds": 35.516,
+    "ancestry_nodes": 3,
+    "hold_seconds": 120,
+    "command_sha256": "652ea75604247e85aac4b42f7a937530b239cc268d69bf9d91059c9f738d9135",
+    "fresh_same_generation_recheck_before_cancel": true,
+    "server_generation_CAS_for_peer_task_cancel_attested": false,
+    "process_identity_executable_argv_terminal_and_socket_environment_ancestry_pidfd_checked": true
+  },
+  "limits": {
+    "model_seconds": 75,
+    "minimum_memory_mib": 6144,
+    "observed_admissions_mib": {
+      "initial": 9604,
+      "native_preflight": 9224,
+      "native_tool_cancel": 8644,
+      "task_0": 8866,
+      "task_1": 8748
+    },
+    "minimum_observed_admission_mib": 8644
+  },
+  "closure": {
+    "api_processes_dead": true,
+    "tmux_processes_dead": true,
+    "mcp_client_created": true,
+    "mcp_client_closed": true,
+    "private_provider_roots_removed": true,
+    "worktrees_removed": true,
+    "database_targets_closed": true,
+    "private_state_removed": true,
+    "operator_unchanged": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "interpreter_unchanged": true,
+    "cleanup_failures": []
+  },
+  "postgres_owners": {
+    "preflight": {
+      "owner_context_closed": true,
+      "exact_owned_container_absent": true,
+      "exact_owned_network_absent": true,
+      "destructive_commands_own_only": true,
+      "foreign_snapshot_observation_only": true,
+      "unrelated_resources_preserved": false
+    },
+    "execute": {
+      "owner_context_closed": true,
+      "exact_owned_container_absent": true,
+      "exact_owned_network_absent": true,
+      "destructive_commands_own_only": true,
+      "foreign_snapshot_observation_only": true,
+      "unrelated_resources_preserved": true
+    }
+  },
+  "external_descriptors_closed": true,
+  "verification": {
+    "regression_passed": 112,
+    "warnings": 2,
+    "regression_seconds": 22.26,
+    "installed_controller_exclusive_writer_red_failures": 1,
+    "red_seconds": 20.55,
+    "red_private_test_marker_warnings": 1,
+    "green_selected_passed": 1,
+    "green_filter_deselected": 37,
+    "green_seconds": 17.16,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0,
+    "test_counts_overlap": true
+  },
+  "preserved_failures": {
+    "first_source": "5509599b5b2ebc616e3d72ca9ff6cbad8bbb67c8",
+    "actual_r1": {
+      "success": false,
+      "elapsed_seconds": 227.465,
+      "unicode_replay_seconds": 31.201,
+      "error": "FileExistsError on second observation through exclusive writer",
+      "cancel_called": false,
+      "original_receipt_sha256": "c63b4e4c3ceef5ec2140728077b27822359f69e85458e1ccb58285296658a14c",
+      "recovery_scope": "closure_only_not_acceptance",
+      "all_own_resources_closed": true
+    },
+    "preflight_native_mcp_timeout": {
+      "success": false,
+      "elapsed_seconds": 276.118,
+      "native_mcp_timeout_seconds": 60,
+      "create_http_read_timeout_seconds": 75,
+      "recovery_scope": "closure_only_not_acceptance",
+      "cause_proven": false
+    },
+    "subsequent_connection_controls": {
+      "same_generated_mcp_sdk_initialize_seconds": 22.721,
+      "standalone_native_mcp_connection_seconds": 24.849,
+      "cold_start_performance_accepted": false
+    },
+    "harness_admission_refusals": [
+      "wrong full commit transcription before PostgreSQL",
+      "lowercase cwd alias versus canonical imported fixture before terminal creation",
+      "executed archive mode0644 rejected; corrected0600 without changing bytes"
+    ]
+  },
+  "review": {
+    "probe_source_job": "71acafb58a1d4137afa403c77036eaf4",
+    "writer_fix_job": "0f0372a7abf448fbbffc3eb6eca3b2d8",
+    "mode": "read",
+    "verdict": "GO before native execution; no independent test execution",
+    "evidence_job": "49b17dbd163e4bc1a7f5033390dadc22",
+    "evidence_verdict": "GO on public receipts, T186/T168 markers and first OpenCode summary; no private audit or independent execution"
+  },
+  "not_accepted": [
+    "original T168 streaming/text predicate",
+    "whole OC2-04 or global provider acceptance",
+    "native coordinator/model tool offer or served model identity",
+    "server generation CAS for peer task cancellation",
+    "OAuth renewal or other-provider native journeys",
+    "historical RECONCILE_REQUIRED jobs"
+  ],
+  "worker_enabled_cao_mcp_tools_configuration_count": 0,
+  "obsidian": {
+    "operation_id": "save-20261027-caos-native-tool-cancellation",
+    "pages": 4,
+    "hot_words": 459,
+    "strict_lint_issues": 0
+  }
+}

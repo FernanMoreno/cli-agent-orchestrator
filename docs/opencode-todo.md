@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t186.md).
+
 T185: timeout nativo Codex180s PASS en5f034ca3; HTTP504 en208,728s con arranque, verify200/pending sin reenvío, generación ajena409 y cancelación actual200 en25,875s. Cinco procesos viejos retirados, reemplazo listo/0peticiones y limpieza completa; hijo conserva reconcile/timeout/settled_at.323PASS/5avisos,26controles nuevos incluidos, arquitectura5/0,1744pins y PG cerrado. Backend sintético; todaCX08/otros proveedores/global siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t185.md).
 
 T183/T184: corregida la circularidad entre el recibo pendiente y el arranque tras cancelar. Codex nativo en49297912 PASS:409 para generación ajena,200/cancelled26,075s para la actual; salida de cinco procesos viejos, reemplazo disponible y0peticiones en3,161s, join/limpieza estables y padre API200.1116PASS/3opt-in previos;28controles nuevos, arquitectura5/0 y mypy canónico4archivos. Primer FAIL conservado; timeout/global/otros proveedores siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t183.md).
@@ -28,7 +30,7 @@ T171: la espera explícita MCP compartida recupera solo errores de conexión den
 
 ## Estado específico del proveedor · 2026-10-26
 
-R7 sobre671c9c8f: preflight real PASS229,855s y resultado/replay PASS34,101s. Las167 capturas muestran una ventana processing/pending, pero el marcador textual no aparece antes delcompleted; no se llegó a llamar a cancelar. El ensayo depende de estilo/longitud del modelo y sigue sin aceptar la cancelación activa. Fallo conservado y recursos propios cerrados; nueva sonda determinista solo propuesta, no implementada ni aceptada.
+R7 sobre671c9c8f: preflight real PASS229,855s y resultado/replay PASS34,101s. Las167 capturas muestran una ventana processing/pending, pero el marcador textual no aparece antes delcompleted; no se llegó a llamar a cancelar. El ensayo depende de estilo/longitud del modelo y sigue sin aceptar la cancelación activa. Fallo conservado y recursos propios cerrados; en aquella fecha la sonda determinista solo estaba propuesta. T186 la implementó y aceptó después como caso native_tool separado, sin aceptar el criterio de streaming de R7.
 
 [Revisión cruzada actual](../specs/025-provider-mcp-profiles/validation-all-providers-current.md):141 comprobaciones pasan; distingue contratos offline, diagnóstico nativo y aceptación por proveedor. Las pruebas reales intensivas siguen serializadas; los perfiles y contratos comunes se comprueban para los tres.
 

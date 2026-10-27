@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T186 [US4] [FR164/SC148] Add and validate separately selected native-tool activity witness for T168 cancellation with exact process/generation/pidfd/ancestry/deadline proof; preserve original streaming barrier and all pairing/native/cleanup gates. Execute only freshly source-bound diagnostics; record offline and native results distinctly.
+- [x] T186 [US4] [FR164/SC148] Add and validate separately selected native-tool activity witness for T168 cancellation with exact process/generation/pidfd/ancestry/deadline proof; preserve original streaming barrier and all pairing/native/cleanup gates. Execute only freshly source-bound diagnostics; record offline and native results distinctly.
+
+T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Recibo](validation-t186.md).
 
 - [x] T185 [US4] [FR163/SC147] Validate actual Codex full180s timeout, retained live execution, settled reconcile/timeout child versus pending turn, no-resend verification, generation-bound cancellation and explicit cleanup preserving the original child verdict/settled_at. Keep historical jobs, other providers and global gates separate.
 
