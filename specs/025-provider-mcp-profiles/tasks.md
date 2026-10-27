@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T180 [US4] [FR158/SC142] Capture pinned native partial HTTP/quota cells and legitimate quoted text at narrow width; reproduce/fix wrapped-cell classification while preserving row/cell boundaries, quotes, stale/user content, dialogs and receipts. Validate final-source consumption and regressions; keep managed narrowpane, footerless/cancel/timeout/global acceptance separate.
+
 - [x] T179 [US4] [FR157/SC141] Observe native partial reply followed by exhausted quota; reproduce/fix only the demonstrated classifier boundary with quoted/stale/user-content/dialog controls. Then validate current-source managed409/quota_wait/reconcile, retained own viewport and stable join/cleanup under source-bound no-login isolation. Do not infer automatic resume, real quota, wrapped/footerless layouts or cancel/timeout/global acceptance.
 
 T179 PASS acotado:12RED/32controles→129enfocadas;560regresiones/3opt-in intactos/2avisos/44nuevos, arquitectura5/0. Captura59d6cd0d y consumidor/gestionado b128b126:409/quota_wait/reconcile28,790s, viewport propio y join/veredicto conservados, padre accesible;12clasificaciones/1731pins y recursos cerrados. Sin cuota real/auto-resume ni gates de wrap/footer ausente/cancelación/timeout/global. [Evidencia](validation-t179.md).

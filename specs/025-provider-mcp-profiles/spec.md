@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Wrapped native error cells · T180
+
+FR158/SC142: At explicitly selected narrow dimensions, native HTTP failure or
+exhausted quota after commentary must retain ERROR/WAITING_QUOTA even when the
+native cell spans rows. Observe the pinned CLI and a successful native quote
+before changing recognition. Preserve original row boundaries; never flatten
+the transcript or infer quota from HTTP429 alone. Keep indented/adjacent quotes,
+newer turns, subsequent cells, user echoes and dialogs excluded. Verify both
+adapters and receipt immutability on the actual rendered captures. Production
+session dimensions stay220x50. Direct80x50 capture and parser consumption are
+not acceptance of a managed narrowpane journey, raw-pipe output or arbitrary
+widths/footerless states. Keep native defaults/180s/6144MiB/no-login isolation.
+
+
 ## Partial-response capacity exhaustion · T179
 
 FR157/SC141: A real native capacity-exhaustion cell after commentary must not

@@ -912,7 +912,7 @@ def _post_response_native_error(clean_output: str) -> Optional[TerminalStatus]:
 
     Native 0.164 puts the error at column zero after a blank row. Model
     continuation/quoted text is indented under its bullet. Require the error
-    to be the final transcript row; adjacent ambiguous quotes and completed
+    to be the final transcript cell; adjacent ambiguous quotes and completed
     replies with a subsequent finished marker retain their prior semantics.
     Keep the original rendered rows for this check, independently of the
     compact nonblank rows used by the screen adapter's dialog detectors.
@@ -928,17 +928,38 @@ def _post_response_native_error(clean_output: str) -> Optional[TerminalStatus]:
         return None
     current_turn = clean_output[last_user.start() : cutoff]
     lines = current_turn.rstrip().splitlines()
-    if len(lines) < 3 or lines[-2].strip():
+    # Native 0.164 wraps the error paragraph at column zero. Find only the
+    # final contiguous paragraph, retaining the blank row that opens its cell.
+    cell_start = len(lines) - 1
+    while cell_start > 0 and lines[cell_start - 1].strip():
+        cell_start -= 1
+    if cell_start < 2:
         return None
     # Echoed multiline user content and model continuation are indented.
     # Only a native reply bullet in the left gutter establishes this path.
     if not any(
-        _find_assistant_marker(line) is not None for line in lines[:-2] if line.startswith("•")
+        _find_assistant_marker(line) is not None
+        for line in lines[:cell_start]
+        if line.startswith("•")
     ):
         return None
-    if re.match(CODEX_HTTP_ERROR_CELL_PATTERN, lines[-1], re.IGNORECASE):
+    for line in lines[cell_start + 1 :]:
+        # A new cell, quoted/hanging-indent body, dialog frame, finished
+        # marker or progress row is not an observed native continuation.
+        if (
+            line[0].isspace()
+            or line[0] in MODAL_FRAME_GLYPHS
+            or line.startswith("■")
+            or _is_transcript_marker(line)
+            or _is_chrome_only(line)
+            or re.match(r"[^\w\n]*Worked for\b", line)
+            or re.search(TUI_PROGRESS_PATTERN, line)
+        ):
+            return None
+    head = lines[cell_start]
+    if re.match(CODEX_HTTP_ERROR_CELL_PATTERN, head, re.IGNORECASE):
         return TerminalStatus.ERROR
-    if re.match(r"■[^\S\n]+", lines[-1]) and CODEX_EXHAUSTED_QUOTA_PATTERN.match(lines[-1]):
+    if re.match(r"■[^\S\n]+", head) and CODEX_EXHAUSTED_QUOTA_PATTERN.match(head):
         return TerminalStatus.WAITING_QUOTA
     return None
 

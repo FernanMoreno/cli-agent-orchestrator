@@ -1,5 +1,18 @@
 # Plan: provider MCP profiles
 
+## T180 · narrow native cells
+
+Use the T178/T179 proven private wrappers/backends with only preflight geometry
+changed to80x50, source/binary/executed-script bindings and serial owned cleanup.
+Capture HTTP and quota, then legitimate quoted long cells to identify real
+continuation layout. Query Graphify and check the status/helper/screen call path
+against source. Build RED and negative controls before a bounded row-aware
+change; keep compact dialog windows and typed native cell status. Exercise the
+final source against all captures and appropriate Codex/shared contracts under
+one verified held PG owner; independently review and preserve failed attempts.
+Record only the demonstrated widths/layouts, not managed or raw-pipe acceptance.
+
+
 ## T179 · partial quota
 
 First reuse T178's proven isolated native config/TTY preflight and change only
