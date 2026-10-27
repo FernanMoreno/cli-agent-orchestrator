@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Managed partial-response failure · T178
+
+FR156/SC140: A controlled native partial reply followed by HTTP failure must
+reach the managed API as502/error with a failed child, delivery uncertainty,
+no controller retry/redelivery and stable join. Before deleting the bound owned
+child, capture the visible rendered pane once on its private socket and require
+the canary reply and separate gutter error. FULL is a rolling raw buffer and can
+trigger receipt verification; it is not this witness. The optional diagnostic
+callback must run only after ownership/join checks and may veto cleanup. Retain
+verdict/settled_at across explicit cleanup. Use unchanged native retries/180s,
+production220x50 session dimensions, no operator login, synthetic loopback,
+source/archive bindings,6144MiB and verified owned PG. No broader gates inferred.
+
+
 ## Native partial-response error boundary · T177
 
 FR155/SC139: A partial assistant message is not evidence that a subsequent native

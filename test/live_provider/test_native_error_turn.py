@@ -11,7 +11,15 @@ pytestmark = pytest.mark.offline_database
 @pytest.mark.parametrize("case", ["auth", "throttle", "quota"])
 @pytest.mark.parametrize(
     "mutation",
-    [None, "wrong_parent", "wrong_join", "retryable", "false_success", "missing_cleanup"],
+    [
+        None,
+        "wrong_parent",
+        "wrong_join",
+        "retryable",
+        "false_success",
+        "missing_cleanup",
+        "inspection_failed",
+    ],
 )
 def test_error_observation_preserves_identity_verdict_and_explicit_cleanup(
     monkeypatch, case, mutation
@@ -80,6 +88,15 @@ def test_error_observation_preserves_identity_verdict_and_explicit_cleanup(
 
     monkeypatch.setattr(diagnostic.matrix, "_request", request)
     monkeypatch.setattr(diagnostic.matrix, "_receipt_for_terminal", lambda *a: dict(receipt))
+    inspections = []
+
+    def inspect_retained(terminal_id):
+        assert terminal_id == "terminal" and not deleted
+        assert calls[-1][1].endswith("/join")
+        inspections.append(terminal_id)
+        if mutation == "inspection_failed":
+            raise AssertionError("retained_observation_failed")
+
     if mutation is None:
         result = diagnostic.run_error_turn(
             SimpleNamespace(url="http://owned"),
@@ -87,6 +104,7 @@ def test_error_observation_preserves_identity_verdict_and_explicit_cleanup(
             session_name="session",
             profile="private",
             case=case,
+            before_cleanup=inspect_retained,
         )
         assert result["child_retained_before_explicit_cleanup"] is True
         assert result["cleanup_preserved_verdict"] is True
@@ -99,6 +117,10 @@ def test_error_observation_preserves_identity_verdict_and_explicit_cleanup(
                 session_name="session",
                 profile="private",
                 case=case,
+                before_cleanup=inspect_retained,
             )
-    if mutation == "wrong_parent":
+    if mutation in {"wrong_parent", "wrong_join", "inspection_failed"}:
         assert not deleted
+    assert inspections == (
+        ["terminal"] if mutation in {None, "missing_cleanup", "inspection_failed"} else []
+    )

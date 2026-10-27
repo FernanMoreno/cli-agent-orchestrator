@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T178 [US4] [FR156/SC140] Validate current-source managed Codex partial-reply HTTP failure through production API/native-child lifecycle. Inspect one owned rendered viewport after response/receipt/join binding and before explicit cleanup; require failed verdict, no prompt redelivery, preserved join and exact resource closure. Keep raw-stream, wrapped/footerless, partial quota and cancel/timeout/global scopes separate.
+
 - [x] T177 [US4] [FR155/SC139] Observe a pinned native Codex partial assistant stream followed by terminal failure; compare rendered frame with production buffer/screen classifiers and active-receipt state. Preserve quoted/stale/error-free negative controls. Fix only a reproduced distinguishable boundary, or document ambiguity and the next observation; keep managed acceptance and full CX08 separate.
 
 T177 corregido y validado de forma acotada:4RED/16controles, otros4RED/20controles tras revisión;64enfocadas y399regresiones pasan,3opt-in intactas/2avisos/24nuevos. Capturas nativas5c646430, consumidor de3fc61f/1729pins/8clasificaciones, arquitectura5/0 y recursos cerrados. CitaR1INCOMPLETE preservada. Recorrido gestionado parcial/cuota/cancelación siguen separados. [Evidencia](validation-t177.md).

@@ -6,8 +6,8 @@ from test.e2e import test_real_provider_matrix as matrix
 from jsonschema import Draft202012Validator
 
 
-def run_error_turn(server, *, parent_id, session_name, profile, case):
-    """Inspect a retained error child before explicitly cleaning its terminal."""
+def run_error_turn(server, *, parent_id, session_name, profile, case, before_cleanup=None):
+    """Inspect a retained child; an optional owned-terminal witness may veto cleanup."""
     assert case in {"auth", "throttle", "quota"}
     quota = case == "quota"
     expected_http = 409 if quota else 502
@@ -72,6 +72,8 @@ def run_error_turn(server, *, parent_id, session_name, profile, case):
         return child
 
     assert joined_child()["cleanup_completed_at"] is None
+    if before_cleanup is not None:
+        before_cleanup(terminal_id)
     matrix._delete_terminal(server, terminal_id)
     assert matrix._request("GET", server.url + "/terminals/" + terminal_id).status_code == 404
     assert joined_child()["cleanup_completed_at"]

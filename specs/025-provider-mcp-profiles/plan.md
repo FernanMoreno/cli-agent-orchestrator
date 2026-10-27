@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T178 · managed partial error and rendered witness
+
+Extend the proven error-turn observer with a default-off before-cleanup callback
+and refusal controls. Reuse T176's private matrix/API/parent/cleanup bundle and
+T177's exact synthetic SSE partial+failed then401 sequence. Verify the production
+request schema, actual named native config/TTY at production220x50 and the full
+backend bytes before one serial run. Bind GET terminal id/caller/session to the
+already checked failed child and join; use the fixture-owned private tmux socket
+for one visible capture (noFULL read, no flatten/join wraps). Require canary reply,
+blank separator, gutter401 and no finished marker; preserve raw capture privately.
+Inspect final404/join/cleanup and wrapper identity exit, then close the heldPG.
+Graphify pointers are checked against API output semantics, terminal projection,
+tmux220x50 creation and agent-step/native-child error/cleanup paths.
+
+
 ## T177 · partial stream followed by native failure
 
 Use Graphify as pointers and verify source: Codex get_status gates generic errors
