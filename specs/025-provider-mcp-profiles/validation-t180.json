@@ -1,0 +1,469 @@
+{
+  "schema": "caos.validation.codex-wrapped-native-errors.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "producer_source": "e7129f7aa286987627cdf3ae73ebc8229b262155",
+  "consumer": {
+    "source_head": "2cc5c66be8e1eb25236f6f47517637851303beda",
+    "source_files_pinned": 1735,
+    "source_manifest_sha256": "129800487ccf03e70726d7915923a8ef9a0f1c21f8ce264ded73b42a82e349a5",
+    "provider_sha256": "52b0eda5a61183185bc449b839f4a0dd7b7c1941276879bcc21f26e09c115606",
+    "fixture_sha256": {
+      "test/providers/fixtures/codex_0164_wrapped_auth.txt": "907d8184544a246ad0de7cbb2a22682011abb21e7d01b697fc7f955e4ab92a38",
+      "test/providers/fixtures/codex_0164_wrapped_quota.txt": "cce2e4ef62df3a757a2e67dddb0d07da0010710356f11ee1f29230f8ade12f78",
+      "test/providers/fixtures/codex_0164_wrapped_quote.txt": "892dbea74f124e1e416d05dc73bc80c95e726879612ce303637718665136fe61",
+      "test/providers/fixtures/codex_0164_partial_auth_error.txt": "8c658a03fb0755bdb85d51941ee706669f4d38e76147896459fac3baa844da6a",
+      "test/providers/fixtures/codex_0164_partial_quota.txt": "4cfa40b71d996edff61b18e2b4a6a75dd14c11002a7b00030ec5e6628f98b783",
+      "test/providers/fixtures/codex_0164_successful_error_quote.txt": "e9128eb1d9309fb01357fdad83dd8d70f6dc2b481153884cbbcde91a6ea5cba7"
+    },
+    "classifications": [
+      {
+        "case": "wrapped_auth",
+        "active_receipt": false,
+        "screen": false,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_auth",
+        "active_receipt": false,
+        "screen": true,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_auth",
+        "active_receipt": true,
+        "screen": false,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_auth",
+        "active_receipt": true,
+        "screen": true,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quota",
+        "active_receipt": false,
+        "screen": false,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quota",
+        "active_receipt": false,
+        "screen": true,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quota",
+        "active_receipt": true,
+        "screen": false,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quota",
+        "active_receipt": true,
+        "screen": true,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quote",
+        "active_receipt": false,
+        "screen": false,
+        "status": "completed",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quote",
+        "active_receipt": false,
+        "screen": true,
+        "status": "completed",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quote",
+        "active_receipt": true,
+        "screen": false,
+        "status": "processing",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "wrapped_quote",
+        "active_receipt": true,
+        "screen": true,
+        "status": "processing",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": false,
+        "screen": false,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": false,
+        "screen": true,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": true,
+        "screen": false,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_auth_error",
+        "active_receipt": true,
+        "screen": true,
+        "status": "error",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_quota",
+        "active_receipt": false,
+        "screen": false,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_quota",
+        "active_receipt": false,
+        "screen": true,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_quota",
+        "active_receipt": true,
+        "screen": false,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "partial_quota",
+        "active_receipt": true,
+        "screen": true,
+        "status": "waiting_quota",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": false,
+        "screen": false,
+        "status": "completed",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": false,
+        "screen": true,
+        "status": "completed",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": true,
+        "screen": false,
+        "status": "processing",
+        "receipt_unchanged": true
+      },
+      {
+        "case": "successful_error_quote",
+        "active_receipt": true,
+        "screen": true,
+        "status": "processing",
+        "receipt_unchanged": true
+      }
+    ],
+    "all_expected": true,
+    "runtime_import_matches_source": true
+  },
+  "native_cli_version": "0.164.0",
+  "native_geometry": [
+    80,
+    50
+  ],
+  "production_default_geometry_unchanged": [
+    220,
+    50
+  ],
+  "native_runs": [
+    {
+      "case": "auth",
+      "binding": {
+        "source_head": "e7129f7aa286987627cdf3ae73ebc8229b262155",
+        "case": "auth",
+        "source_files_pinned": 1731,
+        "python_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+        "wrapper_execution_sha256": "6ad3f22723708ce5671285bc044b30fa7197c07434aa0be3cfc1d712f19de33c",
+        "preflight_script_sha256": "2bb31615cceb0cb3c6ebef4c8306f25d8f2f7a58597932c52d2f9f895e89b8c3",
+        "backend_sha256": "145bf3ea3f47ba23346e09c258f91375e3b9eeb4724cea8c2532e31c30f69b88",
+        "memory_mib": 9894,
+        "preflight_exit": 0,
+        "descriptor_closed": true
+      },
+      "native": {
+        "schema": "caos.codex-managed-wrapper-preflight.v1",
+        "native_profile_loaded": true,
+        "native_tty_ready": true,
+        "native_partial_then_auth_frame_observed": true,
+        "pane_dimensions": [
+          80,
+          50
+        ],
+        "served_statuses": [
+          200,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401
+        ],
+        "requests": 12,
+        "operator_home_masked": true,
+        "loopback_only": true,
+        "outer_wrapper_reaped": true,
+        "seconds": 9.524
+      },
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "native_http_responses": {
+        "200": 1,
+        "401": 11
+      },
+      "viewport_sha256": "4f355190383a2bd0d62616e1ab9d9618b213660241f31360231695fe3f1e0172"
+    },
+    {
+      "case": "quota",
+      "binding": {
+        "source_head": "e7129f7aa286987627cdf3ae73ebc8229b262155",
+        "case": "quota",
+        "source_files_pinned": 1731,
+        "python_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+        "wrapper_execution_sha256": "35a783b0698bdc3c1e469daae72b1bf890306acd400c50122a6c7ea06f612888",
+        "preflight_script_sha256": "bcb05dde48fb862020216a06617963d937d90209ad4c2a7b5882bd3c40c677c6",
+        "backend_sha256": "7637ec99de842d6f68a45dfc56a2956903c1757c287db1b6aec1656b965f9a33",
+        "memory_mib": 9816,
+        "preflight_exit": 0,
+        "descriptor_closed": true
+      },
+      "native": {
+        "schema": "caos.codex-managed-wrapper-preflight.v1",
+        "native_profile_loaded": true,
+        "native_tty_ready": true,
+        "native_partial_then_quota_frame_observed": true,
+        "pane_dimensions": [
+          80,
+          50
+        ],
+        "served_statuses": [
+          200,
+          429,
+          429
+        ],
+        "requests": 3,
+        "operator_home_masked": true,
+        "loopback_only": true,
+        "outer_wrapper_reaped": true,
+        "seconds": 3.281
+      },
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "native_http_responses": {
+        "200": 1,
+        "429": 2
+      },
+      "viewport_sha256": "f0c5ff450a30ee9c204bfa1a9c17b8adec064d01fa547ad2c8960d98623805c2"
+    },
+    {
+      "case": "quote",
+      "binding": {
+        "schema": "caos.codex-partial-error.capture.v1",
+        "status": "CAPTURED",
+        "source_head": "e7129f7aa286987627cdf3ae73ebc8229b262155",
+        "memory_before_native_mib": 9910,
+        "executed_probe_sha256": "8bcd6bd368f1824105e752954d6ba1ab76fdcabced4ddf2c1524ec9f6fe6ecca",
+        "executed_driver_sha256": "bd1911cb6ecada9fa7458fef6a2bfa5968fe6c6f6217dd51d5fc1016a8df0844",
+        "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+        "outer_exit": 0,
+        "outer_process_exited": true,
+        "observation": {
+          "case": "successful_quote",
+          "partial_stream_sent": true,
+          "partial_marker_rendered": true,
+          "requests_received": 2,
+          "served_http_statuses": [
+            200
+          ],
+          "prompt_sent": true,
+          "bracketed_paste_and_separate_submit": true,
+          "quoted_cell_observed": true,
+          "seconds": 2.443,
+          "native_exit": -15,
+          "server_thread_closed": true,
+          "network_namespace_isolated": true,
+          "operator_home_masked": true,
+          "native_config_loaded_before_pty": true
+        },
+        "probe_descriptor_closed": true,
+        "source_unchanged": true,
+        "binary_unchanged": true,
+        "python_unchanged": true
+      },
+      "driver_descriptor_closed": true,
+      "viewport_sha256": "fa2198566eaf34f697e74f03d06c9156ec8b4eff97a86fa737b49032597045f1"
+    }
+  ],
+  "baseline": [
+    {
+      "case": "auth",
+      "active": false,
+      "screen": false,
+      "status": "completed",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "auth",
+      "active": false,
+      "screen": true,
+      "status": "completed",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "auth",
+      "active": true,
+      "screen": false,
+      "status": "processing",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "auth",
+      "active": true,
+      "screen": true,
+      "status": "processing",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quota",
+      "active": false,
+      "screen": false,
+      "status": "completed",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quota",
+      "active": false,
+      "screen": true,
+      "status": "completed",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quota",
+      "active": true,
+      "screen": false,
+      "status": "processing",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quota",
+      "active": true,
+      "screen": true,
+      "status": "processing",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quote",
+      "active": false,
+      "screen": false,
+      "status": "completed",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quote",
+      "active": false,
+      "screen": true,
+      "status": "completed",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quote",
+      "active": true,
+      "screen": false,
+      "status": "processing",
+      "receipt_unchanged": true
+    },
+    {
+      "case": "quote",
+      "active": true,
+      "screen": true,
+      "status": "processing",
+      "receipt_unchanged": true
+    }
+  ],
+  "tests": {
+    "red_failed": 24,
+    "red_controls_passed": 84,
+    "initial_focused_passed": 216,
+    "initial_focused_seconds": 8.51,
+    "broad_passed": 668,
+    "broad_existing_opt_in_skips": 3,
+    "broad_warnings": 2,
+    "broad_seconds": 197.69,
+    "additional_review_cases": 60,
+    "final_focused_passed": 276,
+    "final_focused_seconds": 5.94,
+    "new_cases_total": 168,
+    "old_test_ast_and_runtime_preserved": true,
+    "architecture_kept": 5,
+    "architecture_broken": 0,
+    "new_cases_initial": 108,
+    "older_focused_cases": 108
+  },
+  "newline_normalization": {
+    "source": "src/cli_agent_orchestrator/utils/text.py:81",
+    "raw_status_normalizes_before_detection": true,
+    "screen_joins_splitlines_with_lf": true,
+    "lf_crlf_cr_cases_passed": true
+  },
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers": 0,
+    "private_databases": 0
+  },
+  "all_native_descriptors_closed": true,
+  "operator_login_used": false,
+  "reviews": {
+    "claude_code": "8fa81b3a1ef14c05b2d38a5b625f9e6c reviewed actual layout/helper/tests; newline concern resolved by caller normalization and executed tests; 60 requested controls added/passed",
+    "claude_final": "227958e0a0404b8eae1d077940e78659 GO code/consumer/doc scope; bindings, test logs, AST and PG receipts verified by lead"
+  },
+  "limits": [
+    "Actual CLI against synthetic local responses; no account quota or operator credentials",
+    "Native80x50 captures consumed by corrected parser; not managed narrowpane API/native-child acceptance",
+    "Rendered text supplied to both adapters is not isolated native raw pipe-pane acceptance",
+    "No arbitrary widths, broken error-prefix, blank-inside-cell or footerless-layout acceptance",
+    "Control markers, indented bodies and new cells are conservatively excluded as continuations",
+    "No active cancel/timeout/fullCX08/global or other-provider acceptance"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261027-caos-wrapped-native-cells",
+    "pages": 4,
+    "strict_issues": 0
+  }
+}

@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T180: corregida la detección de celdas HTTP/cuota envueltas en80columnas. Tres capturas CLI0.164 en e7129f7a distinguen continuaciones nativas de citas indentadas; consumidor2cc5c66b/24clasificaciones/1735pins.668regresiones y60controles adicionales pasan;3opt-in previos/arquitectura5/0. Fuente y pruebas iniciales conservadas, procesos/PG cerrados. Sin aceptación de recorrido gestionado estrecho, pipe-pane crudo, footer ausente ni cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t180.md).
+
 T179: corregida cuota tras respuesta parcial mediante estado tipado ERROR/WAITING_QUOTA y comprobación estructural compartida. Captura59d6cd0d; fuente corregida b128b126 y recorrido real gestionado PASS409/quota_wait/reconcile28,790s, viewport propio220x50, join/veredicto estables tras limpiar y padre accesible.560PASS/3opt-in previos/44nuevos, arquitectura5/0;1731pins y procesos/PG cerrados. Sin cuota real, auto-resume ni aceptación de cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t179.md).
 
 T178: recorrido gestionado Codex parcial→401 PASS en05f1c369: API502/error/failed en35,311s, captura visible única220x50 vinculada al hijo, join y veredicto conservados tras limpieza. Padre accesible; procesos/PG cerrados y1729pins intactos.199PASS/3controles nuevos/arquitectura5/0. Backend sintético, sin login del operador. Quedan wrap/footer ausente, cuota parcial y cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t178.md).

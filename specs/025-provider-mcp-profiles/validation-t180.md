@@ -1,0 +1,17 @@
+# T180 · Celdas nativas envueltas en varias filas
+
+Corrección y validación acotadas **PASS**, 2026-10-27. [Recibo estructurado](validation-t180.json).
+
+Tres capturas CLI0.164 sobre fuentee7129f7a, con claves sintéticas, HOME del operador oculto y loopback aislado, usan80x50: HTTP401tras comentario ocupa cabecera+1fila (9,524s), cuota ocupa cabecera+2filas (3,281s) y una respuesta correcta cita ambos mensajes con sangría de2espacios (2,443s). Las continuaciones nativas están en el margen izquierdo; las citas conservan sangría. La cita muestra Worked for y completó un stream200; el segundo POST empezó antes de terminar el proceso, sin afirmar que completara. Los procesos interactivos se terminaron intencionadamente después de capturar, se recogieron y los descriptores quedaron cerrados.
+
+El parser anterior solo inspeccionaba la última fila: devolvía completed sin recibo o processing con uno.24variantes de HTTP/cuota/adaptador/recibo/LF-CRLF-CR fallaron;84controles pasaron. Ahora se identifica el último párrafo contiguo, separado por una fila vacía y precedido por una respuesta en el margen. Solo se clasifica su cabecera conocida; las continuaciones no pueden abrir otra celda, tener sangría, bordes de diálogo, chrome, Worked for o progreso. No se unen ni se aplanan filas. El estado HTTP/quota tipado, los diálogos y la autoridad nativa/shell permanecen.
+
+La preocupación de revisión sobre offsets CR/LF se resolvió contra utils/text.py:81: get_status normaliza primero; la pantalla usa splitlines y vuelve a unir con LF. Las36variantes de captura pasan. No fue necesario modificar esa normalización.
+
+668regresiones pasan,3omisiones opt-in preexistentes y2avisos,197,69s. Después se añadieron60controles de revisión: historia envuelta seguida de una petición nueva, cita sin Worked for, bordes/segunda celda/aviso con texto de error, fallo sin comentario y diálogo de rate limit.276enfocadas finales pasan en5,94s;168casos nuevos en total. La enfocada inicial combina108nuevos+108previos; la final168nuevos+108previos. El código productivo y fixtures permanecieron iguales entre ambas suites; se verificó que el AST de las pruebas iniciales no cambió al añadir los controles. No se presenta como una única ejecución de728pruebas. Arquitectura5/0.
+
+Fuente consumidora `2cc5c66be8e1eb25236f6f47517637851303beda`:1735pins y24clasificaciones finales de capturas80/220, con recibos intactos; los casos de una fila a220siguen pasando. Los fixtures solo recortan padding y normalizan el puerto loopback. Los backends realmente ejecutados, binario/Python y scripts se vinculan por hashes; nunca se copió login. Memoria mínima6144MiB y reintentos/plazo180s intactos. PostgreSQL se usó solo para la regresión mediante un único propietario verificado: cero conexiones/bases al cerrar y contenedor/red exactos ausentes. Se conservan los HOME sintéticos de captura como evidencia privada; no se afirma inspección independiente del inode de namespace.
+
+Esta aceptación es de captura nativa y consumo del parser sobre texto renderizado. La sesión productiva sigue220x50; falta un recorrido gestionado estrecho por API/recibo. No acepta pipe-pane crudo de forma aislada, anchos arbitrarios/prefijo partido/filas vacías dentro de la celda, footer ausente, cancelación activa, timeout/reconciliación ni CX08/global u otros proveedores.
+
+Revisión final READ ClaudeGO de código/consumer/alcance; pins, logs, AST y cierre PG verificados por el responsable. Obsidian: `save-20261027-caos-wrapped-native-cells`, cuatro páginas y lint estricto sin incidencias.

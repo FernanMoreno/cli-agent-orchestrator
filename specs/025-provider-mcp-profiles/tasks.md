@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T180 [US4] [FR158/SC142] Capture pinned native partial HTTP/quota cells and legitimate quoted text at narrow width; reproduce/fix wrapped-cell classification while preserving row/cell boundaries, quotes, stale/user content, dialogs and receipts. Validate final-source consumption and regressions; keep managed narrowpane, footerless/cancel/timeout/global acceptance separate.
+- [x] T180 [US4] [FR158/SC142] Capture pinned native partial HTTP/quota cells and legitimate quoted text at narrow width; reproduce/fix wrapped-cell classification while preserving row/cell boundaries, quotes, stale/user content, dialogs and receipts. Validate final-source consumption and regressions; keep managed narrowpane, footerless/cancel/timeout/global acceptance separate.
+
+T180 PASS acotado:24RED/84controles→216enfocadas;668regresiones/3opt-in previos/2avisos y60controles extra (276enfocadas finales),168nuevos. Capturas80x50 e7129f7a, consumidor2cc5c66b/1735pins/24clasificaciones; código y AST iniciales conservados, arquitectura5/0 y PG/procesos cerrados. No es una suite única de728ni aceptación gestionada estrecha/raw/footerless/cancelación/global. [Evidencia](validation-t180.md).
 
 - [x] T179 [US4] [FR157/SC141] Observe native partial reply followed by exhausted quota; reproduce/fix only the demonstrated classifier boundary with quoted/stale/user-content/dialog controls. Then validate current-source managed409/quota_wait/reconcile, retained own viewport and stable join/cleanup under source-bound no-login isolation. Do not infer automatic resume, real quota, wrapped/footerless layouts or cancel/timeout/global acceptance.
 
