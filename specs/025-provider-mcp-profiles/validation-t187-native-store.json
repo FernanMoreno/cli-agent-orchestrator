@@ -1,0 +1,375 @@
+{
+  "schema": "caos.spec025.t187.native-store-control.v1",
+  "source_head": "09f1ab14d4de7608bde856580fee154ea29af180",
+  "binary_digest": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "verdict": "NOT_OBSERVED",
+  "native_store_streaming_accepted": false,
+  "t168_accepted": false,
+  "reader_activated": false,
+  "synthetic_provider_only": true,
+  "real_model_used": false,
+  "postgres_started": false,
+  "operator_login_used": false,
+  "attempts": [
+    {
+      "attempt": "R1",
+      "receipt_digest": "8b4ef15126a18f78603de8164e20a60571114d1923a10c48d391655e6b2d5d15",
+      "control_digest": "76c5bdc6e52ce3dc447a219371e2ac6b10fec7a31519fd4913f7695bc61e2d05",
+      "memory_admission_mib": 10454,
+      "native_seconds": 75.564,
+      "native_exit_code": 130,
+      "native_timed_out": true,
+      "native_process_group_retired": true,
+      "outer_process_group_retired": true,
+      "provider_requests": 11,
+      "provider_error": "provider_retry_unexpected",
+      "holds": {
+        "chunk1_held": {
+          "assistant_row_counts": {
+            "0": 20
+          },
+          "categories": {
+            "completed_type": {},
+            "content_type": {},
+            "created_type": {},
+            "finish_class": {},
+            "finish_type": {},
+            "reader_state": {
+              "ok": 20
+            },
+            "time_type": {}
+          },
+          "changed_observations": [
+            {
+              "assistant_rows": [],
+              "elapsed_ms": 1401
+            }
+          ],
+          "samples": 20
+        },
+        "chunk2_held": {
+          "assistant_row_counts": {
+            "0": 19
+          },
+          "categories": {
+            "completed_type": {},
+            "content_type": {},
+            "created_type": {},
+            "finish_class": {},
+            "finish_type": {},
+            "reader_state": {
+              "ok": 19
+            },
+            "time_type": {}
+          },
+          "changed_observations": [
+            {
+              "assistant_rows": [],
+              "elapsed_ms": 5433
+            }
+          ],
+          "samples": 19
+        }
+      },
+      "growth_observations": [],
+      "after_finish": {
+        "assistant_row_count": 0,
+        "assistant_rows": [],
+        "reader_state": "ok"
+      },
+      "strict_completed_reader_ok": false,
+      "strict_completed_text_bytes": 0
+    },
+    {
+      "attempt": "R2",
+      "receipt_digest": "4f66fa8922b294d3e2148fb08c235f208a2792e4e559956b096da6e0c6441b62",
+      "control_digest": "497e3d527af9f90f3bdf50183359700dc76eb60809c7ab0d973fddd7e5501b92",
+      "memory_admission_mib": 10179,
+      "native_seconds": 75.437,
+      "native_exit_code": 130,
+      "native_timed_out": true,
+      "native_process_group_retired": true,
+      "outer_process_group_retired": true,
+      "provider_requests": 10,
+      "provider_error": "provider_retry_unexpected",
+      "holds": {
+        "chunk1_held": {
+          "assistant_row_counts": {
+            "1": 20
+          },
+          "categories": {
+            "completed_type": {
+              "absent": 20
+            },
+            "content_type": {
+              "array": 20
+            },
+            "created_type": {
+              "int": 20
+            },
+            "finish_class": {
+              "absent": 20
+            },
+            "finish_type": {
+              "absent": 20
+            },
+            "reader_state": {
+              "ok": 20
+            },
+            "time_type": {
+              "object": 20
+            }
+          },
+          "changed_observations": [
+            {
+              "assistant_rows": [
+                {
+                  "completed_positive": false,
+                  "completed_type": "absent",
+                  "content_type": "array",
+                  "created_type": "int",
+                  "data_bytes": 281,
+                  "finish_class": "absent",
+                  "finish_type": "absent",
+                  "part_types": {},
+                  "row_key_sha256": "16feae045bb40c0b39973b8aaf76703262f1bf6b9f2a6300207a990f5fe6e522",
+                  "seq": 6,
+                  "text_bytes": 0,
+                  "time_type": "object"
+                }
+              ],
+              "elapsed_ms": 1402
+            }
+          ],
+          "samples": 20
+        },
+        "chunk2_held": {
+          "assistant_row_counts": {
+            "1": 20
+          },
+          "categories": {
+            "completed_type": {
+              "absent": 20
+            },
+            "content_type": {
+              "array": 20
+            },
+            "created_type": {
+              "int": 20
+            },
+            "finish_class": {
+              "absent": 20
+            },
+            "finish_type": {
+              "absent": 20
+            },
+            "reader_state": {
+              "ok": 20
+            },
+            "time_type": {
+              "object": 20
+            }
+          },
+          "changed_observations": [
+            {
+              "assistant_rows": [
+                {
+                  "completed_positive": false,
+                  "completed_type": "absent",
+                  "content_type": "array",
+                  "created_type": "int",
+                  "data_bytes": 281,
+                  "finish_class": "absent",
+                  "finish_type": "absent",
+                  "part_types": {},
+                  "row_key_sha256": "16feae045bb40c0b39973b8aaf76703262f1bf6b9f2a6300207a990f5fe6e522",
+                  "seq": 6,
+                  "text_bytes": 0,
+                  "time_type": "object"
+                }
+              ],
+              "elapsed_ms": 5432
+            }
+          ],
+          "samples": 20
+        }
+      },
+      "growth_observations": [],
+      "after_finish": {
+        "assistant_row_count": 1,
+        "assistant_rows": [
+          {
+            "completed_positive": false,
+            "completed_type": "absent",
+            "content_type": "array",
+            "created_type": "int",
+            "data_bytes": 149,
+            "finish_class": "absent",
+            "finish_type": "absent",
+            "part_types": {},
+            "row_key_sha256": "16feae045bb40c0b39973b8aaf76703262f1bf6b9f2a6300207a990f5fe6e522",
+            "seq": 6,
+            "text_bytes": 0,
+            "time_type": "object"
+          }
+        ],
+        "reader_state": "ok"
+      },
+      "strict_completed_reader_ok": false,
+      "strict_completed_text_bytes": 0
+    },
+    {
+      "attempt": "R3",
+      "receipt_digest": "3b6a6ff46d1efd292fa22b032afbca948dc31a5ddd4e99b264381a3cf1910b0a",
+      "control_digest": "eaae725334610879a686db6e5a451843d85e05c143fce869998b65d18e98ab05",
+      "memory_admission_mib": 10456,
+      "native_seconds": 9.989,
+      "native_exit_code": 0,
+      "native_timed_out": false,
+      "native_process_group_retired": true,
+      "outer_process_group_retired": true,
+      "provider_requests": 2,
+      "provider_error": null,
+      "holds": {
+        "chunk1_held": {
+          "assistant_row_counts": {
+            "1": 20
+          },
+          "categories": {
+            "completed_type": {
+              "absent": 20
+            },
+            "content_type": {
+              "array": 20
+            },
+            "created_type": {
+              "int": 20
+            },
+            "finish_class": {
+              "absent": 20
+            },
+            "finish_type": {
+              "absent": 20
+            },
+            "reader_state": {
+              "ok": 20
+            },
+            "time_type": {
+              "object": 20
+            }
+          },
+          "changed_observations": [
+            {
+              "assistant_rows": [
+                {
+                  "completed_positive": false,
+                  "completed_type": "absent",
+                  "content_type": "array",
+                  "created_type": "int",
+                  "data_bytes": 174,
+                  "finish_class": "absent",
+                  "finish_type": "absent",
+                  "part_types": {
+                    "text": 1
+                  },
+                  "row_key_sha256": "9e205eb27617a69fd82c778116380c68afab8e9ee76c89f2fc7c88327a1afe15",
+                  "seq": 6,
+                  "text_bytes": 0,
+                  "time_type": "object"
+                }
+              ],
+              "elapsed_ms": 1402
+            }
+          ],
+          "samples": 20
+        },
+        "chunk2_held": {
+          "assistant_row_counts": {
+            "1": 20
+          },
+          "categories": {
+            "completed_type": {
+              "absent": 20
+            },
+            "content_type": {
+              "array": 20
+            },
+            "created_type": {
+              "int": 20
+            },
+            "finish_class": {
+              "absent": 20
+            },
+            "finish_type": {
+              "absent": 20
+            },
+            "reader_state": {
+              "ok": 20
+            },
+            "time_type": {
+              "object": 20
+            }
+          },
+          "changed_observations": [
+            {
+              "assistant_rows": [
+                {
+                  "completed_positive": false,
+                  "completed_type": "absent",
+                  "content_type": "array",
+                  "created_type": "int",
+                  "data_bytes": 174,
+                  "finish_class": "absent",
+                  "finish_type": "absent",
+                  "part_types": {
+                    "text": 1
+                  },
+                  "row_key_sha256": "9e205eb27617a69fd82c778116380c68afab8e9ee76c89f2fc7c88327a1afe15",
+                  "seq": 6,
+                  "text_bytes": 0,
+                  "time_type": "object"
+                }
+              ],
+              "elapsed_ms": 5441
+            }
+          ],
+          "samples": 20
+        }
+      },
+      "growth_observations": [],
+      "after_finish": {
+        "assistant_row_count": 1,
+        "assistant_rows": [
+          {
+            "completed_positive": true,
+            "completed_type": "int",
+            "content_type": "array",
+            "created_type": "int",
+            "data_bytes": 427,
+            "finish_class": "stop",
+            "finish_type": "str",
+            "part_types": {
+              "text": 1
+            },
+            "row_key_sha256": "9e205eb27617a69fd82c778116380c68afab8e9ee76c89f2fc7c88327a1afe15",
+            "seq": 6,
+            "text_bytes": 81,
+            "time_type": "object"
+          }
+        ],
+        "reader_state": "ok"
+      },
+      "strict_completed_reader_ok": true,
+      "strict_completed_text_bytes": 81
+    }
+  ],
+  "r2_title_contains_synthetic_canary": true,
+  "offline_tests": {
+    "passed": 28,
+    "seconds": 13.46,
+    "intervening_user_regression_red": 1,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0
+  },
+  "next_boundary": "Separately review transparent primary HTTP stream observation; no DB growth signal inferred from completed text."
+}

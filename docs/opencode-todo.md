@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T187: control nativo sintético termina en9,989s y valida el resultado final, pero40 lecturas previas al cierre muestran TEXT vacío; crecimiento activo en SQLite **no observado**. El prototipo no autoriza cancelación.28 contratos offline y arquitectura5/0 pasan; dos falsos positivos del borrador corregidos. T168 sigue abierto: siguiente paso, observador HTTP transparente ligado al turno. [Resultados y fallos conservados](../specs/025-provider-mcp-profiles/validation-t187-preparation.md).
+
 T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t186.md).
 
 T185: timeout nativo Codex180s PASS en5f034ca3; HTTP504 en208,728s con arranque, verify200/pending sin reenvío, generación ajena409 y cancelación actual200 en25,875s. Cinco procesos viejos retirados, reemplazo listo/0peticiones y limpieza completa; hijo conserva reconcile/timeout/settled_at.323PASS/5avisos,26controles nuevos incluidos, arquitectura5/0,1744pins y PG cerrado. Backend sintético; todaCX08/otros proveedores/global siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t185.md).

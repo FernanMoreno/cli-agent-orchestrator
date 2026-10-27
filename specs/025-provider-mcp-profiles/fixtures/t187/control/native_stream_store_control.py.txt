@@ -1,0 +1,491 @@
+from __future__ import annotations
+
+import argparse
+import collections
+import hashlib
+import importlib.metadata
+import importlib.util
+import json
+import os
+import pathlib
+import signal
+import sqlite3
+import stat
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+REPO = pathlib.Path("/mnt/c/Users/ferna/OneDrive/Escritorio/CAOS")
+BINARY = pathlib.Path("/home/felni/.cache/caos-opencode-native-tool-20261027-r2/bin/opencode")
+DRAFT = pathlib.Path("/home/felni/.cache/caos-opencode-stream-20261027/control-draft")
+HEAD = "09f1ab14d4de7608bde856580fee154ea29af180"
+BINARY_SHA = "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f"
+BWRAP = pathlib.Path("/usr/bin/bwrap")
+BWRAP_SHA = "523da3e7399044be5163aee6f57a77a6bef7454376e28f0a0627920bae1b76b6"
+INNER_PY = pathlib.Path("/usr/bin/python3.14")
+INNER_PY_SHA = "52e0a13e60a981d8c4b6478be2ba5176f69da07948a056bf49cf6f077e30cb41"
+INNER_LIBPY = pathlib.Path("/usr/lib/x86_64-linux-gnu/libpython3.14.so.1.0")
+INNER_LIBPY_SHA = "982cb3768d1d8b00126255ee2785bccf8360c68b197fb3dec95858ab56195f87"
+SQLITE_LIB = pathlib.Path("/usr/lib/x86_64-linux-gnu/libsqlite3.so.0.8.6")
+SQLITE_LIB_SHA = "4633a4be13fdf05cb0f859e04fb06077a1fe30a90e405721a23873bd1f3d88a8"
+WRITER = "src/cli_agent_orchestrator/utils/opencode_v2.py"
+READER = "src/cli_agent_orchestrator/utils/opencode_v2_store.py"
+MODEL, AGENT, PORT = "t168fake/stream-probe", "t168_stream_probe", 40168
+DEADLINE_SECONDS, MEMORY_FLOOR_MIB = 75, 6144
+TOKEN_PREFIX, CANARY = "CAO-TURN-RECEIPT-", "T168_STREAM_CANARY:"
+PINS = {
+    WRITER: "c12244f9e62d0326a039d35530187842dfd4e478560c0222f9904228a8876c3c",
+    READER: "12a749f2aa942cc97859bab59dce1442997c8c508b8c16ba6b37d25e4ac805da",
+    "src/cli_agent_orchestrator/utils/mcp_tool_policy.py": "9accde7733cb29b7b1ad6f05ee7672c51288e9030932f2d317fa0a27d2952645",
+    "src/cli_agent_orchestrator/utils/opencode_policy.py": "8d8ad26b41a4d4a907de87379b7544b1d7d7d3c403388913f4b4d3efad6a41e9",
+    "src/cli_agent_orchestrator/utils/path_validation.py": "00d8bfae96d810f7874d9d8138354083c8299d8efbf0567e3ac261dee90ee355",
+    "src/cli_agent_orchestrator/constants.py": "a736d6d62ea647ff566404f83bfbeef310fd04bd8ef1a23e6b277fd2180f13d7",
+    "src/cli_agent_orchestrator/providers/mcp_interactions.py": "2f8e8eae0ad4d2bc2449996818edbf944226f85747a2eff9e1c2dace96a0eb16",
+    "specs/025-provider-mcp-profiles/fixtures/t127/control/inside_control.py.txt": "9fbe0d6405f2f29b49b89b85a75d71b0e1f34aefd22dfb4dd861f54c9ce9648c",
+    "specs/025-provider-mcp-profiles/fixtures/t127/control/config_recipe.py.txt": "5e9c568f89315a76e45a7eb615dea94d1df4afe05bc68fb3379442e29195a099",
+}
+
+
+def sha(path: pathlib.Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def pin(path: pathlib.Path, expected: str) -> None:
+    st = path.lstat()
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or sha(path) != expected:
+        raise RuntimeError("pinned_input_mismatch")
+
+
+def check_inputs(root: pathlib.Path, binary: pathlib.Path) -> dict:
+    if root != REPO or pathlib.Path.cwd() != REPO or root.resolve(strict=True) != REPO:
+        raise RuntimeError("canonical_repository_path_mismatch")
+    if binary != BINARY or binary.resolve(strict=True) != BINARY:
+        raise RuntimeError("pinned_binary_path_mismatch")
+    git = lambda *argv: subprocess.check_output(
+        ["git", "-C", str(root), *argv], stderr=subprocess.DEVNULL, timeout=3, text=True
+    ).strip()
+    if git("rev-parse", "HEAD") != HEAD or git("status", "--porcelain", "--", *PINS):
+        raise RuntimeError("pinned_source_state_mismatch")
+    for rel, digest in PINS.items():
+        pin(root / rel, digest)
+    pin(binary, BINARY_SHA)
+    binary_stat = binary.stat()
+    if binary_stat.st_uid != os.getuid() or stat.S_IMODE(binary_stat.st_mode) != 0o700:
+        raise RuntimeError("pinned_binary_metadata_mismatch")
+    pin(BWRAP, BWRAP_SHA)
+    pin(INNER_PY, INNER_PY_SHA)
+    pin(INNER_LIBPY, INNER_LIBPY_SHA)
+    pin(SQLITE_LIB, SQLITE_LIB_SHA)
+    host_py = root / ".venv/bin/python"
+    if (
+        host_py.resolve(strict=True)
+        != pathlib.Path("/home/felni/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13")
+        or sha(host_py) != "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f"
+        or pathlib.Path(sys.executable).resolve(strict=True) != host_py.resolve(strict=True)
+        or importlib.metadata.version("python-frontmatter") != "1.1.0"
+        or sha(root / "uv.lock") != "5b15d71bf7dba9e05a5016d8c8ed8f613b7e712fb2db997dadfb6ab84b465252"
+    ):
+        raise RuntimeError("pinned_python_environment_mismatch")
+    return {"head": HEAD, "binary_sha256": BINARY_SHA, "writer_sha256": PINS[WRITER], "reader_sha256": PINS[READER], "control_sha256": sha(pathlib.Path(__file__))}
+
+
+def emit(value: dict) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")), flush=True)
+
+
+def private_write(path: pathlib.Path, raw: bytes) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def render_config(root: pathlib.Path, run: pathlib.Path, run_id: str) -> pathlib.Path:
+    agents = run / "agents"
+    agents.mkdir(mode=0o700)
+    private_write(agents / f"{AGENT}.md", b"---\ndescription: T168 stream probe\nmode: all\n---\nNo tools. Return the configured response.\n")
+    config = {
+        "providers": {
+            "t168fake": {
+                "name": "T168 isolated synthetic SSE",
+                "package": "@opencode/ai/providers/openai-compatible",
+                "env": ["T168_FAKE_API_KEY"],
+                "settings": {"baseURL": f"http://127.0.0.1:{PORT}/v1"},
+                "models": {"stream-probe": {"name": "T168 stream probe", "limit": {"context": 65536, "output": 128}}},
+            }
+        }
+    }
+    sys.path.insert(0, str(root / "src"))
+    try:
+        import cli_agent_orchestrator.utils.opencode_v2 as writer_module
+        from cli_agent_orchestrator.utils.opencode_v2 import write_v2_configuration
+        if pathlib.Path(writer_module.__file__).resolve(strict=True) != root / WRITER:
+            raise RuntimeError("production_writer_import_origin_mismatch")
+        dest = run / "config"
+        write_v2_configuration(
+            dest, source_agents=agents, source_config=config,
+            session_id="t168_" + run_id[:20], source_auth=None,
+            source_credential_db=None, selected_model=MODEL,
+        )
+    finally:
+        sys.path.pop(0)
+    rendered = json.loads((run / "config/opencode.json").read_text(encoding="utf-8"))
+    if (
+        rendered.get("mcp") != {"servers": {}}
+        or rendered.get("agents", {}).get(AGENT, {}).get("permissions") != []
+        or rendered.get("providers", {}).get("t168fake", {}).get("settings", {}).get("baseURL") != f"http://127.0.0.1:{PORT}/v1"
+    ):
+        raise RuntimeError("synthetic_configuration_contract_mismatch")
+    return run / "config/opencode.json"
+
+
+def load_reader():
+    path = pathlib.Path("/work/opencode_v2_store.py")
+    pin(path, PINS[READER])
+    spec = importlib.util.spec_from_file_location("native_store", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def snapshot(reader, dbpath: pathlib.Path, diag: str) -> dict:
+    try:
+        st = dbpath.lstat()
+        if not stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode) or st.st_nlink != 1 or st.st_size > 64 * 1024 * 1024:
+            return {"state": "database_identity_invalid", "rows": []}
+        db = sqlite3.connect(dbpath.as_uri() + "?mode=ro", uri=True, timeout=0.05)
+    except (OSError, sqlite3.Error, ValueError):
+        return {"state": "database_unavailable", "rows": []}
+    deadline = time.monotonic() + 0.15
+    try:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("BEGIN")
+        db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 100)
+        if not reader._schema_matches(db, deadline):
+            return {"state": "schema_mismatch", "rows": []}
+        db.set_authorizer(reader._authorizer)
+        users = db.execute(
+            "SELECT m.id,m.session_id,m.seq,m.data FROM session_message AS m JOIN session_v2 AS s ON s.id=m.session_id WHERE m.type='user' AND typeof(m.data)='text' ORDER BY m.seq DESC,m.id LIMIT 64"
+        ).fetchall()
+        hits = []
+        for uid, sid, seq, data in users:
+            try:
+                prompt = json.loads(data).get("text", "")
+            except (ValueError, AttributeError, TypeError):
+                continue
+            if isinstance(prompt, str) and prompt.count(diag) == 1:
+                hits.append((uid, sid, seq))
+        if len(hits) != 1:
+            return {"state": "target_user_missing_or_ambiguous", "rows": []}
+        _, sid, user_seq = hits[0]
+        user_rows = db.execute(
+            "SELECT m.seq FROM session_message AS m JOIN session_v2 AS s ON s.id=m.session_id WHERE m.session_id=? AND m.type='user' AND m.seq>? ORDER BY m.seq,m.id LIMIT 1",
+            (sid, user_seq),
+        ).fetchall()
+        if user_rows:
+            return {"state": "target_user_not_current", "rows": []}
+        messages = db.execute(
+            "SELECT m.id,m.seq,m.data FROM session_message AS m JOIN session_v2 AS s ON s.id=m.session_id WHERE m.session_id=? AND m.type='assistant' AND m.seq>? AND typeof(m.data)='text' AND length(CAST(m.data AS BLOB)) BETWEEN 2 AND ? ORDER BY m.seq,m.id LIMIT 16",
+            (sid, user_seq, 1024 * 1024),
+        ).fetchall()
+        rows = []
+        for mid, seq, raw in messages:
+            try:
+                obj = json.loads(raw)
+            except (ValueError, TypeError):
+                rows.append({"id": mid, "seq": seq, "valid_json": False, "data_bytes": len(raw.encode()), "time_type": "invalid_json", "created_type": "invalid_json", "completed_type": "invalid_json", "completed_positive": False, "finish_type": "invalid_json", "finish_class": "invalid_json", "content_type": "invalid_json", "part_types": {}, "text_bytes": 0, "text": ""})
+                continue
+            if type(obj) is not dict:
+                rows.append({"id": mid, "seq": seq, "valid_json": False, "data_bytes": len(raw.encode()), "time_type": "non_object_json", "created_type": "non_object_json", "completed_type": "non_object_json", "completed_positive": False, "finish_type": "non_object_json", "finish_class": "non_object_json", "content_type": "non_object_json", "part_types": {}, "text_bytes": 0, "text": ""})
+                continue
+            content = obj.get("content")
+            parts = content if isinstance(content, list) else []
+            known_part_types = {"text", "reasoning", "tool", "step-start", "step-finish", "other"}
+            types = collections.Counter(
+                (part.get("type") if isinstance(part.get("type"), str) and part.get("type") in known_part_types else "other")
+                if isinstance(part, dict) else "non_object"
+                for part in parts[:17]
+            )
+            texts = [part["text"] for part in parts if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str)]
+            text = "".join(texts)
+            tm = obj.get("time")
+            tm = tm if isinstance(tm, dict) else {}
+            finish = obj.get("finish")
+            rows.append({
+                "id": mid, "seq": seq, "valid_json": True, "data_bytes": len(raw.encode("utf-8")),
+                "time_type": "object" if isinstance(obj.get("time"), dict) else type(obj.get("time")).__name__,
+                "created_type": type(tm.get("created")).__name__ if "created" in tm else "absent",
+                "completed_type": type(tm.get("completed")).__name__ if "completed" in tm else "absent",
+                "completed_positive": type(tm.get("completed")) is int and tm["completed"] > 0,
+                "finish_type": type(finish).__name__ if "finish" in obj else "absent",
+                "finish_class": finish if isinstance(finish, str) and finish in {"stop", "tool-calls", "error", "length"} else ("other_text" if isinstance(finish, str) else type(finish).__name__ if finish is not None else "absent"),
+                "content_type": "array" if isinstance(content, list) else type(content).__name__ if content is not None else "absent",
+                "part_types": dict(types), "text_bytes": len(text.encode("utf-8")), "text": text,
+            })
+        return {"state": "ok", "rows": rows}
+    except (sqlite3.Error, OSError, RuntimeError, TypeError, ValueError, UnicodeError):
+        return {"state": "snapshot_unavailable", "rows": []}
+    finally:
+        db.close()
+
+
+def row_summary(row: dict) -> dict:
+    rid = hashlib.sha256(f"{row['id']}\0{row['seq']}".encode()).hexdigest()
+    return {key: row[key] for key in ("seq", "data_bytes", "time_type", "created_type", "completed_type", "completed_positive", "finish_type", "finish_class", "content_type", "part_types", "text_bytes")} | {"row_key_sha256": rid}
+
+
+def retire_group(proc: subprocess.Popen, wait_seconds: float = 1.0) -> bool:
+    if proc.poll() is None:
+        try: os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError: pass
+        try: proc.wait(timeout=wait_seconds)
+        except subprocess.TimeoutExpired:
+            try: os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            try: proc.wait(timeout=wait_seconds)
+            except subprocess.TimeoutExpired: pass
+    try: os.killpg(proc.pid, 0)
+    except ProcessLookupError: return True
+    try: os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError: return True
+    end = time.monotonic() + wait_seconds
+    while time.monotonic() < end:
+        try: os.killpg(proc.pid, 0)
+        except ProcessLookupError: return True
+        time.sleep(0.05)
+    try: os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError: return True
+    try: proc.wait(timeout=wait_seconds)
+    except subprocess.TimeoutExpired: pass
+    try: os.killpg(proc.pid, 0)
+    except ProcessLookupError: return True
+    return False
+
+
+def inner(args) -> int:
+    if args.run_root != pathlib.Path("/work") or os.getenv("T168_CONTROL_NAMESPACE") != "private-net":
+        raise RuntimeError("private_namespace_required")
+    if sha(pathlib.Path("/opencode")) != BINARY_SHA or sha(pathlib.Path(sys.executable)) != INNER_PY_SHA or sha(INNER_LIBPY) != INNER_LIBPY_SHA or sha(SQLITE_LIB) != SQLITE_LIB_SHA:
+        raise RuntimeError("inner_binary_pin_mismatch")
+    if sha(pathlib.Path(__file__)) != args.script_sha:
+        raise RuntimeError("control_bytes_changed")
+    reader = load_reader()
+    diag, token = args.diag, args.token
+    state = {"lock": threading.Lock(), "stage": "waiting", "requests": 0, "stream": False, "diag_seen": False, "model_match": False, "route": None, "chunks": 0, "finish": False, "error": None}
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def log_message(self, *_args):
+            pass
+        def reply_error(self, status):
+            body = b'{"error":{"message":"synthetic request rejected"}}'
+            self.send_response(status); self.send_header("Content-Length", str(len(body))); self.send_header("Connection", "close"); self.end_headers(); self.wfile.write(body)
+        def send_chunk(self, model, delta, finish=None):
+            chunk = {"id": "chatcmpl-t168", "object": "chat.completion.chunk", "created": 0, "model": model, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+            self.wfile.write(b"data: " + json.dumps(chunk, separators=(",", ":")).encode() + b"\n\n"); self.wfile.flush()
+        def do_POST(self):
+            with state["lock"]:
+                state["requests"] += 1; state["route"] = self.path if self.path in {"/chat/completions", "/v1/chat/completions"} else "rejected"
+                request_ordinal = state["requests"]
+            if self.client_address[0] != "127.0.0.1" or self.path not in {"/chat/completions", "/v1/chat/completions"}:
+                self.reply_error(404); return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 1024 * 1024: raise ValueError
+                body = json.loads(self.rfile.read(size))
+                model = body.get("model")
+                msgs = body.get("messages")
+                diag_seen = isinstance(msgs, list) and diag in json.dumps(msgs, ensure_ascii=True)
+                valid = body.get("stream") is True and diag_seen and isinstance(model, str) and model.rsplit("/", 1)[-1] == "stream-probe"
+            except (TypeError, ValueError, json.JSONDecodeError):
+                valid = False; model = "stream-probe"; diag_seen = False
+            with state["lock"]:
+                state["stream"] = isinstance(body, dict) and body.get("stream") is True if "body" in locals() else False
+                state["diag_seen"] = diag_seen
+                state["model_match"] = isinstance(model, str) and model.rsplit("/", 1)[-1] == "stream-probe"
+            if not valid:
+                with state["lock"]: state["error"] = "request_contract_invalid"
+                self.reply_error(422); return
+            if request_ordinal > 4:
+                with state["lock"]:
+                    state["error"] = "provider_request_limit"
+                self.reply_error(429); return
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream; charset=utf-8"); self.send_header("Cache-Control", "no-cache"); self.send_header("Connection", "close"); self.end_headers(); self.close_connection = True
+            try:
+                self.send_chunk(model, {"role": "assistant"})
+                time.sleep(0.4)
+                self.send_chunk(model, {"content": CANARY + " alpha "})
+                with state["lock"]: state["chunks"] += 1; state["stage"] = "chunk1_held"
+                time.sleep(4.0)
+                self.send_chunk(model, {"content": "beta\n" + token + "\n"})
+                with state["lock"]: state["chunks"] += 1; state["stage"] = "chunk2_held"
+                time.sleep(4.0)
+                with state["lock"]: state["stage"] = "finish_sent"; state["finish"] = True
+                self.send_chunk(model, {}, "stop"); self.wfile.write(b"data: [DONE]\n\n"); self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                with state["lock"]: state["error"] = "native_closed_stream"
+        def do_GET(self): self.reply_error(404)
+
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler); server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    database = pathlib.Path("/work/data/opencode/opencode.db")
+    prompt = f"Return the configured synthetic response exactly; no tools. Diagnostic: {diag}\n{token}"
+    env = {"HOME": "/home/t168", "PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TERM": "dumb", "XDG_CONFIG_HOME": "/work/xdg-config", "XDG_DATA_HOME": "/work/data", "XDG_CACHE_HOME": "/work/cache", "XDG_STATE_HOME": "/work/state", "TMPDIR": "/work/tmp", "OPENCODE_CONFIG": "/work/config/opencode.json", "OPENCODE_CONFIG_DIR": "/work/config", "OPENCODE_DB": str(database), "OPENCODE_DISABLE_AUTOUPDATE": "true", "OPENCODE_DISABLE_MOUSE": "true", "OPENCODE_DISABLE_TERMINAL_TITLE": "true", "OPENCODE_API_KEY": "offline-dummy-only", "T168_FAKE_API_KEY": "offline-dummy-only"}
+    cmd = ["/opencode", "run", "--standalone", "--agent", AGENT, "--model", MODEL, "--format", "json", prompt]
+    samples = {"chunk1_held": [], "chunk2_held": []}; previous = {}; growth = []; partial_ids = set()
+    proc = None; timed_out = False
+    try:
+        start = time.monotonic(); deadline = start + DEADLINE_SECONDS
+        proc = subprocess.Popen(cmd, cwd="/work", stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, start_new_session=True)
+        while time.monotonic() < deadline and proc.poll() is None:
+            now = time.monotonic()
+            with state["lock"]:
+                stage = state["stage"]
+                finish_before = state["finish"]
+            if stage in samples and not finish_before:
+                observed = snapshot(reader, database, diag)
+                with state["lock"]:
+                    bracket_valid = state["stage"] == stage and state["finish"] is False
+                if not bracket_valid:
+                    time.sleep(0.2)
+                    continue
+                rows = observed["rows"]
+                samples[stage].append({"elapsed_ms": round((now-start)*1000), "reader_state": observed["state"], "assistant_rows": [row_summary(row) for row in rows]})
+                for row in rows:
+                    key = (row["id"], row["seq"])
+                    if row["completed_type"] in {"absent", "NoneType"} and row["finish_type"] in {"absent", "NoneType"} and CANARY in row["text"]:
+                        partial_ids.add(key)
+                    old = previous.get(key)
+                    if old and old["row"]["completed_type"] in {"absent", "NoneType"} and row["completed_type"] in {"absent", "NoneType"} and old["row"]["finish_type"] in {"absent", "NoneType"} and row["finish_type"] in {"absent", "NoneType"} and CANARY in old["row"]["text"] and CANARY in row["text"] and row["text_bytes"] > old["row"]["text_bytes"] and row["text"].startswith(old["row"]["text"]):
+                        growth.append({"row_key_sha256": hashlib.sha256(f"{key[0]}\0{key[1]}".encode()).hexdigest(), "from_stage": old["stage"], "to_stage": stage, "from_text_bytes": old["row"]["text_bytes"], "to_text_bytes": row["text_bytes"], "same_incomplete_row": True, "prefix_growth": True})
+                    previous[key] = {"row": row, "stage": stage}
+            time.sleep(0.2)
+        timed_out = proc.poll() is None
+    finally:
+        retired = retire_group(proc) if proc is not None else True
+        exit_code = proc.returncode if proc is not None else None
+        server.shutdown(); server.server_close()
+    final = snapshot(reader, database, diag)
+    token_rows = [r for r in final["rows"] if token in r["text"]]
+    complete_same = any(r["completed_positive"] and (r["id"], r["seq"]) in partial_ids for r in token_rows)
+    try:
+        completed_parts = reader._native_parts(database, token, time.monotonic() + 1)
+        reader_ok, part_count, total_bytes = bool(completed_parts), len(completed_parts), sum(len(p.encode("utf-8")) for p in completed_parts)
+    except Exception:
+        reader_ok, part_count, total_bytes = False, 0, 0
+    with state["lock"]:
+        provider = {k: state[k] for k in ("requests", "stream", "diag_seen", "model_match", "route", "chunks", "finish", "error")}
+    emit({"schema": "caos.spec025.t168.synthetic-stream-store-observation.v1", "source_head": HEAD, "binary_sha256": BINARY_SHA, "native_elapsed_seconds": round(time.monotonic()-start, 3), "native_timed_out": timed_out, "native_exit_code": exit_code, "process_group_retired": retired, "provider": provider, "holds": {name: aggregate(items) for name, items in samples.items()}, "same_incomplete_row_growth": growth, "after_finish": {"reader_state": final["state"], "assistant_row_count": len(final["rows"]), "assistant_rows": [row_summary(row) for row in final["rows"]]}, "completed_row_same_as_partial": complete_same, "strict_completed_reader_ok": reader_ok, "strict_completed_parts": part_count, "strict_completed_text_bytes": total_bytes})
+    return 0 if retired else 2
+
+
+def aggregate(samples: list[dict]) -> dict:
+    fields = ("reader_state", "time_type", "created_type", "completed_type", "finish_type", "finish_class", "content_type")
+    counts = {field: collections.Counter() for field in fields}
+    row_counts, observations, prior = collections.Counter(), [], None
+    for sample in samples:
+        counts["reader_state"][sample["reader_state"]] += 1
+        row_counts[str(len(sample["assistant_rows"]))] += 1
+        sig = json.dumps(sample["assistant_rows"], sort_keys=True, separators=(",", ":"))
+        if sig != prior:
+            observations.append({"elapsed_ms": sample["elapsed_ms"], "assistant_rows": sample["assistant_rows"]}); prior = sig
+        for row in sample["assistant_rows"]:
+            for field in fields[1:]: counts[field][row[field]] += 1
+    return {"samples": len(samples), "assistant_row_counts": dict(row_counts), "categories": {k: dict(v) for k, v in counts.items()}, "changed_observations": observations}
+
+
+def host(args) -> int:
+    own = pathlib.Path(__file__)
+    own_stat = own.lstat()
+    if own.parent != DRAFT or stat.S_ISLNK(own_stat.st_mode) or stat.S_IMODE(own_stat.st_mode) != 0o600 or own_stat.st_nlink != 1:
+        raise RuntimeError("private_control_file_metadata_mismatch")
+    pins = check_inputs(args.repo_root, args.binary)
+    if not args.execute_synthetic_native:
+        emit({"state": "closed", "pins": pins, "native_started": False}); return 0
+    if not args.script_sha or sha(pathlib.Path(__file__)) != args.script_sha:
+        raise RuntimeError("explicit_control_hash_required")
+    with pathlib.Path("/proc/meminfo").open() as f:
+        available = int(next(line.split()[1] for line in f if line.startswith("MemAvailable:"))) // 1024
+    if available < MEMORY_FLOOR_MIB: raise RuntimeError("memory_floor_not_met")
+    run_id = uuid.uuid4().hex; runs = DRAFT / "runs"
+    if runs.exists():
+        st = runs.lstat()
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o700:
+            raise RuntimeError("private_runs_directory_invalid")
+    else:
+        runs.mkdir(mode=0o700)
+    run = runs / run_id; run.mkdir(mode=0o700)
+    for d in ("data", "cache", "state", "tmp", "home", "xdg-config"): (run / d).mkdir(mode=0o700)
+    (run / "data/opencode").mkdir(mode=0o700)
+    config = render_config(args.repo_root, run, run_id)
+    token, diag = TOKEN_PREFIX + uuid.uuid4().hex, "T168-DIAG-" + uuid.uuid4().hex
+    private_write(run / "hosts", b"127.0.0.1 localhost\n")
+    private_write(run / "passwd", b"root:x:0:0:root:/home/t168:/bin/sh\nt168:x:1000:1000:t168:/home/t168:/bin/sh\n")
+    bwrap = [str(BWRAP), "--unshare-all", "--unshare-pid", "--die-with-parent", "--new-session", "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64", "--symlink", "/usr/bin", "/bin", "--proc", "/proc", "--dev", "/dev", "--dir", "/etc", "--ro-bind", str(run/"hosts"), "/etc/hosts", "--ro-bind", str(run/"passwd"), "/etc/passwd", "--dir", "/work", "--dir", "/work/config", "--ro-bind", str(pathlib.Path(__file__)), "/work/control.py", "--ro-bind", str(config), "/work/config/opencode.json", "--ro-bind", str(args.repo_root/READER), "/work/opencode_v2_store.py", "--dir", "/work/data", "--bind", str(run/"data"), "/work/data", "--dir", "/work/cache", "--bind", str(run/"cache"), "/work/cache", "--dir", "/work/state", "--bind", str(run/"state"), "/work/state", "--dir", "/work/tmp", "--bind", str(run/"tmp"), "/work/tmp", "--dir", "/work/xdg-config", "--bind", str(run/"xdg-config"), "/work/xdg-config", "--dir", "/home", "--bind", str(run/"home"), "/home/t168", "--ro-bind", str(args.binary), "/opencode", "--chdir", "/work", "--clearenv", "--setenv", "T168_CONTROL_NAMESPACE", "private-net", "--setenv", "PATH", "/usr/bin:/bin", "--setenv", "LANG", "C.UTF-8", "--setenv", "HOME", "/home/t168", "--setenv", "TERM", "dumb", "--setenv", "PYTHONDONTWRITEBYTECODE", "1", "--", str(INNER_PY), "/work/control.py", "--inside", "--run-root", "/work", "--nonce", token, "--diag", diag, "--token", token, "--script-sha", args.script_sha]
+    with pathlib.Path("/proc/meminfo").open() as f:
+        available = int(next(line.split()[1] for line in f if line.startswith("MemAvailable:"))) // 1024
+    if available < MEMORY_FLOOR_MIB: raise RuntimeError("memory_floor_not_met_at_launch")
+    proc = subprocess.Popen(bwrap, cwd=str(args.repo_root), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env={"PATH":"/usr/bin:/bin"}, start_new_session=True)
+    try: output, _ = proc.communicate(timeout=90)
+    except subprocess.TimeoutExpired:
+        try: os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError: pass
+        try: proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            try: os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            try: proc.wait(timeout=1)
+            except subprocess.TimeoutExpired: pass
+        emit({"state":"outer_timeout", "run_id":run_id, "bwrap_exit_code":proc.returncode}); return 2
+    try: os.killpg(proc.pid, 0); outer_group_retired = False
+    except ProcessLookupError: outer_group_retired = True
+    if not outer_group_retired:
+        try: os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError: outer_group_retired = True
+        end = time.monotonic() + 0.75
+        while not outer_group_retired and time.monotonic() < end:
+            try: os.killpg(proc.pid, 0)
+            except ProcessLookupError: outer_group_retired = True
+            if not outer_group_retired: time.sleep(0.05)
+        if not outer_group_retired:
+            try: os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError: outer_group_retired = True
+            try: proc.wait(timeout=0.75)
+            except subprocess.TimeoutExpired: pass
+            try: os.killpg(proc.pid, 0)
+            except ProcessLookupError: outer_group_retired = True
+    try: observation = json.loads(output.decode("utf-8"))
+    except (UnicodeError, ValueError): observation = {"state":"no_inner_receipt"}
+    receipt = {"schema":"caos.spec025.t168.synthetic-stream-run.v1", "run_id":run_id, "memory_admission_mib":available, "pins":pins, "bwrap_exit_code":proc.returncode, "outer_process_group_retired":outer_group_retired, "observation":observation}
+    private_write(run/"receipt.json", json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()+b"\n")
+    emit({"state":"finished", "run_id":run_id, "bwrap_exit_code":proc.returncode, "receipt":str(run/"receipt.json")})
+    return 0 if proc.returncode == 0 else 2
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--repo-root", type=pathlib.Path); p.add_argument("--binary", type=pathlib.Path)
+    p.add_argument("--execute-synthetic-native", action="store_true"); p.add_argument("--script-sha")
+    p.add_argument("--inside", action="store_true"); p.add_argument("--run-root", type=pathlib.Path)
+    p.add_argument("--nonce"); p.add_argument("--diag"); p.add_argument("--token")
+    a = p.parse_args()
+    if a.inside:
+        if not all((a.run_root, a.nonce, a.diag, a.token, a.script_sha)): raise RuntimeError("inner_arguments_incomplete")
+        return inner(a)
+    if a.repo_root is None or a.binary is None: p.error("--repo-root and --binary required")
+    return host(a)
+
+
+if __name__ == "__main__":
+    try: raise SystemExit(main())
+    except Exception as exc:
+        emit({"state":"closed_error", "error_code":type(exc).__name__}); raise SystemExit(2)

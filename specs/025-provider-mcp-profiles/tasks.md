@@ -1,5 +1,9 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T187 [US4] [FR165/SC149] Determine native-store active TEXT visibility for T168 with an installed-binary synthetic streaming control; use bounded receipt/generation/owner-bound snapshots only if growth is observed, otherwise review the transparent HTTP alternative required by FR165. Verify negative and installed-controller multi-poll controls, then source-bound paired real streaming cancellation with physical stop/normal cleanup. Preserve legacy/native_tool evidence and75s/6144MiB.
+
+T187 preparation: R3 synthetic native control exits0 in9.989s and strict completed reader accepts81bytes, but40 pre-finish snapshots expose0TEXT bytes. Native-store growth NOT_OBSERVED; prototype remains disconnected from cancellation.28 offline reader contracts/architecture5-0; intervening-user/inode draft false positives corrected. R1/R2 harness failures preserved and all owned process groups retired. Next: separately reviewed transparent primary HTTP observer, installed-controller controls and fresh paired real acceptance. [Evidence](validation-t187-preparation.md).
+
 - [x] T186 [US4] [FR164/SC148] Add and validate separately selected native-tool activity witness for T168 cancellation with exact process/generation/pidfd/ancestry/deadline proof; preserve original streaming barrier and all pairing/native/cleanup gates. Execute only freshly source-bound diagnostics; record offline and native results distinctly.
 
 T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Recibo](validation-t186.md).
