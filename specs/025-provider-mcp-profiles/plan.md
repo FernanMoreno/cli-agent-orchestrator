@@ -1,5 +1,18 @@
 # Plan: provider MCP profiles
 
+## T182 · cancellation across asynchronous ownership boundaries
+
+Use event barriers around backend reset and provider initialize with a real
+PostgreSQL receipt/child and dispatch lock. Observe cancelling before stop,
+confirmed child cancellation after reset, refusal of late settlement/new
+admission, detached caller completion, duplicate serialization and per-terminal
+independence. Fault reset/readiness/final CAS separately; assert retained local
+fence and durable uncertainty. Reuse existing recovery/database contracts and
+one verified PG owner; no production change without a reproduced defect.
+Graphify points at recover_terminal_turn, cancel_turn, _cancel_serialized,
+_cancel_locked and database CAS; line locations are stale and checked against
+current source. Read-only Claude diagnosis found test gaps, not a proven bug.
+
 ## T181 · owned session geometry before delivery
 
 A model-free private tmux probe proves session default-size propagation before

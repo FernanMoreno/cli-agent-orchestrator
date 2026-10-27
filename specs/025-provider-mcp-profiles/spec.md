@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Shared cancellation ownership · T182
+
+FR160/SC144: Public turn cancellation must keep its generation and dispatch
+ownership while reset or provider reinitialization is incomplete, including
+when the HTTP caller disconnects or a second cancellation waits. Real
+PostgreSQL must refuse late result settlement and new receipt admission until
+confirmed readiness and cancellation finish. Stale-generation requests and
+failed reset/readiness/finish must not clear the provider fence or resend input.
+Publish readiness after releasing dispatch ownership; unrelated terminals must
+remain independently cancellable. Exercise the production recovery service,
+advisory lock and native-child persistence with deterministic barriers. Backend
+and provider readiness are controlled dependencies: this is not native CLI,
+FIFO-drain, stale-frame, HTTP-disconnect transport or all-provider acceptance.
+
 ## Managed narrow native cells · T181
 
 FR159/SC143: The production managed API must retain HTTP failure502/failed and
