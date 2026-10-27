@@ -1,5 +1,7 @@
 # Comprobación actual por proveedor
 
+T179 cuota parcial Codex: corrección tipada y aceptación gestionada b128b126,409/quota_wait/reconcile28,790s, una captura propia220x50 y join/limpieza estables.560PASS/3opt-in previos,44nuevos y arquitectura5/0; procesos/PG cerrados. Sin transferencia a otros proveedores ni aceptación de cuota real, auto-resume o cancelación/timeout/global. [Recibo y alcance](validation-t179.md).
+
 T178 cierra el recorrido gestionado Codex de parcial→401 en05f1c369: API502/failed35,311s, captura visible vinculada220x50, join/veredicto/limpieza exactos y padre accesible;199PASS/arquitectura5/0. No acepta cuotas parciales, cancelación/timeout, rawclassification ni otros proveedores. [Recibo y alcance](validation-t178.md).
 
 T177 corrige Codex partial→HTTPerror en de3fc61f, basado en capturas CLI0.164/5c646430.399PASS/3opt-in omitidos,24nuevos, arquitectura5/0. Mantiene citas, diálogos y entrada multilínea. Aceptación del parser sobre viewport; no API gestionada parcial, rawpipepane, cuota parcial ni otros proveedores. [Recibo y límites](validation-t177.md).

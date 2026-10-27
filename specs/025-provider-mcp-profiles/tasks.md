@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T179 [US4] [FR157/SC141] Observe native partial reply followed by exhausted quota; reproduce/fix only the demonstrated classifier boundary with quoted/stale/user-content/dialog controls. Then validate current-source managed409/quota_wait/reconcile, retained own viewport and stable join/cleanup under source-bound no-login isolation. Do not infer automatic resume, real quota, wrapped/footerless layouts or cancel/timeout/global acceptance.
+- [x] T179 [US4] [FR157/SC141] Observe native partial reply followed by exhausted quota; reproduce/fix only the demonstrated classifier boundary with quoted/stale/user-content/dialog controls. Then validate current-source managed409/quota_wait/reconcile, retained own viewport and stable join/cleanup under source-bound no-login isolation. Do not infer automatic resume, real quota, wrapped/footerless layouts or cancel/timeout/global acceptance.
+
+T179 PASS acotado:12RED/32controles→129enfocadas;560regresiones/3opt-in intactos/2avisos/44nuevos, arquitectura5/0. Captura59d6cd0d y consumidor/gestionado b128b126:409/quota_wait/reconcile28,790s, viewport propio y join/veredicto conservados, padre accesible;12clasificaciones/1731pins y recursos cerrados. Sin cuota real/auto-resume ni gates de wrap/footer ausente/cancelación/timeout/global. [Evidencia](validation-t179.md).
 
 - [x] T178 [US4] [FR156/SC140] Validate current-source managed Codex partial-reply HTTP failure through production API/native-child lifecycle. Inspect one owned rendered viewport after response/receipt/join binding and before explicit cleanup; require failed verdict, no prompt redelivery, preserved join and exact resource closure. Keep raw-stream, wrapped/footerless, partial quota and cancel/timeout/global scopes separate.
 

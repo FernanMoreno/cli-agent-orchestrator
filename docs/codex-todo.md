@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T179: corregida cuota tras respuesta parcial mediante estado tipado ERROR/WAITING_QUOTA y comprobación estructural compartida. Captura59d6cd0d; fuente corregida b128b126 y recorrido real gestionado PASS409/quota_wait/reconcile28,790s, viewport propio220x50, join/veredicto estables tras limpiar y padre accesible.560PASS/3opt-in previos/44nuevos, arquitectura5/0;1731pins y procesos/PG cerrados. Sin cuota real, auto-resume ni aceptación de cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t179.md).
+
 T178: recorrido gestionado Codex parcial→401 PASS en05f1c369: API502/error/failed en35,311s, captura visible única220x50 vinculada al hijo, join y veredicto conservados tras limpieza. Padre accesible; procesos/PG cerrados y1729pins intactos.199PASS/3controles nuevos/arquitectura5/0. Backend sintético, sin login del operador. Quedan wrap/footer ausente, cuota parcial y cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t178.md).
 
 T177: corregido un error HTTP nativo tras respuesta parcial: antes se clasificaba completed/processing; ahora ERROR sin alterar el recibo. Capturas CLI0.164 en5c646430 y consumidor de3fc61f; cita correcta, entrada multilínea y diálogos con separadores conservados.399PASS/3omisiones opt-in previas/24casos nuevos, arquitectura5/0 y procesos/PG cerrados. No acepta aún este caso por API gestionada, cuota parcial, errores envueltos ni cancelación/timeout. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t177.md).

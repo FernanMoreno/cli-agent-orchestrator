@@ -1,0 +1,17 @@
+# T179 · Cuota después de una respuesta parcial
+
+Corrección y aceptación gestionada acotadas **PASS**, 2026-10-27. [Recibo estructurado](validation-t179.json).
+
+El CLI0.164 real, con HOME del operador oculto y backend loopback sintético, recibió SSE con comentario parcial/fallo y luego429 usage_limit_reached. La captura en59d6cd0d muestra una respuesta en el margen, fila vacía y celda nativa de cuota como última fila antes del composer. Tardó3,390s y sirvió un200/dos429. El parser anterior devolvía completed×2 sin recibo y processing×2 con recibo; las12variantes de adaptador/recibo/LF-CRLF-CR fallaron y32controles pasaron.
+
+La corrección comparte la comprobación estructural de la celda y devuelve un TerminalStatus tipado: ERROR para HTTP conocido y WAITING_QUOTA solo para el glifo nativo más una frase explícita de cuota. Conserva citas adyacentes/indentadas, texto del usuario, turnos posteriores, `Worked for` y429de throttling; este último sigue siendo ERROR. La pantalla mantiene sus ventanas de filas compactas para diálogos y conserva aparte la frontera original. La autoridad de estado nativo/shell y la semántica previa de cuota permanecen. Se añadió a AI_WORKFLOW la exigencia de configuración explícita del formateador al mezclar archivos del repositorio con diagnósticos privados; el diff final elimina reformateos ajenos.
+
+Fuente corregida y gestionada `b128b126d60d000c0c9501dc52218dcb012d5ff3`:12clasificaciones finales sobre capturas de cuota parcial, HTTP parcial y cita nativa, con recibos intactos.129enfocadas y560regresiones pasan,3omisiones opt-in preexistentes/2avisos,204,29s;44casos nuevos y arquitectura5/0. El witness supera1positivo/6negativos y la propia captura real. Los tests de texto renderizado no acreditan aisladamente el pipe-pane crudo.
+
+El caso real gestionado devuelve **409/quota_wait en28.79s**, retryable false, sin reenvío del prompt y con un hijo reconcile. El join settled acredita disposición duradera, no éxito de tarea. Una captura visible propia220x50, después de identidad/recibo/join y antes del DELETE, confirma el comentario parcial y la cuota, sin Worked for. Se conserva el estado/settled_at al añadir cleanup_completed_at; el pane desaparece y el padre permanece accesible. Hubo un200 ydos429 de la misma generación de recibo. No se leyó FULL ni se intentó auto-resume.
+
+Los1731pins de fuente,6entradas privadas, backend realmente ejecutado, binario y Python quedan intactos. Memoria antes de lanzamiento/padre/turno:9557/9429/9358MiB, sobre el mínimo6144; reintentos nativos y180s intactos. Recorrido con cierre de fixtures:83.857s. API/HOME temporal/tmux/procesos propios terminan, wrappers/lanzadores quedan cerrados; cero conexiones/bases antes de cerrar el mismo propietarioPG y ausencia de contenedor/red exactos. La preparación nativa conserva su HOME sintético como evidencia privada. No se afirma inspección independiente del inode de namespace.
+
+Quedan abiertos errores/cuotas envueltos y ausencia de footer, cancelación activa y timeout/reconciliación, además de CX08/global. No se consumió cuota real ni login del operador; no se traslada esta aceptación a otros proveedores.
+
+Revisión final READ ClaudeGO de resultado/consumer/backend/PG; pins/pruebas/orden del callback verificados por el responsable sobre código y controles ejecutados. Obsidian: `save-20261027-caos-partial-quota`, cuatro páginas, lint estricto sin incidencias.
