@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T179 [US4] [FR157/SC141] Observe native partial reply followed by exhausted quota; reproduce/fix only the demonstrated classifier boundary with quoted/stale/user-content/dialog controls. Then validate current-source managed409/quota_wait/reconcile, retained own viewport and stable join/cleanup under source-bound no-login isolation. Do not infer automatic resume, real quota, wrapped/footerless layouts or cancel/timeout/global acceptance.
+
 - [x] T178 [US4] [FR156/SC140] Validate current-source managed Codex partial-reply HTTP failure through production API/native-child lifecycle. Inspect one owned rendered viewport after response/receipt/join binding and before explicit cleanup; require failed verdict, no prompt redelivery, preserved join and exact resource closure. Keep raw-stream, wrapped/footerless, partial quota and cancel/timeout/global scopes separate.
 
 T178 PASS acotado en05f1c369:502/error/failed35,311s tras parcial+401, una captura propia220x50 antes deDELETE, join/veredicto conservados y padre accesible.199PASS/3nuevos,1positivo6negativos del witness, arquitectura5/0,1729pins y procesos/PG cerrados. Sin login real ni cierre de cuotas parciales/cancelación/timeout/global. [Evidencia](validation-t178.md).

@@ -1,5 +1,20 @@
 # Provider MCP profiles and current acceptance
 
+## Partial-response capacity exhaustion · T179
+
+FR157/SC141: A real native capacity-exhaustion cell after commentary must not
+become success or an indefinitely processing turn. Capture the pinned CLI with
+synthetic SSE partial/failure then429 usage_limit_reached; preserve operator
+HOME masking, retries/180s and production220x50. If a classifier defect is
+reproduced, use observed cell structure and preserve quotes, stale turns,
+multiline user content and existing dialog windows. Validate buffer/screen and
+receipt immutability, then production409/quota_wait/reconcile with same-child
+join, retained viewport and explicit cleanup preserving verdict/settled_at.
+Join settled is durable disposition, not task success or automatic resume.
+Real-account quota, wrapped/footerless layouts and active cancel/timeout remain
+independent observations.
+
+
 ## Managed partial-response failure · T178
 
 FR156/SC140: A controlled native partial reply followed by HTTP failure must

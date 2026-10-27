@@ -907,8 +907,8 @@ def _transcript_before_active_rate_limit_dialog(script_output: str) -> Optional[
     return "".join(lines[:header_index]).rstrip()
 
 
-def _has_post_response_http_error(clean_output: str) -> bool:
-    """Recognize a separate native HTTP error cell after a partial reply.
+def _post_response_native_error(clean_output: str) -> Optional[TerminalStatus]:
+    """Classify a separate native error/quota cell after a partial reply.
 
     Native 0.164 puts the error at column zero after a blank row. Model
     continuation/quoted text is indented under its bullet. Require the error
@@ -919,22 +919,28 @@ def _has_post_response_http_error(clean_output: str) -> bool:
     """
     all_lines = clean_output.splitlines()
     cutoff = _compute_tui_footer_cutoff(all_lines)
-    users = list(
-        re.finditer(USER_PREFIX_PATTERN, clean_output[:cutoff], re.IGNORECASE | re.MULTILINE)
-    )
-    if not users:
-        return False
-    current_turn = clean_output[users[-1].start() : cutoff]
+    last_user = None
+    for match in re.finditer(
+        USER_PREFIX_PATTERN, clean_output[:cutoff], re.IGNORECASE | re.MULTILINE
+    ):
+        last_user = match
+    if last_user is None:
+        return None
+    current_turn = clean_output[last_user.start() : cutoff]
     lines = current_turn.rstrip().splitlines()
     if len(lines) < 3 or lines[-2].strip():
-        return False
-    if re.match(CODEX_HTTP_ERROR_CELL_PATTERN, lines[-1], re.IGNORECASE) is None:
-        return False
+        return None
     # Echoed multiline user content and model continuation are indented.
     # Only a native reply bullet in the left gutter establishes this path.
-    return any(
+    if not any(
         _find_assistant_marker(line) is not None for line in lines[:-2] if line.startswith("•")
-    )
+    ):
+        return None
+    if re.match(CODEX_HTTP_ERROR_CELL_PATTERN, lines[-1], re.IGNORECASE):
+        return TerminalStatus.ERROR
+    if re.match(r"■[^\S\n]+", lines[-1]) and CODEX_EXHAUSTED_QUOTA_PATTERN.match(lines[-1]):
+        return TerminalStatus.WAITING_QUOTA
+    return None
 
 
 def _has_active_exhausted_quota(
@@ -1664,7 +1670,9 @@ class CodexProvider(BaseProvider):
     def get_status(self, output: str) -> TerminalStatus:
         return self._get_status(output)
 
-    def _get_status(self, output: str, *, separated_http_error: bool = False) -> TerminalStatus:
+    def _get_status(
+        self, output: str, *, post_response_error: Optional[TerminalStatus] = None
+    ) -> TerminalStatus:
         # Native status (herdr): trust the backend's agent state when available;
         # on herdr the buffer is never fed, so buffer parsing can't leave UNKNOWN.
         native = self._resolve_native_status(output)
@@ -1722,6 +1730,7 @@ class CodexProvider(BaseProvider):
         assistant_after_last_user = bool(
             last_user and _find_assistant_marker(output_after_last_user) is not None
         )
+        post_response_error = post_response_error or _post_response_native_error(clean_output)
 
         # Codex reports a fully consumed plan/workspace budget through a
         # documented UsageLimitExceeded message.  It is distinct from the
@@ -1730,8 +1739,9 @@ class CodexProvider(BaseProvider):
         # tail-anchored and rejects assistant transcript text, so an agent
         # explaining a quota error cannot falsely park an otherwise completed
         # task.
-        if _has_active_exhausted_quota(
-            clean_output, active_user_start=last_user.start() if last_user is not None else None
+        if post_response_error == TerminalStatus.WAITING_QUOTA or _has_active_exhausted_quota(
+            clean_output,
+            active_user_start=last_user.start() if last_user is not None else None,
         ):
             return TerminalStatus.WAITING_QUOTA
 
@@ -1821,9 +1831,7 @@ class CodexProvider(BaseProvider):
         # Only treat ERROR/WAITING prompts as actionable if they appear after the last user message
         # and are not part of an assistant response.
         if last_user is not None:
-            if assistant_after_last_user and (
-                separated_http_error or _has_post_response_http_error(clean_output)
-            ):
+            if assistant_after_last_user and post_response_error == TerminalStatus.ERROR:
                 return TerminalStatus.ERROR
             if not assistant_after_last_user:
                 if re.search(
@@ -1929,7 +1937,7 @@ class CodexProvider(BaseProvider):
             return TerminalStatus.UNKNOWN
         rows = [line for line in frame.splitlines() if line.strip()]
         return self._get_status(
-            "\n".join(rows), separated_http_error=_has_post_response_http_error(frame)
+            "\n".join(rows), post_response_error=_post_response_native_error(frame)
         )
 
     def probe_processing_from_screen(self, screen_lines: list[str]) -> bool:

@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T179 · partial quota
+
+First reuse T178's proven isolated native config/TTY preflight and change only
+the post-partial backend response to the established quota429 shape. Capture
+before editing production and compare both adapters with/without a receipt.
+Graphify points to Codex status/native-child/API boundaries; verify against
+source. Reuse the existing separated-cell structure only if the new native
+frame supports it. Keep compact screen dialog windows independent of original
+cell boundaries, preserve native/shell authority, and use typed status outcomes
+rather than flags per failure family when extending the common path. Add
+negative quote/stale/user-content controls before regression/peer review.
+Finally repin the managed quota observer and one owned viewport to committed
+source; reuse held verified PG,6144MiB and existing join/cleanup assertions.
+
+
 ## T178 · managed partial error and rendered witness
 
 Extend the proven error-turn observer with a default-off before-cleanup callback
