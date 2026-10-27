@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T182 [US4] [FR160/SC144] Verify shared cancellation ownership with real PostgreSQL/event barriers across reset, readiness, duplicate/disconnected callers and final CAS; preserve stale-generation refusal, no resend, per-terminal concurrency, receipt/child fencing and publication after lock release. Record offline composition limits separately from native Codex cancellation and stale-FIFO hypotheses.
+- [x] T182 [US4] [FR160/SC144] Verify shared cancellation ownership with real PostgreSQL/event barriers across reset, readiness, duplicate/disconnected callers and final CAS; preserve stale-generation refusal, no resend, per-terminal concurrency, receipt/child fencing and publication after lock release. Record offline composition limits separately from native Codex cancellation and stale-FIFO hypotheses.
+
+T182: validada la propiedad de cancelación compartida con PostgreSQL real y barreras: desconexión del llamante, duplicados, fallos de reset/readiness/CAS, generaciones obsoletas y progreso de otro terminal.11controles nuevos y157regresiones PASS, arquitectura5/0, GOClaude y PG cerrado. Sin cambio productivo ni aceptación de cancelación nativa/FIFO/timeout/global. [Evidencia](validation-t182.md).
 
 - [x] T181 [US4] [FR159/SC143] Validate current-source managed partial HTTP/quota errors at80x50. Override only the owned fixture session before children, prove child TTY geometry at startup/every request, inspect one bound wrapped viewport per child before DELETE, and verify502/failed versus409/quota_wait/reconcile, stable join/cleanup and parent continuity. Keep production220x50, limits/login/isolation, and cancel/timeout/global gates intact.
 

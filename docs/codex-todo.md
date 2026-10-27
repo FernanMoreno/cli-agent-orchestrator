@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T182: validada la propiedad de cancelación compartida con PostgreSQL real y barreras: desconexión del llamante, duplicados, fallos de reset/readiness/CAS, generaciones obsoletas y progreso de otro terminal.11controles nuevos y157regresiones PASS, arquitectura5/0, GOClaude y PG cerrado. Sin cambio productivo ni aceptación de cancelación nativa/FIFO/timeout/global. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t182.md).
+
 T181: API gestionada Codex80×50 PASS en436dc0ae: parcial→401 da502/error/failed34,325s; parcial→cuota da409/quota_wait/reconcile28,690s. TTY80desde arranque y cada petición, capturas2/3líneas, join/veredicto y limpieza estables; padre220accesible.435regresiones/24controles finales solapados/arquitectura5/0,1737pins y recursos propios cerrados. Backend sintético; cancelación/timeout/footerless/global siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t181.md).
 
 T180: corregida la detección de celdas HTTP/cuota envueltas en80columnas. Tres capturas CLI0.164 en e7129f7a distinguen continuaciones nativas de citas indentadas; consumidor2cc5c66b/24clasificaciones/1735pins.668regresiones y60controles adicionales pasan;3opt-in previos/arquitectura5/0. Fuente y pruebas iniciales conservadas, procesos/PG cerrados. Sin aceptación de recorrido gestionado estrecho, pipe-pane crudo, footer ausente ni cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t180.md).

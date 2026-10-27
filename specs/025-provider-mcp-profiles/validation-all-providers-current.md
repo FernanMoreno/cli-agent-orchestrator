@@ -1,5 +1,7 @@
 # Comprobación actual por proveedor
 
+T182: validada la propiedad de cancelación compartida con PostgreSQL real y barreras: desconexión del llamante, duplicados, fallos de reset/readiness/CAS, generaciones obsoletas y progreso de otro terminal.11controles nuevos y157regresiones PASS, arquitectura5/0, GOClaude y PG cerrado. Sin cambio productivo ni aceptación de cancelación nativa/FIFO/timeout/global. [Recibo y límites](validation-t182.md).
+
 T181: API gestionada Codex80×50 PASS en436dc0ae: parcial→401 da502/error/failed34,325s; parcial→cuota da409/quota_wait/reconcile28,690s. TTY80desde arranque y cada petición, capturas2/3líneas, join/veredicto y limpieza estables; padre220accesible.435regresiones/24controles finales solapados/arquitectura5/0,1737pins y recursos propios cerrados. Backend sintético; cancelación/timeout/footerless/global siguen separados. [Recibo y límites](validation-t181.md).
 
 T180 Codex envuelto: capturas nativas80x50 y corrección del parser2cc5c66b,24clasificaciones/1735pins;668regresiones y60controles adicionales pasan, arquitectura5/0. Distingue celdas nativas de citas y conserva220sin cambiar dimensiones productivas. No acredita API estrecha, rawpipepane, footerless, cancelación/timeout ni otros proveedores. [Recibo y alcance](validation-t180.md).

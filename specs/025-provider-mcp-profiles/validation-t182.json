@@ -1,0 +1,113 @@
+{
+  "schema": "caos.validation.turn-cancellation-ownership.v1",
+  "date": "2026-10-27",
+  "status": "PASS_OFFLINE_COMPOSITION",
+  "execution_base_head": "5558358ddd12c552e6a689deab2eea04d4ccf21c",
+  "integrated_source_head": "8a5449c2bffe39fcbe011b23d4acbf1db5d7291d",
+  "production_source_changed": false,
+  "tested_file": "test/integration/test_turn_cancellation_ownership.py",
+  "tested_file_sha256": "59a25426181892acc81a4c98c1bf7cc3ae4f4ccad9abe9ac95254f440be4fbf2",
+  "regression_test_sha256": {
+    "test/integration/test_turn_cancellation_ownership.py": "59a25426181892acc81a4c98c1bf7cc3ae4f4ccad9abe9ac95254f440be4fbf2",
+    "test/integration/test_turn_recovery_tmux.py": "20ef4c16d4261fd1d5a4e90c0c487b4da651e3d336b0bc2ed1bffc060f78372e",
+    "test/clients/test_turn_recovery.py": "c33b0dbe56529a9870c3d43b76e46de78933dd6cc5833e1c5522aefea905c1b9",
+    "test/services/test_turn_recovery.py": "d9ee979cd0e6127c85012d0f52d7efa6bc825c06f5a948758f3421949a032204",
+    "test/services/test_turn_receipt_delivery.py": "d76c5e49d263ab2fb9e2473a5aaa09cfa3bef2016a6960f3d17555c685df89d5",
+    "test/services/test_turn_receipt_canonicalization.py": "38f86387a41efd7615549947c21d29874dae655360f0da60bb011817abc32a03",
+    "test/api/test_turn_recovery_api.py": "08d94675fb3a679bd3a610af4d023a12cce17fb1602d305a4407a82aaaa893b0",
+    "test/api/test_turn_recovery_ownership_contracts.py": "1d92357402091e30009dd6f138f62d1a5d696269a89b734bba1f3961198f24a9",
+    "test/api/test_work_terminal_input_fence.py": "5255eeae852ae746f84852b64349ff1e1a93eb79cf55f46a7c26d199252ae19b",
+    "test/mcp_server/test_turn_recovery_tools.py": "f96b2f01ca9fc854218ed1a4efad4676450eb9cdcc4176b8e5490e8940abd194",
+    "test/mcp_server/test_app_turn_recovery.py": "21139ea0cd18f02a34c8db5dabd3ac9a9088bc1bcc817443cf6fa98a853e82d7",
+    "test/runtime_channel/test_cancellation_completion_race.py": "616be22674689a5f83bb272c0777b5b38f9551a799b6fe189d3c83db631e0149"
+  },
+  "final_test_source_unchanged": true,
+  "checks": {
+    "initial_focused": {
+      "passed": 10,
+      "seconds": 18.98,
+      "warnings": 2
+    },
+    "initial_regression_before_review_guard": {
+      "passed": 156,
+      "seconds": 144.97,
+      "warnings": 5
+    },
+    "final_focused": {
+      "passed": 11,
+      "seconds": 19.94,
+      "warnings": 2
+    },
+    "final_regression": {
+      "passed": 157,
+      "seconds": 157.1,
+      "warnings": 5,
+      "skipped": 0,
+      "includes_final_focused": true
+    },
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    }
+  },
+  "dependencies": {
+    "postgresql": "real verified private owner",
+    "dispatch_advisory_lock": "real PostgreSQL pg_try_advisory_lock",
+    "receipt_and_child_persistence": "production transactions",
+    "backend_reset": "controlled barrier",
+    "provider_initialize": "controlled barrier",
+    "event_inbox": true,
+    "native_cli": false
+  },
+  "scenarios": [
+    "caller remains connected",
+    "caller disconnects during reset",
+    "caller disconnects during readiness",
+    "duplicate waits after actual SQL refusal then acquires and CAS refuses",
+    "duplicate caller disconnects while waiting; worker still acquires/refuses/releases",
+    "reset failure retains fence",
+    "false readiness retains fence",
+    "readiness exception retains fence",
+    "final cancellation CAS refusal retains fence",
+    "stale generation refused before reset",
+    "unrelated terminal progresses while first reset blocked"
+  ],
+  "invariants": [
+    "late result settlement rejected",
+    "new generation blocked until confirmed finish",
+    "native child sent until reset then cancelled",
+    "local receipt released only after confirmed durable cancellation",
+    "no prompt preparation or send_keys",
+    "publication after this workers actual connection/key release",
+    "stale old generation cannot cancel next receipt"
+  ],
+  "peer_review": {
+    "job_id": "27d3323c32f84d5982c498f9dad0f2d9",
+    "status": "completed",
+    "mode": "read",
+    "verdict": "GO",
+    "independent_execution": false
+  },
+  "postgres_closure": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers": 0,
+    "private_databases": 0
+  },
+  "memory_before_provision_mib": 9814,
+  "private_root": "/home/felni/.cache/caos-cancellation-ownership-20261027",
+  "regression_log_sha256": "46ad33098552baec8294eb5a7c28d537060ebd0134b59db330091c57896d1031",
+  "composition_log_sha256": "0b8446dc0ddac142b5bf7f18ada3ed97739dced4721a147c0df40291518538da",
+  "limits": [
+    "Offline service composition; no native provider cancellation or HTTP disconnect transport acceptance.",
+    "FIFO drain, fresh replacement frame and native login/readiness unobserved; stale-FIFO remains a hypothesis.",
+    "No model request, timeout/fullCX08/global or other-provider native acceptance.",
+    "No production fix, schema/migration/permissions/retry/timeout changes; T032 remains deferred."
+  ],
+  "obsidian": {
+    "operation_id": "save-20261027-caos-cancellation-ownership",
+    "pages": 4,
+    "strict_lint_issues": 0
+  }
+}
