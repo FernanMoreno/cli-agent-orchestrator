@@ -1,5 +1,7 @@
 # Comprobación actual por proveedor
 
+Actualización T176: tres errores Codex mediante API/CLI real y HTTP sintético pasan en303d3f65; auth/throttle502→failed, cuota409→reconcile, join y limpieza preservan veredicto.172 contratos/18nuevos y arquitectura5/0. No transfiere aceptación a OpenCode/Claude ni cierra cancelación, auto-resume, cuotas reales o todos los gates. [Recibo acotado](validation-t176.md).
+
 2026-10-26. Fuente ejecutada: `671c9c8f01a8174ef79096c822dce9f66229c071`. [Recibo acotado](validation-all-providers-current.json). Dos auditorías READ independientes de Luna, revisadas contra fuentes y recibos por Codex; no activaron CLIs ni tocaron credenciales.
 
 ## Contratos actuales

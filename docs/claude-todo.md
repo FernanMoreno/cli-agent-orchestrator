@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T176: API gestionada Codex PASS en303d3f65: auth/throttle→502/error/failed y cuota→409/quota_wait/reconcile; join conserva identidad/veredicto tras limpieza explícita. CLI0.164 real con backend HTTP sintético aislado, sin login del operador. 172 contratos PASS, 18 nuevos, arquitectura5/0;1726pins y cierre de procesos/PG verificados. No acepta cuota real, auto-resume, cancelación activa ni todoCX-08. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t176.md).
+
 T175: corregida la clasificación Codex de errores HTTP nativos `■` y cuota `You’ve`, con guardas para citas, avisos y cuotas antiguas. 416 pruebas pasan, 3 comprobaciones opt-in preexistentes quedan omitidas; arquitectura5/0. Tres capturas CLI0.164 aisladas sin login y 12 clasificaciones en80525802; recursos propios cerrados. No cierra el recorrido gestionado API/recibo, cancelación ni todoCX-08, y no transfiere aceptación a otros proveedores. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t175.md).
 
 T174: baseline interactivo Codex PASS en 7b2ea7d7: Unicode exacto sin normalizar, HTTP200/12,267s y recibo del hijo succeeded/settled/cleanup/join coincidente. 120 contratos distintos y arquitectura5/0; fuente, login y limpieza propios verificados. R1 falló por el ejemplo antiguo de perfiles; corregido y conservado. No acepta todo CX-08 ni recorridos nativos de otros proveedores. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t174.md).

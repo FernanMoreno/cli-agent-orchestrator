@@ -1,0 +1,150 @@
+{
+  "schema": "caos.validation.codex-managed-native-errors.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "native_cli_version": "0.164.0",
+  "native_backend": "synthetic loopback responses; actual native CLI and production managed API",
+  "runs": [
+    {
+      "cases": [
+        "auth"
+      ],
+      "source_head": "303d3f65befa33362c30a98ac4a5848c5831371a",
+      "source_files_pinned": 1726,
+      "source_manifest_sha256": "f07709c0651cf6f0ae35bb5aa704da2e51b83459bc0b2d0d497ca3c8989d1f47",
+      "executed_launcher_sha256": "9cf1e03d3545b6cd14b0818acdb27b3a9046f56663a66b678b7ce5c18147a01d",
+      "executed_wrapper_sha256": "cf6d83e259c82110a6fac8660f78e55e61613bb189fc7178c9e8a277a88dbb25",
+      "executed_backend_sha256": "a7887765452af16a06673a0319a35dcf6021a5ce3a48ede8c0d2ffc3247d9b52",
+      "native_result_sha256": "ff17ad020c7545d7105739e80373223a7f77b36dd0dca0f6c34369a9937db2a8",
+      "memory_before_launch_mib": 10184,
+      "memory_before_parent_mib": 9941,
+      "memory_before_last_turn_mib": 9731,
+      "pytest_and_cleanup_seconds": 86.727,
+      "results": [
+        {
+          "schema": "caos.managed-native-error.v1",
+          "case": "auth",
+          "http_status": 502,
+          "kind": "error",
+          "step_seconds": 34.024,
+          "timeout_seconds": 180,
+          "prompt_redelivery": false,
+          "request_schema_validated": true,
+          "delivery_may_have_occurred": true,
+          "retryable": false,
+          "provider_may_resume": false,
+          "receipt_state": "failed",
+          "same_child_join_verified": true,
+          "child_retained_before_explicit_cleanup": true,
+          "cleanup_preserved_verdict": true,
+          "native_http_responses": 12,
+          "one_backend_receipt_generation": true,
+          "wrapper_exited_after_delete": true,
+          "operator_home_masked": true,
+          "loopback_only": true
+        }
+      ],
+      "physical_cleanup_verified": true,
+      "wrapper_processes_exited": true,
+      "source_binary_python_unchanged": true,
+      "operator_auth_staged": false,
+      "descriptors_reclosed": true
+    },
+    {
+      "cases": [
+        "throttle",
+        "quota"
+      ],
+      "source_head": "303d3f65befa33362c30a98ac4a5848c5831371a",
+      "source_files_pinned": 1726,
+      "source_manifest_sha256": "f07709c0651cf6f0ae35bb5aa704da2e51b83459bc0b2d0d497ca3c8989d1f47",
+      "executed_launcher_sha256": "9cf1e03d3545b6cd14b0818acdb27b3a9046f56663a66b678b7ce5c18147a01d",
+      "executed_wrapper_sha256": "63aa506ae3f12c30be3ee11055a20d359084c17874d10da51d8f8a7341bd049c",
+      "executed_backend_sha256": "a7887765452af16a06673a0319a35dcf6021a5ce3a48ede8c0d2ffc3247d9b52",
+      "native_result_sha256": "782e892f63c6e3d2fefb3fb82ca82e5e01f455a9d965f132d242f6cb42276dab",
+      "memory_before_launch_mib": 9714,
+      "memory_before_parent_mib": 9252,
+      "memory_before_last_turn_mib": 9506,
+      "pytest_and_cleanup_seconds": 110.472,
+      "results": [
+        {
+          "schema": "caos.managed-native-error.v1",
+          "case": "throttle",
+          "http_status": 502,
+          "kind": "error",
+          "step_seconds": 27.775,
+          "timeout_seconds": 180,
+          "prompt_redelivery": false,
+          "request_schema_validated": true,
+          "delivery_may_have_occurred": true,
+          "retryable": false,
+          "provider_may_resume": false,
+          "receipt_state": "failed",
+          "same_child_join_verified": true,
+          "child_retained_before_explicit_cleanup": true,
+          "cleanup_preserved_verdict": true,
+          "native_http_responses": 2,
+          "one_backend_receipt_generation": true,
+          "wrapper_exited_after_delete": true,
+          "operator_home_masked": true,
+          "loopback_only": true
+        },
+        {
+          "schema": "caos.managed-native-error.v1",
+          "case": "quota",
+          "http_status": 409,
+          "kind": "quota_wait",
+          "step_seconds": 27.645,
+          "timeout_seconds": 180,
+          "prompt_redelivery": false,
+          "request_schema_validated": true,
+          "delivery_may_have_occurred": true,
+          "retryable": false,
+          "provider_may_resume": false,
+          "receipt_state": "reconcile",
+          "same_child_join_verified": true,
+          "child_retained_before_explicit_cleanup": true,
+          "cleanup_preserved_verdict": true,
+          "native_http_responses": 2,
+          "one_backend_receipt_generation": true,
+          "wrapper_exited_after_delete": true,
+          "operator_home_masked": true,
+          "loopback_only": true
+        }
+      ],
+      "physical_cleanup_verified": true,
+      "wrapper_processes_exited": true,
+      "source_binary_python_unchanged": true,
+      "operator_auth_staged": false,
+      "descriptors_reclosed": true
+    }
+  ],
+  "tests": {
+    "passed": 172,
+    "new_observer_cases": 18,
+    "warnings": 0,
+    "seconds": 58.09,
+    "architecture_kept": 5,
+    "architecture_broken": 0
+  },
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers": 0,
+    "private_databases": 0
+  },
+  "reviews": {
+    "claude": "875ebb2dcc794de48a468be8ad8f3252: auth receipt GO and prior implementation review; did not inspect R2 bundle",
+    "luna": "GO observer/launcher and R2 ROOT/cases delta",
+    "luna_final_evidence": "GO: public rows, native/backend ledgers,1726source pins, cleanup, test counts and Obsidian fourpage/lint0 receipts match"
+  },
+  "limits": [
+    "No real account authentication rejection or actual quota exhaustion",
+    "No automatic quota resume",
+    "Reconcile join settled is not task success",
+    "Explicit cleanup does not accept active cancellation",
+    "No error after earlier assistant output, timeout reconciliation or full CX08 acceptance",
+    "No new native acceptance for OpenCode or Claude"
+  ]
+}

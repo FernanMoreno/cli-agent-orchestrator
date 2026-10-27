@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T176 [US4] [FR154/SC138] Observe managed Codex auth/throttle/quota HTTP errors, retained child and durable failed/reconcile join; explicitly clean only owned terminals and preserve verdict/identity. Add negative observer contracts and pinned isolated synthetic native acceptance with exact resource closure. Keep auto-resume/cancel/timeout/global gates separate.
+- [x] T176 [US4] [FR154/SC138] Observe managed Codex auth/throttle/quota HTTP errors, retained child and durable failed/reconcile join; explicitly clean only owned terminals and preserve verdict/identity. Add negative observer contracts and pinned isolated synthetic native acceptance with exact resource closure. Keep auto-resume/cancel/timeout/global gates separate.
+
+T176 PASS acotado: tres casos nativos gestionados en303d3f65, auth34,024s/throttle27,775s/quota27,645s; estados y joins exactos, limpieza explícita preserva veredicto.172PASS/18nuevos, arquitectura5/0,1726pins y cierrePG/procesos. Sin login real, auto-resume ni aceptación totalCX08. [Evidencia](validation-t176.md).
 
 - [x] T175 [US4] [FR153/SC137] Capture pinned native Codex auth/throttle/quota error frames in no-login loopback isolation; reproduce any actual classifier defect and fix with quoted/stale/active-receipt negative controls. Validate owned cleanup/source/binary, regressions and independent review. Keep direct native/classifier evidence separate from managed task and full CX-08 acceptance.416PASS/3existingopt-in skips,40newcases,architecture5-0; realisolated401/429/quota frames and12final-source classifications PASS80525802. Ownedresourcesclosed; no realauth/backendusage. [Evidence](validation-t175.md).
 
