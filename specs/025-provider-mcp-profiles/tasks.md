@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T185 [US4] [FR163/SC147] Validate actual Codex full180s timeout, retained live execution, settled reconcile/timeout child versus pending turn, no-resend verification, generation-bound cancellation and explicit cleanup preserving the original child verdict/settled_at. Keep historical jobs, other providers and global gates separate.
+
 - [x] T184 [US4] [FR162/SC146] Reproduce/fix Codex cancellation startup circularity using the captured T183 replacement frame. Keep local/durable receipt fences, normal progress classification, reset/generation authority and budgets. Scope the independent startup probe to provider/generation/task; verify negative frames, context lifetime/isolation and service ordering, then a fresh source-bound T183 native retry.
 
 T183/T184: corregida la circularidad entre el recibo pendiente y el arranque tras cancelar. Codex nativo en49297912 PASS:409 para generación ajena,200/cancelled26,075s para la actual; salida de cinco procesos viejos, reemplazo disponible y0peticiones en3,161s, join/limpieza estables y padre API200.1116PASS/3opt-in previos;28controles nuevos, arquitectura5/0 y mypy canónico4archivos. Primer FAIL conservado; timeout/global/otros proveedores siguen separados. [T183](validation-t183.md), [T184](validation-t184.md).

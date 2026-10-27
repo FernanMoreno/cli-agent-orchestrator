@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Native timeout and explicit reconciliation · T185
+
+FR163/SC147: A real pinned Codex run-step with timeout180, teardown=True and
+prompt_redelivery=False must return504/timeout after the unchanged completion
+budget, retain its live child and produce a settled reconcile/timeout receipt.
+That disposition is not execution stoppage or task success: the turn may remain
+pending and its stream active. Verify existing evidence without resend, reject
+an alien generation, then explicitly cancel the same generation. Require old
+process exit/fresh CLI, turn cancelled, original child reconcile/error/settled_at
+unchanged through cancel and explicit cleanup, parent continuity and owned
+resource closure. No widening production transitions or historical job actions.
+
 ## Cancellation startup without early receipt release · T184
 
 FR162/SC146: After acknowledged owned reset, initialization must distinguish

@@ -1,5 +1,17 @@
 # Plan: provider MCP profiles
 
+## T185 · full-budget timeout followed by owned cancellation
+
+Reuse T183/T184 isolated native runner and physical witnesses. Hold only the
+synthetic provider stream for360s so the real completion wait can consume180s;
+this is fixture lifetime, not a change to product/client deadlines. Validate
+run-step OpenAPI body and sanitized HTTP timing before assertions. Observe both
+native-child reconcile and turn pending, join/verify existing evidence, then
+same-generation cancel and cleanup while preserving the original timeout
+receipt. Add strict negative observer contracts; reuse one verified PG owner,
+source-bound launchers and actual native config/stream preflight. Graphify
+recovery/agent_step/database pointers are checked against current source.
+
 ## T184 · reproduce the pending-receipt readiness circularity
 
 T183 R1 on ee3567bd failed its unchanged managed gate after an actual fresh
