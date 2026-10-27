@@ -1,0 +1,214 @@
+{
+  "schema": "caos.validation.codex-active-cancel.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "source_head": "49297912e320775e9776c6d8323caa4f7ffa8380",
+  "source_files_pinned": 1742,
+  "manifest_sha256": "a4c59ef2acabc9ca698a33b191d5678b1819f0adfc082dccf8345d32970e835a",
+  "native_binary": {
+    "binary": "/home/felni/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/bin/codex",
+    "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+    "model": "gpt-6-luna"
+  },
+  "model_requested": "gpt-6-luna",
+  "synthetic_http_backend": true,
+  "operator_auth_staged": false,
+  "result": {
+    "schema": "caos.managed-native-cancel.v1",
+    "terminal_id": "95c09ecc",
+    "cancel_http_status": 200,
+    "cancel_seconds": 26.076,
+    "stale_generation_http_status": 409,
+    "same_generation_cancelled": true,
+    "receipt_state": "cancelled",
+    "same_child_join_verified": true,
+    "cleanup_preserved_verdict": true,
+    "parent_alive_after_child_delete": true,
+    "before_and_after_owned_witnesses_returned": true,
+    "active_stream_and_stale_refusal_verified": true,
+    "replacement": {
+      "old_pidfd_exit": true,
+      "old_owned_processes_absent": 5,
+      "new_attempt_bound": true,
+      "fresh_ready_frame": true,
+      "no_requests_observation_seconds": 3.161,
+      "replacement_requests": 0,
+      "visible_snapshot_sha256": [
+        "93b7c2025965b872a6d096ca574b656cafc4f8864a96a65c99ee768a56a0ddfb",
+        "93b7c2025965b872a6d096ca574b656cafc4f8864a96a65c99ee768a56a0ddfb",
+        "93b7c2025965b872a6d096ca574b656cafc4f8864a96a65c99ee768a56a0ddfb"
+      ],
+      "private_session_environment_verified": true
+    },
+    "schema_query_admission_verified": true,
+    "operator_home_masked": true,
+    "loopback_only": true
+  },
+  "http_observations": [
+    {
+      "requested_current_generation": false,
+      "http_status": 409,
+      "seconds": 0.152,
+      "returned_state": "pending",
+      "returned_generation_matches_current": true
+    },
+    {
+      "requested_current_generation": true,
+      "http_status": 200,
+      "seconds": 26.075,
+      "returned_state": "cancelled",
+      "returned_generation_matches_current": true
+    }
+  ],
+  "memory": {
+    "before_launch_mib": 9133,
+    "memory_before_parent_mib": 8899,
+    "memory_before_child_mib": 8784,
+    "memory_before_cancel_mib": 8739
+  },
+  "cleanup": {
+    "home_removed": true,
+    "tmux_roots_removed": true,
+    "api_process_dead": true,
+    "registered_owner_absent": true,
+    "owned_native_sessions_absent": true,
+    "observed_native_processes_absent": true,
+    "observed_native_process_count": 23,
+    "sampler_errors": [],
+    "sampler_stopped": true,
+    "api_returncode": -15,
+    "api_forced_kill": false,
+    "physical_cleanup_verified": true,
+    "observed_wrapper_count": 3,
+    "wrapper_processes_exited": true
+  },
+  "sql_borrowers": 0,
+  "private_databases": 0,
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true
+  },
+  "source_unchanged": true,
+  "binary_unchanged": true,
+  "python_unchanged": true,
+  "descriptors_closed": true,
+  "checks": {
+    "observer_red": 20,
+    "observer_focused": {
+      "passed": 49,
+      "seconds": 7.12
+    },
+    "pre_fix_regression": {
+      "passed": 230,
+      "seconds": 155.39,
+      "warnings": 5
+    },
+    "fixed_runtime_regression": {
+      "passed": 1116,
+      "skipped": 3,
+      "seconds": 588.91,
+      "warnings": 5
+    },
+    "final_json_fixture_focused": {
+      "passed": 28,
+      "seconds": 12.28,
+      "overlaps_regression": true
+    },
+    "native_suite": {
+      "passed": 1,
+      "seconds": 109.97
+    },
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    },
+    "canonical_mypy": {
+      "passed": true,
+      "source_roots": 4,
+      "global_typing_accepted": false
+    }
+  },
+  "first_native_attempt": {
+    "source_head": "ee3567bd9c4132b3a8db8a221a45474a0eec517f",
+    "status": "FAIL",
+    "pytest_seconds": 229.78,
+    "http_status": "not_recorded",
+    "physical_cleanup_verified": true,
+    "native_result_sha256": "a5a6eb9f7f25f0280d92edea5faef51aad37f2927cf7e2e2a5ce0c7f36656529",
+    "private_root": "/home/felni/.cache/caos-codex-active-cancel-20261027",
+    "not_relabelled": true
+  },
+  "readiness_red": {
+    "schema": "caos.cancel-startup-circularity.red.v1",
+    "without_receipt": "idle",
+    "with_pending_receipt": "processing",
+    "with_pending_receipt_screen": "processing",
+    "strict_startup_composer": false,
+    "receipt_unchanged": true
+  },
+  "private_sha256": {
+    "scripts/error_backend.py": "f14753f2e1581be5f4b042bf1143784eed0991ee24c139c6aa872d889e8a4751",
+    "scripts/witness.py": "ea87d90fada63797b42da59f8ee28e23fcfdc2ad2e966f29d4b810e02179d740",
+    "scripts/test_managed_errors.py": "28dc9d598e02e538bf00b046ea7a1b072e334eceda238893059baca410ed18aa",
+    "scripts/conftest.py": "5949bc75c337881a08140189bec482d925f6b49dcf41c6bf1998106b4a52bcf5",
+    "scripts/preflight_wrapper.py": "2a5ec19ecb1af515470edca23fbfddf877d87bd54807822d918a6b7a4887f8e6",
+    "scripts/process_closure.py": "9da982c58f6c33e38ec64382c1ef02a577087f828053ca8d15c0bdee2ca2ecbf",
+    "base-config.template": "27aeb88411a7b2b4308cdbde425254ec79b4678d7e459a558c0abfa9dc15f84b"
+  },
+  "native_result_sha256": "df74a22a60d858aee60728ed11a7c4edf7c6c48970de42bd2b112c72d2d7e93e",
+  "launcher_execution_sha256": "3affffc4918e80cba89c2dd4b8a2ce12e326a884a81a1f1703ee33b5dda0c07c",
+  "launcher_closed_sha256": "c158d0077343ace641e6421b12bb1121fc3e1b7e2598ff447a3d512c328ef90b",
+  "wrapper_execution_sha256": "ed2f2b8ab2abc038c7302d2770f7a62f2b0618b805ad40caf8dae04f3fc7c992",
+  "wrapper_closed_sha256": "bb5f978a70cbd2316f04548134a0686f644b3faf9a87e8b0b36889055c40103c",
+  "preflight": {
+    "schema": "caos.codex-active-cancel.preflight.v1",
+    "memory_mib": 9300,
+    "accepted": true,
+    "native_config_consumed": true,
+    "native_mcp_tools": [],
+    "native_ready": true,
+    "active_request_observed": true,
+    "generation_token_hash_count": 1,
+    "native_startup_tty": [
+      220,
+      50
+    ],
+    "stream_held_without_completion": true,
+    "old_pidfd_reaped": true,
+    "old_session_absent": true,
+    "session_retirement_seconds": 0.057,
+    "seconds": 2.205,
+    "wrapper_closed": true,
+    "backend_sha256": "f14753f2e1581be5f4b042bf1143784eed0991ee24c139c6aa872d889e8a4751",
+    "wrapper_closed_sha256": "bb5f978a70cbd2316f04548134a0686f644b3faf9a87e8b0b36889055c40103c",
+    "wrapper_execution_sha256": "ed2f2b8ab2abc038c7302d2770f7a62f2b0618b805ad40caf8dae04f3fc7c992"
+  },
+  "private_root": "/home/felni/.cache/caos-codex-active-cancel-20261027-r2",
+  "limits": [
+    "Real pinned Codex CLI plus production API/PostgreSQL, synthetic loopback SSE; no real model/account assertion.",
+    "No replacement requests only over the recorded3.161s window, not an indefinite no-resend guarantee.",
+    "Old stream owner exited; no final server-side TCP-close acknowledgement was archived.",
+    "No global FIFO drain, HTTP-disconnected caller native acceptance, timeout reconciliation, full CX08/CX09, other-provider or global acceptance.",
+    "T032 remains deferred.",
+    "No-resend counter covers validated task POST /v1/responses, not packet capture or metadata-network auditing."
+  ],
+  "final_replacement_request_counter": {
+    "post_responses_count": 0,
+    "ledger_sha256": "e86d08844aeca7857af769e3c86b92eb289a221c694638ec197098a0fbfbdb67",
+    "checked_after_native_borrower_exit": true
+  },
+  "peer_review": {
+    "source_review_job": "50794f9a1837456c981c3ab82efdac7a",
+    "final_docs_review_job": "ec5359aefc464b9dbc8f0baa07dfb19f",
+    "verdict": "GO",
+    "mode": "read",
+    "independent_commands": false,
+    "final_review_scope": "both Markdown receipts; JSON/hash/number verification performed by lead"
+  },
+  "obsidian": {
+    "operation_id": "save-20261027-caos-cancel-startup-readiness",
+    "pages": 4,
+    "strict_lint_issues": 0
+  }
+}

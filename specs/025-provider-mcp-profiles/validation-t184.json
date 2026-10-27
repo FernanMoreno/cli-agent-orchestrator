@@ -1,0 +1,94 @@
+{
+  "schema": "caos.validation.cancel-startup-fence.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "source_head": "49297912e320775e9776c6d8323caa4f7ffa8380",
+  "runtime_source_sha256": {
+    "src/cli_agent_orchestrator/providers/base.py": "5eb6eeab38b53e0ef6f6fd05be3da4dfba4ca0fe4cffa7826d4f8e3840b13a40",
+    "src/cli_agent_orchestrator/providers/codex.py": "ce1dc4f9e74f1e10921b7ddc48905f8a78c53d8308ffc1ffa3a50a87581a34c4",
+    "src/cli_agent_orchestrator/services/turn_recovery_service.py": "7bc6d6427d20ed2c1896217601692a5946a319bdd1e686e58a468f0032113a30",
+    "src/cli_agent_orchestrator/utils/terminal.py": "6a8ddaa03272c28b65397eec6bdef3e8e6c90db2ca2ffd2a3782188bfbbb229d"
+  },
+  "reproduction": {
+    "schema": "caos.cancel-startup-circularity.red.v1",
+    "without_receipt": "idle",
+    "with_pending_receipt": "processing",
+    "with_pending_receipt_screen": "processing",
+    "strict_startup_composer": false,
+    "receipt_unchanged": true
+  },
+  "red_initialize_test": {
+    "failed": 1,
+    "seconds": 16.78,
+    "result": "TimeoutError while retaining pending receipt"
+  },
+  "negative_update_control": {
+    "failed": 1,
+    "passed": 23,
+    "subsequently_fixed": true
+  },
+  "new_focused_cases": 28,
+  "regression": {
+    "passed": 1116,
+    "skipped": 3,
+    "seconds": 588.91,
+    "warnings": 5
+  },
+  "final_focused": {
+    "passed": 28,
+    "seconds": 12.28,
+    "overlaps_regression": true
+  },
+  "fixture_provenance": {
+    "producer_source": "ee3567bd9c4132b3a8db8a221a45474a0eec517f",
+    "capture_sha256": "adecb71eb4944476d1e4735daf6162fbd7cedd8040f27fa1567ced8e811a2963",
+    "suffix_byte_offset": 417,
+    "transformation": "exact suffix from final banner line boundary; indentation/rows/trailing blanks unchanged",
+    "decoded_suffix_sha256": "57d0abdd7a8ab1ddb40bce5fbd4e1e86223f19c97c02365273dd2ffd0453819c",
+    "encoded_fixture_path": "test/providers/fixtures/codex_0164_cancel_replacement.json"
+  },
+  "fixture_storage": {
+    "decoded_frame_equals_broad_test_fixture": true,
+    "decoded_frame_sha256": "57d0abdd7a8ab1ddb40bce5fbd4e1e86223f19c97c02365273dd2ffd0453819c",
+    "json_fixture_sha256": "f17ca077f8dc91ed1fc6074cfbd160404d4fb13f86fab90aca11817da5e145a5",
+    "reason": "Preserve physical trailing blank rows without treating captured screen padding as source-file whitespace."
+  },
+  "post_regression_equivalence": {
+    "runtime_sources_unchanged": true,
+    "original_test_assertion_ast_preserved": true,
+    "decoded_frame_unchanged": true,
+    "only_post_regression_change": "lossless JSON fixture representation and loader",
+    "runtime_file_count": 476
+  },
+  "canonical_mypy": {
+    "passed": true,
+    "source_roots": 4,
+    "global_typing_accepted": false
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "native_acceptance": "validation-t183.json",
+  "private_root": "/home/felni/.cache/caos-codex-active-cancel-20261027-r2",
+  "limits": [
+    "Real pinned Codex CLI plus production API/PostgreSQL, synthetic loopback SSE; no real model/account assertion.",
+    "No replacement requests only over the recorded3.161s window, not an indefinite no-resend guarantee.",
+    "Old stream owner exited; no final server-side TCP-close acknowledgement was archived.",
+    "No global FIFO drain, HTTP-disconnected caller native acceptance, timeout reconciliation, full CX08/CX09, other-provider or global acceptance.",
+    "T032 remains deferred."
+  ],
+  "peer_review": {
+    "source_review_job": "50794f9a1837456c981c3ab82efdac7a",
+    "final_docs_review_job": "ec5359aefc464b9dbc8f0baa07dfb19f",
+    "verdict": "GO",
+    "mode": "read",
+    "independent_commands": false,
+    "final_review_scope": "both Markdown receipts; JSON/hash/number verification performed by lead"
+  },
+  "obsidian": {
+    "operation_id": "save-20261027-caos-cancel-startup-readiness",
+    "pages": 4,
+    "strict_lint_issues": 0
+  }
+}

@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T183/T184: corregida la circularidad entre el recibo pendiente y el arranque tras cancelar. Codex nativo en49297912 PASS:409 para generación ajena,200/cancelled26,075s para la actual; salida de cinco procesos viejos, reemplazo disponible y0peticiones en3,161s, join/limpieza estables y padre API200.1116PASS/3opt-in previos;28controles nuevos, arquitectura5/0 y mypy canónico4archivos. Primer FAIL conservado; timeout/global/otros proveedores siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t183.md).
+
 T182: validada la propiedad de cancelación compartida con PostgreSQL real y barreras: desconexión del llamante, duplicados, fallos de reset/readiness/CAS, generaciones obsoletas y progreso de otro terminal.11controles nuevos y157regresiones PASS, arquitectura5/0, GOClaude y PG cerrado. Sin cambio productivo ni aceptación de cancelación nativa/FIFO/timeout/global. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t182.md).
 
 T181: API gestionada Codex80×50 PASS en436dc0ae: parcial→401 da502/error/failed34,325s; parcial→cuota da409/quota_wait/reconcile28,690s. TTY80desde arranque y cada petición, capturas2/3líneas, join/veredicto y limpieza estables; padre220accesible.435regresiones/24controles finales solapados/arquitectura5/0,1737pins y recursos propios cerrados. Backend sintético; cancelación/timeout/footerless/global siguen separados. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t181.md).
