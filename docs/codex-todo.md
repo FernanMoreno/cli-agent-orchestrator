@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T173: corregido el filtro MCP del servidor para comandos de texto; 194 pruebas y arquitectura 5/0 pasan. Codex CLI 0.164.0 valida los 7 perfiles con filtros completo/vacío/parcial: 21 casos nativos sin modelo y par de catálogos 3/12, en 96f3eaae. Dos controles stdio prueban el rechazo directo del servidor. No acredita efectos autorizados, permisos globales ni aceptación nativa OpenCode/Claude. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t173.md).
+
 ## Estado específico del proveedor · 2026-10-27
 
 **CX-07 PASS real en418a9853**: una única espera MCP nativa atraviesa la caída

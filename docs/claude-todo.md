@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T173: corregido el filtro MCP del servidor para comandos de texto; 194 pruebas y arquitectura 5/0 pasan. Codex CLI 0.164.0 valida los 7 perfiles con filtros completo/vacío/parcial: 21 casos nativos sin modelo y par de catálogos 3/12, en 96f3eaae. Dos controles stdio prueban el rechazo directo del servidor. No acredita efectos autorizados, permisos globales ni aceptación nativa OpenCode/Claude. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t173.md).
+
 T171: la espera explícita MCP compartida recupera solo errores de conexión dentro del presupuesto original.137 pruebas/PG replay y arquitectura5/0 pasan; sin nueva aceptación nativa de este proveedor. [Evidencia](../specs/025-provider-mcp-profiles/validation-t171.md).
 
 ## Estado específico del proveedor · 2026-10-26

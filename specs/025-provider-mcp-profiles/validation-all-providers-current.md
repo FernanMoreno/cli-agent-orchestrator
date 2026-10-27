@@ -39,3 +39,5 @@ Actualización posterior: CX-07 cerrado por su propia ejecución418a9853,
 con19→3s, una sola respuesta ready y ACK exacto. El ConnectionError y la
 unicidad de filas/eventos también se probaron sin modelo por separado.
 La ejecución141PASS y el anterior reciboCX-06 mantienen sus fuentes y límites.
+
+2026-10-27 · T173: corrección compartida del filtro de servidor para comandos de texto;194 contratos y arquitectura5/0. [Codex nativo en96f3eaae](validation-t173.md): siete perfiles × completo/vacío/parcial,21casos sin modelo y par adicional de catálogos3/12 pasan. Dos controles stdio independientes prueban el rechazo directo del servidor. Este avance solo cierra T173: el mapeo global allowed_tools, efectos autorizados de cada herramienta, modelos y aceptación nativa OpenCode/Claude conservan sus gates. Las ejecuciones141PASS y CX-06/07 mantienen sus fuentes originales.
