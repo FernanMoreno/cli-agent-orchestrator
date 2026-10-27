@@ -1,7 +1,8 @@
 # T187 — disconnected HTTP controller
 
-Status: implemented and verified offline; runner integration and actual paired
-HTTP cancellation remain pending. No existing activity case changes.
+Initial controller validation: implemented and verified offline. Subsequent
+[runner wiring and installed composition](validation-t187-runner.md) are now
+implemented; actual paired HTTP cancellation remains pending.
 
 The controller retains an initial snapshot while polling at750ms within the
 original deadline. After same-binding TEXT growth it pins the selected native

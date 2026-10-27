@@ -21,6 +21,8 @@ import sys
 import time
 from pathlib import Path
 
+import native_http_stream_activity as http_activity
+import native_http_stream_controller as http_controller
 import native_paired_protocol as protocol
 import native_tool_activity as activity
 import run_native_v2_acceptance as native
@@ -33,6 +35,7 @@ MEMORY_MIB = 6144
 EXPECTED = "T168 comprobado: ñ, 中文."
 WORKER = "t168-native-worker"
 CALLER = "t168-stdio-coordinator"
+HTTP_INSTRUCTION = "Do not use tools or change files."
 EXTRA_SOURCES = (
     "specs/025-provider-mcp-profiles/fixtures/native_paired_protocol.py",
     "specs/025-provider-mcp-profiles/fixtures/run_native_paired_worker.py",
@@ -41,7 +44,172 @@ EXTRA_SOURCES = (
     "test/providers/fixtures/bin/mock_cli",
     "specs/025-provider-mcp-profiles/fixtures/native_tool_activity.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_tool_activity.py",
+    "specs/025-provider-mcp-profiles/fixtures/native_http_stream_activity.py",
+    "specs/025-provider-mcp-profiles/fixtures/native_http_stream_controller.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_http_stream_activity.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_http_stream_controller.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_http_stream_runner.py",
+    "specs/025-provider-mcp-profiles/fixtures/t187/control/installed_http_stream.mjs",
+    "specs/025-provider-mcp-profiles/contracts/http-text-stream-observation.schema.json",
 )
+
+
+def task_message(index: int, activity_case: str) -> str:
+    message = (
+        f"Reply with exactly {EXPECTED} as the public body, no explanation."
+        if index == 0
+        else "Start your response with RESULT: followed by one space and the sum of "
+        "270584 and 198327. Then output 10000 numbered lines explaining that arithmetic."
+    )
+    return message + "\n" + HTTP_INSTRUCTION if activity_case == "native_http_stream" else message
+
+
+def prepare_http_observer(project: Path, runtime: Path, nonce: str):
+    """Commit only the loader in the fresh private repository before any worker."""
+    from test.live_provider import opencode_http_text_stream_observer as observer
+    from types import SimpleNamespace
+
+    from cli_agent_orchestrator.providers.base import BaseProvider
+
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(project.parent / "private-home"),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    if subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=project, env=env
+    ).strip():
+        raise protocol.HarnessError("http_observer_project_not_clean")
+    body, token = "__HTTP_BODY__", "__HTTP_RECEIPT__"
+    template = BaseProvider._format_turn_receipt_input(
+        SimpleNamespace(terminal_id="{{CAO_TERMINAL_ID}}"), body, token
+    )
+    if not template.startswith(body) or template.count(token) != 1:
+        raise protocol.HarnessError("http_observer_formatter_invalid")
+    prefix, suffix = template[len(body) :].split(token)
+    installed = observer.install(
+        runtime,
+        project,
+        nonce,
+        [task_message(i, "native_http_stream") for i in range(2)],
+        prefix,
+        suffix,
+        HTTP_INSTRUCTION,
+    )
+    (project / ".opencode").mkdir(mode=0o700)
+    (project / ".opencode/plugins").mkdir(mode=0o700)
+    loader = project / installed.project_loader_path
+    fd = os.open(loader, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "wb") as stream:
+        os.fchmod(stream.fileno(), 0o644)
+        stream.write(installed.project_loader_bytes)
+    for arguments in (
+        ["add", "--", installed.project_loader_path],
+        ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "private HTTP observer loader"],
+    ):
+        subprocess.run(
+            ["git", *arguments], cwd=project, env=env, check=True, capture_output=True, timeout=8
+        )
+    committed = subprocess.check_output(
+        ["git", "show", "HEAD:" + installed.project_loader_path], cwd=project, env=env
+    )
+    if (
+        committed != installed.project_loader_bytes
+        or digest(loader) != installed.project_loader_sha256
+    ):
+        raise protocol.HarnessError("http_observer_loader_not_committed")
+    return installed
+
+
+async def cancel_witnessed_http(
+    client, target, terminal_id, task_id, launch_binding, receipt, retired, deadline
+):
+    """Use the strict installed observer and credit retirement only after pidfd exit."""
+    runtime = Path(receipt["http_stream_runtime"])
+    nonce = receipt["http_stream_nonce"]
+    pending_retirement = set()
+
+    def refresh():
+        return api(target, "GET", f"/terminals/{terminal_id}", deadline=deadline)
+
+    def capture(metadata):
+        value = http_activity.capture(target, runtime, terminal_id, metadata, nonce, deadline)
+        polls = receipt.setdefault("http_stream_observations", [])
+        if len(polls) >= 512:
+            raise protocol.HarnessError("http_stream_poll_limit")
+        turn = metadata.get("turn")
+        polls.append(
+            {
+                "terminal_id": terminal_id,
+                "generation": turn.get("generation") if isinstance(turn, dict) else None,
+                "active": value is not None,
+                "snapshot": dataclasses.asdict(value) if value else None,
+            }
+        )
+        private_json(
+            Path(receipt["evidence_dir"]) / f"native-http-poll-{len(polls)-1:04d}.private.json",
+            polls[-1],
+        )
+        return value
+
+    def owner():
+        from test.live_provider import opencode_interaction_journey as journey
+
+        identity = owned_native_launch_identity(terminal_id, **launch_binding)
+        if identity is not None:
+            inventory = journey._owned_process_snapshot_for_cleanup(
+                launch_binding["server_identity"], terminal_id, launch_binding["socket_path"]
+            )
+            previous = receipt.setdefault("http_owned_process_inventory", [])
+            for item in inventory:
+                record = dataclasses.asdict(item)
+                if record not in previous:
+                    previous.append(record)
+        return (
+            http_controller.ProcessIdentity(identity.pid, identity.uid, identity.start_time)
+            if identity
+            else None
+        )
+
+    async def cancel():
+        admit_memory(receipt, "native_http_stream_cancel")
+        try:
+            async with asyncio.timeout_at(deadline):
+                result = await client.call("cancel_local_cao_task", {"task_id": task_id})
+        except TimeoutError:
+            raise protocol.HarnessError("native_model_75_second_deadline") from None
+        record_cancelled_worker(target, terminal_id, task_id, result, pending_retirement)
+        return True
+
+    try:
+        proof = await http_controller.cancel_if_growing_http_text(
+            terminal_id=terminal_id,
+            deadline=deadline,
+            refresh_api=refresh,
+            capture=capture,
+            owned_process=owner,
+            cancel=cancel,
+        )
+    except http_controller.ControllerError as error:
+        raise protocol.HarnessError(error.code) from error
+    except ProcessLookupError:
+        return False
+    if proof is None:
+        return False
+    private_json(
+        Path(receipt["evidence_dir"]) / "native-http-activity.private.json",
+        dataclasses.asdict(proof),
+    )
+    retired.update(pending_retirement)
+    receipt.update(
+        http_stream_growth_witnessed=True,
+        http_stream_final_fence_verified=True,
+        http_stream_worker_stopped=True,
+        cancelled_worker_stopped=True,
+    )
+    return True
 
 
 def digest(path: Path) -> str:
@@ -615,6 +783,12 @@ def acceptance(receipt: dict) -> bool:
             "native_tool_child_stopped_before_natural_expiry",
             "native_tool_worker_stopped",
         )
+    elif activity_case == "native_http_stream":
+        required = tuple(k for k in required if k != "active_native_cancel_observed") + (
+            "http_stream_growth_witnessed",
+            "http_stream_final_fence_verified",
+            "http_stream_worker_stopped",
+        )
     elif activity_case != "streaming":
         return False
     return (
@@ -657,12 +831,7 @@ async def _tasks(
     nonce = os.urandom(16).hex()
     for index in range(2):
         admit_memory(receipt, f"task_{index}")
-        message = (
-            f"Reply with exactly {EXPECTED} as the public body, no explanation."
-            if index == 0
-            else "Start your response with RESULT: followed by one space and the sum of "
-            "270584 and 198327. Then output 10000 numbered lines explaining that arithmetic."
-        )
+        message = task_message(index, activity_case)
         if index == 1 and activity_case == "native_tool":
             message = (
                 "Call the native bash/shell tool once with exactly this command. "
@@ -715,6 +884,20 @@ async def _tasks(
                 turn = metadata.get("turn")
                 if not isinstance(turn, dict):
                     raise protocol.HarnessError("native_turn_projection_invalid")
+                if activity_case == "native_http_stream":
+                    if await cancel_witnessed_http(
+                        client,
+                        target,
+                        terminal_id,
+                        task_id,
+                        launch_binding,
+                        receipt,
+                        retired,
+                        deadline,
+                    ):
+                        break
+                    await asyncio.sleep(0.2)
+                    continue
                 if activity_case == "native_tool":
                     polls = receipt.setdefault("native_tool_observations", [])
                     polls.append(
@@ -843,6 +1026,14 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         home = journey._private_directory(root / "home")
         project = journey._private_directory(root / "project")
         journey._initialize_private_git_repository(project)
+        if receipt["activity_case"] == "native_http_stream":
+            nonce = os.urandom(16).hex()
+            installed = prepare_http_observer(project, root / "http-runtime", nonce)
+            receipt.update(
+                http_stream_runtime=str(installed.private_root),
+                http_stream_nonce=nonce,
+                http_loader_sha256=installed.project_loader_sha256,
+            )
         baseline = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=project, text=True
         ).strip()
@@ -1130,6 +1321,13 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
             and "api_cleanup_failed" not in failures
         )
         if sid is not None:
+            try:
+                owned.update(
+                    journey._ProcessIdentity(**record)
+                    for record in receipt.get("http_owned_process_inventory", [])
+                )
+            except Exception:
+                failures.add("process_snapshot_failed")
             cleanup_ids = [tid for _, tid in ids] or ["t168-no-returned-terminal-id"]
             for terminal_id in cleanup_ids:
                 try:
@@ -1272,7 +1470,8 @@ def main(argv=None) -> int:
         manifest.get("approved") is not True
         or manifest.get("mode") != ("preflight" if args.preflight_only else "execute")
         or manifest.get("source_head") != head
-        or manifest.get("activity_case", "streaming") not in {"streaming", "native_tool"}
+        or manifest.get("activity_case", "streaming")
+        not in {"streaming", "native_tool", "native_http_stream"}
         or manifest.get("model") != MODEL
     ):
         raise protocol.HarnessError("private_admission_invalid")

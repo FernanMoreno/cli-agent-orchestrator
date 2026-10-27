@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+T187 runner wiring: distinct default-closed native_http_stream case, pre-init committed loader/baseline and inherited worktree, strict capture/controller and receipt-before-physical-retirement ordering are implemented.91 focused tests pass including actual installed Node/writer/reader/controller/pidfd composition with explicit API/SQL/native-selection doubles and native-tool regressions. Fresh source-bound native preflight and actual paired cancellation remain pending. [Scope](validation-t187-runner.md).
+
 T187 controller preparation: disconnected HTTP helper retains the first sample across750ms polling, pins PID before final API/PG capture, rechecks API/process/receipt type and requires observed physical retirement within deadline.45 focused tests pass, including two real owned Python/pidfd controls; architecture5/0. Draft thread/FD race reproduced; five further root REDs fixed. Runner/installed-controller and real paired cancellation stay pending. [Scope](validation-t187-controller.md).
 
 - [ ] T187 [US4] [FR165/SC149] Determine native-store active TEXT visibility for T168 with an installed-binary synthetic streaming control; use bounded receipt/generation/owner-bound snapshots only if growth is observed, otherwise review the transparent HTTP alternative required by FR165. Verify negative and installed-controller multi-poll controls, then source-bound paired real streaming cancellation with physical stop/normal cleanup. Preserve legacy/native_tool evidence and75s/6144MiB.

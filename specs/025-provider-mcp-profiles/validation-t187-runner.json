@@ -1,0 +1,45 @@
+{
+  "schema": "caos.spec025.t187.installed-runner-preparation.v1",
+  "date": "2026-10-27",
+  "base_head": "8014230fa87f3f67de43d17b5d67757eb206ad3c",
+  "source_sha256": {
+    "fixtures/run_native_paired_worker.py": "52d38bb0ed27e338daec53d9d7cf87b703c688f13ac4ea74430be78366070c94",
+    "fixtures/test_native_http_stream_runner.py": "19fa53420f3c95712339189098d31d6638ee39732a6c694878e431918e01c13a",
+    "fixtures/t187/control/installed_http_stream.mjs": "cb279b900d1e1966467334509b90eda9128435e5b094ec7a38876927011ca881"
+  },
+  "tests": {
+    "focused_passed": 91,
+    "seconds": 20.75,
+    "runner_cases": 8
+  },
+  "initial_reds": 2,
+  "git_environment_reds": 1,
+  "installed_composition": {
+    "actual_git_worktree": true,
+    "actual_node_hooks": true,
+    "actual_writer_and_strict_reader": true,
+    "actual_activity_and_controller": true,
+    "actual_pidfd_exit": true,
+    "original_response_exact": true,
+    "api_mocked": true,
+    "sql_mocked": true,
+    "native_selection_mocked": true
+  },
+  "run_enabled": false,
+  "native_preflight_accepted": false,
+  "actual_paired_http_accepted": false,
+  "t187_accepted": false,
+  "t168_accepted": false,
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "peer_reviews": {
+    "scoped_runner": "b2766a92d3ff49d0abba416522ad0ef4",
+    "git_isolation_and_logger": "ab82e742e445433a975becde076c53d2",
+    "mode": "read",
+    "blocking_findings": 0,
+    "initial_design_job": "a3cd5d779ca3468787b4bb9d3203a9ed",
+    "initial_design_status": "timed_out; not counted as completed review"
+  }
+}

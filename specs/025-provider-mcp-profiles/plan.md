@@ -913,6 +913,14 @@ T186 actualR1 on5509599b: fresh native_tool preflightPASS183.757s; actualUnicode
 
 ### T187: genuine native text streaming for T168
 
+Runner wiring now prepares and commits the exact loader before the private Git
+baseline/native preflight, inherits it in actual worktrees and selects a separate
+native_http_stream adapter. Installed Node → exclusive writer → strict reader →
+activity/controller → kernel pidfd composition is covered, with explicit mocked
+API/SQL/native selection. Keep RUN_ENABLED=False in repository source; actual
+models require new committed source pins, reviewed flag-only archives, native
+preflight and held PostgreSQL ownership before actual paired acceptance.
+
 The HTTP alternative now has bounded installed-Bun capability and actual
 PostgreSQL/strict-reader evidence on44eb8660; see the T187 preparation report.
 The next controller must retain the first active sample while polling within
