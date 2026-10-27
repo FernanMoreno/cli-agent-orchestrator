@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 import native_paired_protocol as protocol
+import native_tool_activity as activity
 import run_native_v2_acceptance as native
 
 RUN_ENABLED = False
@@ -38,6 +39,8 @@ EXTRA_SOURCES = (
     "specs/025-provider-mcp-profiles/fixtures/test_native_paired_protocol.py",
     "specs/025-provider-mcp-profiles/fixtures/test_peer_cli_json.py",
     "test/providers/fixtures/bin/mock_cli",
+    "specs/025-provider-mcp-profiles/fixtures/native_tool_activity.py",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_tool_activity.py",
 )
 
 
@@ -149,6 +152,91 @@ def active_native_cancellation_barrier(
     )
 
 
+def native_tool_witness(terminal_id, metadata, turn, nonce, launch_binding):
+    from test.live_provider import opencode_interaction_journey as journey
+
+    from cli_agent_orchestrator.utils.opencode_config import to_opencode_agent_id
+
+    generation = turn.get("generation")
+    if not (
+        metadata.get("id") == terminal_id
+        and metadata.get("provider") == "opencode_cli"
+        and metadata.get("status") == "processing"
+        and turn.get("terminal_id") == terminal_id
+        and turn.get("provider") == "opencode_cli"
+        and turn.get("state") == "pending"
+        and isinstance(generation, str)
+        and re.fullmatch(r"[0-9a-f]{32}", generation)
+    ):
+        return None
+    anchor = owned_native_launch_identity(terminal_id, **launch_binding)
+    if anchor is None:
+        return None
+    candidates = journey._terminal_tagged_processes(
+        terminal_id,
+        launch_binding["socket_path"],
+        server_identity=launch_binding["server_identity"],
+    )
+    return activity.capture(
+        candidates=[activity.Identity(p.pid, p.uid, p.start_time) for p in candidates],
+        nonce=nonce,
+        terminal_id=terminal_id,
+        socket_path=launch_binding["socket_path"],
+        anchor=activity.Identity(anchor.pid, anchor.uid, anchor.start_time),
+        anchor_executable=launch_binding["binary_path"].resolve(strict=True),
+        anchor_options={"--agent": to_opencode_agent_id(WORKER), "--model": MODEL},
+    )
+
+
+async def cancel_witnessed_tool(
+    client,
+    target,
+    terminal_id,
+    task_id,
+    metadata,
+    turn,
+    nonce,
+    launch_binding,
+    receipt,
+    retired,
+    deadline,
+):
+    witness = native_tool_witness(terminal_id, metadata, turn, nonce, launch_binding)
+    if witness is None:
+        return False
+    try:
+        fresh = await asyncio.to_thread(
+            api, target, "GET", f"/terminals/{terminal_id}", deadline=deadline
+        )
+        fresh_turn = fresh.get("turn", {})
+        if fresh_turn.get("generation") != turn["generation"]:
+            raise protocol.HarnessError("native_tool_generation_changed")
+        checked = native_tool_witness(terminal_id, fresh, fresh_turn, nonce, launch_binding)
+        if checked is None:
+            raise protocol.HarnessError("native_tool_activity_lost_before_cancel")
+        try:
+            if checked != witness or activity.exited(witness):
+                raise protocol.HarnessError("native_tool_identity_changed_before_cancel")
+        finally:
+            os.close(checked.pidfd)
+        admit_memory(receipt, "native_tool_cancel")
+        private_json(
+            Path(receipt["evidence_dir"]) / "native-tool-activity.private.json",
+            activity.projection(witness),
+        )
+        cancelled = await client.call("cancel_local_cao_task", {"task_id": task_id})
+        record_cancelled_worker(target, terminal_id, task_id, cancelled, retired)
+        await asyncio.to_thread(activity.require_stopped, witness, deadline=deadline)
+        await asyncio.to_thread(activity.require_worker_stopped, witness, deadline=deadline)
+        receipt["native_tool_child_witnessed"] = True
+        receipt["native_tool_child_stopped_before_natural_expiry"] = True
+        receipt["native_tool_worker_stopped"] = True
+        receipt["cancelled_worker_stopped"] = True
+        return True
+    finally:
+        os.close(witness.pidfd)
+
+
 def record_cancel_observation(
     evidence: Path,
     terminal_id: str,
@@ -251,18 +339,24 @@ def private_executable_path(binary: Path) -> str:
     )
 
 
-def worker_profile(environment: dict) -> str:
+def worker_profile(environment: dict, *, activity_case="streaming") -> str:
     import frontmatter
 
     return frontmatter.dumps(
         frontmatter.Post(
-            "Follow the private diagnostic task exactly. Do not use tools or change files. "
-            "The required active machine receipt is protocol metadata on its own final line.",
+            (
+                "Follow the private diagnostic task exactly. Do not change files. "
+                "Use the native shell only for the exact diagnostic command when requested. "
+                "The required active machine receipt is protocol metadata on its own final line."
+                if activity_case == "native_tool"
+                else "Follow the private diagnostic task exactly. Do not use tools or change files. "
+                "The required active machine receipt is protocol metadata on its own final line."
+            ),
             name=WORKER,
             description="Private real paired-worker diagnostic",
             provider="opencode_cli",
             model=MODEL,
-            allowedTools=[],
+            allowedTools=["execute_bash"] if activity_case == "native_tool" else [],
             mcpServers={
                 "cao-mcp-server": {
                     "command": sys.executable,
@@ -278,9 +372,9 @@ def worker_profile(environment: dict) -> str:
     )
 
 
-def owned_native_launch_selected(
+def owned_native_launch_identity(
     terminal_id: str, *, binary_path: Path, server_identity, socket_path: Path
-) -> bool:
+):
     """Observe the selected model on the exact owned native executable process."""
     from test.live_provider import opencode_interaction_journey as journey
 
@@ -323,11 +417,20 @@ def owned_native_launch_selected(
             continue
     if len(matches) > 1:
         raise protocol.HarnessError("native_worker_launch_not_unique")
-    return len(matches) == 1
+    return matches[0] if matches else None
+
+
+def owned_native_launch_selected(terminal_id: str, **kwargs) -> bool:
+    return owned_native_launch_identity(terminal_id, **kwargs) is not None
 
 
 def worker_configuration(
-    cao_home: Path, terminal_id: str, *, launch_binding: dict, evidence: Path
+    cao_home: Path,
+    terminal_id: str,
+    *,
+    launch_binding: dict,
+    evidence: Path,
+    activity_case="streaming",
 ) -> Path | None:
     """Validate actual owned v2 config, static model and zero-MCP native policy."""
     from cli_agent_orchestrator.constants import _CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV
@@ -369,6 +472,11 @@ def worker_configuration(
             profile_env=MCP_TOOL_PROFILE_ENV,
             legacy_marker=_CAO_MCP_INTERACTION_PULL_FLOW_ONLY_ENV,
         )
+        if activity_case == "native_tool":
+            permissions = agent.get("permissions", [])
+            shell = [rule for rule in permissions if rule.get("action") == "shell"]
+            if shell != [{"action": "shell", "resource": "*", "effect": "allow"}]:
+                raise protocol.HarnessError("native_tool_shell_permission_not_effective")
         checks = {
             "schema": "caos.spec025.t168.native-config-input-observation.v1",
             "configuration_sha256": hashlib.sha256(configuration_bytes).hexdigest(),
@@ -500,6 +608,15 @@ def acceptance(receipt: dict) -> bool:
         "interpreter_unchanged",
     )
     memory = receipt.get("memory_admissions_mib", {})
+    activity_case = receipt.get("activity_case", "streaming")
+    if activity_case == "native_tool":
+        required = tuple(k for k in required if k != "active_native_cancel_observed") + (
+            "native_tool_child_witnessed",
+            "native_tool_child_stopped_before_natural_expiry",
+            "native_tool_worker_stopped",
+        )
+    elif activity_case != "streaming":
+        return False
     return (
         receipt.get("schema") == "caos.spec025.t168.native-paired.v1"
         and receipt.get("mode") == "execute"
@@ -536,6 +653,8 @@ async def _tasks(
         "peer_instance_id": identity.target_instance_id,
         "agent_profile": WORKER,
     }
+    activity_case = receipt.get("activity_case", "streaming")
+    nonce = os.urandom(16).hex()
     for index in range(2):
         admit_memory(receipt, f"task_{index}")
         message = (
@@ -544,6 +663,12 @@ async def _tasks(
             else "Start your response with RESULT: followed by one space and the sum of "
             "270584 and 198327. Then output 10000 numbered lines explaining that arithmetic."
         )
+        if index == 1 and activity_case == "native_tool":
+            message = (
+                "Call the native bash/shell tool once with exactly this command. "
+                "Wait for it in the foreground; do not background it or change files. "
+                "Set a tool timeout of 120000ms. Command: " + activity.shell_command(nonce)
+            )
         body = {**base, "operation_key": f"t168-operation-{index}", "message": message}
         started = time.monotonic()
         deadline = started + MODEL_SECONDS
@@ -573,6 +698,7 @@ async def _tasks(
                     terminal_id,
                     launch_binding=launch_binding,
                     evidence=Path(receipt["evidence_dir"]),
+                    activity_case=activity_case,
                 )
             except FileNotFoundError:
                 configuration = None
@@ -589,6 +715,37 @@ async def _tasks(
                 turn = metadata.get("turn")
                 if not isinstance(turn, dict):
                     raise protocol.HarnessError("native_turn_projection_invalid")
+                if activity_case == "native_tool":
+                    polls = receipt.setdefault("native_tool_observations", [])
+                    polls.append(
+                        {
+                            "elapsed_seconds": round(time.monotonic() - started, 3),
+                            "task_state": status.get("state"),
+                            "terminal_status": metadata.get("status"),
+                            "turn_state": turn.get("state"),
+                            "generation": turn.get("generation"),
+                            "native_configuration_verified": True,
+                        }
+                    )
+                    private_json(
+                        Path(receipt["evidence_dir"]) / "native-tool-polls.private.json", polls
+                    )
+                    if await cancel_witnessed_tool(
+                        client,
+                        target,
+                        terminal_id,
+                        task_id,
+                        metadata,
+                        turn,
+                        nonce,
+                        launch_binding,
+                        receipt,
+                        retired,
+                        deadline,
+                    ):
+                        break
+                    await asyncio.sleep(0.2)
+                    continue
                 output = await asyncio.to_thread(
                     api, target, "GET", f"/terminals/{terminal_id}/output", params={"mode": "full"}
                 )
@@ -643,6 +800,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
         "mode": "preflight" if preflight_only else "execute",
         "source_head": manifest["source_head"],
         "evidence_dir": manifest["evidence_dir"],
+        "activity_case": manifest.get("activity_case", "streaming"),
     }
     receipt.update(
         model=MODEL,
@@ -750,7 +908,9 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
                 )
             else:
                 profile = root / "worker.md"
-                native._write_private(profile, worker_profile(env))
+                native._write_private(
+                    profile, worker_profile(env, activity_case=receipt["activity_case"])
+                )
                 result = subprocess.run(
                     [
                         sys.executable,
@@ -848,6 +1008,7 @@ def run(manifest: dict, *, preflight_only: bool = False) -> dict:
                     preflight["id"],
                     launch_binding=launch_binding,
                     evidence=Path(manifest["evidence_dir"]),
+                    activity_case=receipt["activity_case"],
                 )
             except FileNotFoundError:
                 configured = None
@@ -1109,6 +1270,7 @@ def main(argv=None) -> int:
         manifest.get("approved") is not True
         or manifest.get("mode") != ("preflight" if args.preflight_only else "execute")
         or manifest.get("source_head") != head
+        or manifest.get("activity_case", "streaming") not in {"streaming", "native_tool"}
         or manifest.get("model") != MODEL
     ):
         raise protocol.HarnessError("private_admission_invalid")

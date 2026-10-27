@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T186 [US4] [FR164/SC148] Add and validate separately selected native-tool activity witness for T168 cancellation with exact process/generation/pidfd/ancestry/deadline proof; preserve original streaming barrier and all pairing/native/cleanup gates. Execute only freshly source-bound diagnostics; record offline and native results distinctly.
+
 - [x] T185 [US4] [FR163/SC147] Validate actual Codex full180s timeout, retained live execution, settled reconcile/timeout child versus pending turn, no-resend verification, generation-bound cancellation and explicit cleanup preserving the original child verdict/settled_at. Keep historical jobs, other providers and global gates separate.
 
 T185: timeout nativo Codex180s PASS en5f034ca3; HTTP504 en208,728s con arranque, verify200/pending sin reenvío, generación ajena409 y cancelación actual200 en25,875s. Cinco procesos viejos retirados, reemplazo listo/0peticiones y limpieza completa; hijo conserva reconcile/timeout/settled_at.323PASS/5avisos,26controles nuevos incluidos, arquitectura5/0,1744pins y PG cerrado. Backend sintético; todaCX08/otros proveedores/global siguen separados. [Evidencia](validation-t185.md).
