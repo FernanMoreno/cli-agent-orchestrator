@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T175: corregida la clasificación Codex de errores HTTP nativos `■` y cuota `You’ve`, con guardas para citas, avisos y cuotas antiguas. 416 pruebas pasan, 3 comprobaciones opt-in preexistentes quedan omitidas; arquitectura5/0. Tres capturas CLI0.164 aisladas sin login y 12 clasificaciones en80525802; recursos propios cerrados. No cierra el recorrido gestionado API/recibo, cancelación ni todoCX-08, y no transfiere aceptación a otros proveedores. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t175.md).
+
 T174: baseline interactivo Codex PASS en 7b2ea7d7: Unicode exacto sin normalizar, HTTP200/12,267s y recibo del hijo succeeded/settled/cleanup/join coincidente. 120 contratos distintos y arquitectura5/0; fuente, login y limpieza propios verificados. R1 falló por el ejemplo antiguo de perfiles; corregido y conservado. No acepta todo CX-08 ni recorridos nativos de otros proveedores. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t174.md).
 
 T173: corregido el filtro MCP del servidor para comandos de texto; 194 pruebas y arquitectura 5/0 pasan. Codex CLI 0.164.0 valida los 7 perfiles con filtros completo/vacío/parcial: 21 casos nativos sin modelo y par de catálogos 3/12, en 96f3eaae. Dos controles stdio prueban el rechazo directo del servidor. No acredita efectos autorizados, permisos globales ni aceptación nativa OpenCode/Claude. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t173.md).

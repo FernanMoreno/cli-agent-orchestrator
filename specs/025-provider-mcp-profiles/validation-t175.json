@@ -1,0 +1,241 @@
+{
+  "schema": "caos.validation.codex-native-errors.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "consumer_source": "80525802f77f6aa1f3f59f3bfa0ecd5d06b6a8c8",
+  "native_cli_version": "0.164.0",
+  "source_files_pinned": 1724,
+  "source_manifest_sha256": "1b04ff608fdcdac0ab5b5cdc961cc4530b61b5f9d4a067f2d33aa28c3045efb1",
+  "codex_provider_sha256": "8eaf1698842d99468415e171aa9dcf9fc39d7e7b2442abe4f2be2aeffa1e272c",
+  "cases": [
+    {
+      "case": "auth",
+      "capture_source": "f0a9587dbcc73d36a6831181bd7bb60439c1fe80",
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "executed_generator_sha256": "e60af226dc142780b5c3051debc20bda68d0ccde5c49bad4e38cc201e19afeb4",
+      "fixture_sha256": "d98b18035614515b9dd67ef23ad668c78fe0ae24e59acfb02df0267267328f0a",
+      "fixture": "test/providers/fixtures/codex_0164_auth_error.txt",
+      "memory_before_native_mib": 10581,
+      "native": {
+        "case": "auth",
+        "requests_received": 12,
+        "served_http_statuses": [
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401,
+          401
+        ],
+        "prompt_sent": true,
+        "bracketed_paste_and_separate_submit": true,
+        "terminal_error_observed": true,
+        "seconds": 7.865,
+        "native_exit": -15,
+        "server_thread_closed": true,
+        "network_namespace_isolated": true,
+        "operator_home_masked": true,
+        "native_config_loaded_before_pty": true
+      },
+      "classifications": [
+        {
+          "sent_receipt": false,
+          "adapter": "buffer",
+          "status": "error",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": false,
+          "adapter": "screen",
+          "status": "error",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": true,
+          "adapter": "buffer",
+          "status": "error",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": true,
+          "adapter": "screen",
+          "status": "error",
+          "receipt_unchanged": true
+        }
+      ]
+    },
+    {
+      "case": "throttle",
+      "capture_source": "f0a9587dbcc73d36a6831181bd7bb60439c1fe80",
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "executed_generator_sha256": "e60af226dc142780b5c3051debc20bda68d0ccde5c49bad4e38cc201e19afeb4",
+      "fixture_sha256": "4e616f4287d783f03a103639857632177a223231ed1458d52cbf24eac7241af7",
+      "fixture": "test/providers/fixtures/codex_0164_throttle_error.txt",
+      "memory_before_native_mib": 10568,
+      "native": {
+        "case": "throttle",
+        "requests_received": 1,
+        "served_http_statuses": [
+          429
+        ],
+        "prompt_sent": true,
+        "bracketed_paste_and_separate_submit": true,
+        "terminal_error_observed": true,
+        "seconds": 1.386,
+        "native_exit": -15,
+        "server_thread_closed": true,
+        "network_namespace_isolated": true,
+        "operator_home_masked": true,
+        "native_config_loaded_before_pty": true
+      },
+      "classifications": [
+        {
+          "sent_receipt": false,
+          "adapter": "buffer",
+          "status": "error",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": false,
+          "adapter": "screen",
+          "status": "error",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": true,
+          "adapter": "buffer",
+          "status": "error",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": true,
+          "adapter": "screen",
+          "status": "error",
+          "receipt_unchanged": true
+        }
+      ]
+    },
+    {
+      "case": "quota",
+      "capture_source": "f0a9587dbcc73d36a6831181bd7bb60439c1fe80",
+      "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+      "executed_generator_sha256": "e60af226dc142780b5c3051debc20bda68d0ccde5c49bad4e38cc201e19afeb4",
+      "fixture_sha256": "ea5022e8e80fe57c2f5d2ac4624beeaa8b2e53a40548c371783ee1e3a5499811",
+      "fixture": "test/providers/fixtures/codex_0164_quota_error.txt",
+      "memory_before_native_mib": 10538,
+      "native": {
+        "case": "quota",
+        "requests_received": 1,
+        "served_http_statuses": [
+          429
+        ],
+        "prompt_sent": true,
+        "bracketed_paste_and_separate_submit": true,
+        "terminal_error_observed": true,
+        "seconds": 1.189,
+        "native_exit": -15,
+        "server_thread_closed": true,
+        "network_namespace_isolated": true,
+        "operator_home_masked": true,
+        "native_config_loaded_before_pty": true
+      },
+      "classifications": [
+        {
+          "sent_receipt": false,
+          "adapter": "buffer",
+          "status": "waiting_quota",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": false,
+          "adapter": "screen",
+          "status": "waiting_quota",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": true,
+          "adapter": "buffer",
+          "status": "waiting_quota",
+          "receipt_unchanged": true
+        },
+        {
+          "sent_receipt": true,
+          "adapter": "screen",
+          "status": "waiting_quota",
+          "receipt_unchanged": true
+        }
+      ]
+    }
+  ],
+  "classifications": 12,
+  "classification_receipts_unchanged": true,
+  "scope": "final production parser consuming separately source-bound real native CLI frames; no managed CAO/API/native-child lifecycle acceptance",
+  "tests": {
+    "passed": 416,
+    "skipped_existing_opt_in_live_checks": 3,
+    "warnings": 4,
+    "seconds": 183.28,
+    "workers": 2,
+    "new_native_error_cases": 40,
+    "new_cases_passed": 40,
+    "architecture_kept": 5,
+    "architecture_broken": 0
+  },
+  "skip_scope": [
+    "live update-setting acceptance",
+    "live bogus-config-key negative control",
+    "live launch-flag validity"
+  ],
+  "red": {
+    "original_defect_failed": 25,
+    "existing_negative_passed": 7,
+    "review_notice_guard_failed": 4,
+    "review_line_ending_controls_passed": 6
+  },
+  "reviews": {
+    "claude_final": "GO 6d2c6405b0bf401fa5229d60baf36d3c",
+    "claude_previous": "conditional; interrupt-risk corrected and retested",
+    "luna_probe": "GO isolated auth first; capture reviewed before other cases",
+    "luna_final_evidence": "GO; owner-exit claim removed because structured close receipt lacks process exit code"
+  },
+  "postgres": {
+    "borrowers_before_close": 0,
+    "private_databases_before_close": 0,
+    "container_absent": true,
+    "network_absent": true,
+    "existing_cao_service_found": false
+  },
+  "failed_probe": {
+    "case": "auth-r1",
+    "outcome": "INCOMPLETE_DELIVERY",
+    "requests_received": 0,
+    "terminal_error_observed": false,
+    "seconds_including_cleanup": 180.232,
+    "cause": "unframed text and Enter in same burst remained in composer",
+    "correction": "production-style bracketed paste, rendered-text barrier and separate Enter after unchanged0.3s submit delay",
+    "original_receipt_preserved": true,
+    "original_outer_status": "CAPTURED meant process capture only; not successful auth/error observation",
+    "descriptor_closed": true,
+    "namespace_closed": true
+  },
+  "preflight_failures": {
+    "namespace_root_capability": "non-root namespace UID could not activate lo; root UID in isolated user namespace succeeds",
+    "readonly_mountpoint": "/work under readonly root rejected; /tmp/work in namespace tmpfs succeeds",
+    "model_or_operator_auth_used": false
+  },
+  "limits": [
+    "No managed CAO API/native-child auth/quota lifecycle acceptance",
+    "No real-account auth rejection or quota exhaustion",
+    "No error-after-earlier-assistant-output acceptance",
+    "No active cancellation/timeout reconciliation acceptance",
+    "Only captured0.164 native HTTP families and explicit capacity phrases; other square notices retain prior semantics",
+    "Full CX08 and global/provider matrix remain open"
+  ],
+  "runtime_import_matches_manifest": true
+}
