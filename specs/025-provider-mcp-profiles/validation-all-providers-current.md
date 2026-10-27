@@ -41,3 +41,5 @@ unicidad de filas/eventos también se probaron sin modelo por separado.
 La ejecución141PASS y el anterior reciboCX-06 mantienen sus fuentes y límites.
 
 2026-10-27 · T173: corrección compartida del filtro de servidor para comandos de texto;194 contratos y arquitectura5/0. [Codex nativo en96f3eaae](validation-t173.md): siete perfiles × completo/vacío/parcial,21casos sin modelo y par adicional de catálogos3/12 pasan. Dos controles stdio independientes prueban el rechazo directo del servidor. Este avance solo cierra T173: el mapeo global allowed_tools, efectos autorizados de cada herramienta, modelos y aceptación nativa OpenCode/Claude conservan sus gates. Las ejecuciones141PASS y CX-06/07 mantienen sus fuentes originales.
+
+2026-10-27 · [T174 Codex](validation-t174.md): baseline Unicode interactivo en7b2ea7d7 PASS12,267s, mismo recibo del hijo settled/cleanup/join,1720pins y propietarios cerrados. R1setup legacyprofile fallido conservado.120contratos distintos/arquitectura5-0. No cierra todoCX08 ni transfiere aceptación aClaude/OpenCode; los recibos anteriores conservan sus fuentes.

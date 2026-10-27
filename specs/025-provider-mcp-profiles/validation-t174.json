@@ -1,0 +1,138 @@
+{
+  "schema": "caos.validation.codex-unicode-current.v1",
+  "date": "2026-10-27",
+  "status": "PASS",
+  "source_revision": "7b2ea7d776e60614a583f3ece37865298d316302",
+  "cli_version": "codex-cli 0.164.0",
+  "requested_model": "gpt-6-luna",
+  "served_model_independently_attested": false,
+  "scope": "one interactive production run-step Unicode substring and same native-child succeeded/settled/cleanup/join; not all CX08 or independently observed internal turn CAS",
+  "source_files_pinned": 1720,
+  "manifest_sha256": "871d1d8e71ba48f16413cb9d9b72228af95a0af3ae92ff34f5e630ce25ee5374",
+  "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+  "case": {
+    "schema": "caos.native-unicode-turn.v1",
+    "provider": "codex",
+    "step_http_status": 200,
+    "step_seconds": 12.267,
+    "timeout_seconds": 180,
+    "prompt_redelivery": false,
+    "request_schema_validated": true,
+    "expected_unicode_text_present": true,
+    "unicode_normalization_applied": false,
+    "whole_response_equality_required": false,
+    "native_receipt_succeeded": true,
+    "native_receipt_settled": true,
+    "child_cleanup_receipted": true,
+    "same_child_join_succeeded": true,
+    "internal_turn_generation_cas_independently_observed": false,
+    "pinned_interactive_profile_witnessed": true,
+    "memory_before_parent_mib": 9773,
+    "memory_before_turn_mib": 9697,
+    "observed_native_process_count": 10,
+    "owned_native_sessions_absent": true,
+    "observed_native_processes_absent": true,
+    "sampler_stopped": true,
+    "sampler_errors": [],
+    "api_forced_kill": false
+  },
+  "pytest": {
+    "passed": 1,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "and_cleanup_seconds": 48.594
+  },
+  "memory_before_launch_mib": 10131,
+  "preservation": {
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "python_unchanged": true,
+    "operator_unchanged": true,
+    "private_auth_removed": true,
+    "physical_cleanup_verified": true
+  },
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers_before_close": 0,
+    "private_databases_before_close": 0,
+    "owner_exit_code": 0,
+    "preexisting_cao_service_found": false
+  },
+  "cleanup_scope": "owned API/tmux roots/native session IDs and ten observed PID birth identities; does not prove arbitrary detached sessions absent",
+  "descriptor_reclosed": {
+    "closed": true,
+    "flag_only": true,
+    "executed_sha256": "024e89d39635160aec4e684d3a1669dae17cbf6a7579109d88c97728a521e64e",
+    "closed_sha256": "f4f5d64efb398b481bceb6a5115d5c2eccac30d6f23fd30545fbd98b5c7b70ec"
+  },
+  "config_preflight": {
+    "schema": "caos.codex-native-profile-preflight.v1",
+    "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+    "version": "0.164.0",
+    "command": "codex --profile unicode-safe mcp list --json",
+    "legacy_negative_exit": 1,
+    "legacy_error_class_confirmed": true,
+    "separate_profile_positive_exit": 0,
+    "native_empty_catalog_confirmed": true,
+    "network_namespace_isolated": true,
+    "auth_staged": false,
+    "model_turn_started": false,
+    "policy": {
+      "approval_policy": "never",
+      "sandbox_mode": "read-only"
+    },
+    "prior_features_probe": "failed: --profile unsupported by features; retained, not a profile result"
+  },
+  "contracts": {
+    "distinct_selected_passed": 120,
+    "runs": [
+      {
+        "passed": 111,
+        "seconds": 60.16,
+        "scope": "106 shared matrix plus five initial Unicode cases"
+      },
+      {
+        "passed": 8,
+        "seconds": 7.58,
+        "scope": "current Unicode cases, overlaps initial five"
+      },
+      {
+        "passed": 6,
+        "seconds": 10.06,
+        "scope": "Codex profile command contracts"
+      }
+    ],
+    "architecture_kept": 5,
+    "architecture_broken": 0
+  },
+  "failed_attempts": {
+    "first_expanded_contract_invocation": {
+      "passed": 5,
+      "setup_errors": 106,
+      "cause": "lead invocation lacked the required PostgreSQL fixture metadata",
+      "preserved": true
+    },
+    "native_r1": {
+      "source_revision": "a40dc72055b691e310fcbc684f025c23622f6d06",
+      "status": "FAIL",
+      "parent_ready": false,
+      "unicode_turn_started": false,
+      "pytest_and_cleanup_seconds": 184.326,
+      "cause": "lead diagnostic copied outdated legacy profiles table rejected by pinned CLI0.164",
+      "cleanup_verified": true,
+      "operator_unchanged": true,
+      "private_auth_removed": true,
+      "descriptor_closed": true
+    }
+  },
+  "reviews": {
+    "claude_final_closed_launcher": "GO d02e65a7e1924978aacf22ca8756fb19",
+    "claude_initial_advice": "timed_out; not counted as GO",
+    "luna_r2_profile_delta": "GO"
+  },
+  "full_CX08_accepted": false,
+  "auth_quota_cancellation_reconciliation_executed": false
+}
