@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T175 [US4] [FR153/SC137] Capture pinned native Codex auth/throttle/quota error frames in no-login loopback isolation; reproduce any actual classifier defect and fix with quoted/stale/active-receipt negative controls. Validate owned cleanup/source/binary, regressions and independent review. Keep direct native/classifier evidence separate from managed task and full CX-08 acceptance.
+
 - [x] T174 [US4] [FR152/SC136] Add/review the reusable production run-step Unicode observer, negative exact-text/same-child contracts, then one source-bound real Codex interactive task with native-child succeeded/settled/cleanup/join, operator preservation and exact owned cleanup. Keep internal generation CAS, auth/quota/cancel and full CX-08 independent.120 distinct contracts/architecture5-0; R2 native PASS12.267s on7b2ea7d7 with succeeded/settled/cleanup/samejoin and preserved operator/source; owned resources closed. [Evidence](validation-t174.md).
 
 - [x] T173 [US4] [FR151/SC135] Reproduce/fix text-command enabled_tools missing server filter, preserve native client intersection and operation authority, test all7profiles and empty/partial/full dialects. Verify pinned native Codex no-model catalog/direct-call cases and structured source-bound evidence, with private auth/source/cleanup guards; distinguish catalog from operation authorization and model/task acceptance.194tests/architecture5-0; native21cases plus2-client catalog control PASS on96f3eaae, source/operator/cleanup preserved. [Evidence](validation-t173.md).

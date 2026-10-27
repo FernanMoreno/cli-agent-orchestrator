@@ -1,5 +1,18 @@
 # Provider MCP profiles and current acceptance
 
+## Controlled native Codex error classification · T175
+
+FR153/SC137: Observe the pinned native CLI's terminal frames after controlled
+authentication, transient-throttle and capacity-exhaustion responses. Use a
+private synthetic provider, synthetic key, isolated loopback network and masked
+operator HOME; do not use or renew any operator login or consume real quota.
+Distinguish native error cells from quoted assistant output and stale history.
+Classify terminal authentication/throttle failure as ERROR and demonstrated
+capacity exhaustion as WAITING_QUOTA; an HTTP429 alone never grants quota-wait
+semantics. Retain native retries and budgets, source/binary bindings and exact
+owned cleanup. A direct native-frame diagnostic and classifier regression do
+not close the managed API/receipt/cancellation or full CX-08 acceptance gates.
+
 ## Native Unicode task observation · T174
 
 FR152/SC136: Observe one explicitly selected provider through the production

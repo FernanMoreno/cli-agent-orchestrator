@@ -1,5 +1,19 @@
 # Plan: provider MCP profiles
 
+## T175 · native auth/quota error boundary
+
+First observe a single controlled 401 frame with the actual pinned CLI before
+altering classifier behavior. Reuse the current separate native profile format
+and its configuration-consuming no-model preflight. A private PTY/terminal
+renderer captures the actual error cell; loopback-only bwrap networking and
+masked operator HOME exclude live credentials/backend usage. Serial controls
+for throttle/capacity follow only after the first capture/cleanup is sound.
+Use Graphify's quota-helper node as a pointer, then verify current parser/tests.
+Add RED fixtures and false-positive controls before any demonstrated parser fix;
+retain model prose, stale-history and active-turn receipt boundaries. Run
+applicable parser/composition checks, independent review and disclose that no
+managed CAO task lifecycle or live-account quota exhaustion was accepted.
+
 ## T174 · production Unicode task and native-child receipt
 
 Reuse the actual matrix fixture and POST /terminals/run-step, not the exec-json

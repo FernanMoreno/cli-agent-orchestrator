@@ -77,7 +77,16 @@ IDLE_PROMPT_STRICT_PATTERN = r"^\s*(?:❯|›|»|codex>)\s*$"
 
 PROCESSING_PATTERN = r"\b(thinking|working|running|executing|processing|analyzing)\b"
 WAITING_PROMPT_PATTERN = r"^(?:Approve|Allow)\b.*\b(?:y/n|yes/no|yes|no)\b"
-ERROR_PATTERN = r"^(?:Error:|ERROR:|Traceback \(most recent call last\):|panic:)"
+# Codex 0.164 renders native HTTP failures as square-prefixed cells. The glyph
+# alone is not an error: interrupt/information notices can use it too. Keep the
+# observed HTTP families and existing assistant/current-turn guards.
+CODEX_ERROR_LABEL_PATTERN = r"(?:Error:|■[^\S\n]+)"
+CODEX_HTTP_ERROR_CELL_PATTERN = (
+    r"■[^\S\n]+(?:unexpected status [45]\d{2}\b|" r"exceeded retry limit, last status: [45]\d{2}\b)"
+)
+ERROR_PATTERN = (
+    rf"^(?:Error:|{CODEX_HTTP_ERROR_CELL_PATTERN}|Traceback \(most recent call last\):|panic:)"
+)
 
 # Codex TUI footer indicators (status bar below the idle prompt).
 # Used to detect when the bottom lines contain TUI chrome rather than user input.
@@ -304,8 +313,8 @@ RATE_LIMIT_DIALOG_CONFIRM_PATTERN = r"^\s*Press enter to confirm or esc to go ba
 # "limit", or "credits" prose as a quota pause: those words occur routinely
 # in task output and server-overload messages.
 CODEX_EXHAUSTED_QUOTA_PATTERN = re.compile(
-    r"^(?:Error:\s*)?(?:"
-    r"You've hit your usage limit(?: for [^.]+)?\."
+    rf"^(?:{CODEX_ERROR_LABEL_PATTERN}\s*)?(?:"
+    r"You['’]ve hit your usage limit(?: for [^.]+)?\."
     r"|Your workspace is out of credits\. (?:Add credits to continue|"
     r"Ask your workspace owner to refill in order to continue)\."
     r"|You hit your spend cap set in your workspace\. "
@@ -898,7 +907,9 @@ def _transcript_before_active_rate_limit_dialog(script_output: str) -> Optional[
     return "".join(lines[:header_index]).rstrip()
 
 
-def _has_active_exhausted_quota(clean_output: str) -> bool:
+def _has_active_exhausted_quota(
+    clean_output: str, *, active_user_start: Optional[int] = None
+) -> bool:
     """Recognise Codex's documented capacity-exhaustion message at the live edge.
 
     A model can discuss or quote the same words in its answer.  For each
@@ -916,13 +927,18 @@ def _has_active_exhausted_quota(clean_output: str) -> bool:
             continue
 
         preceding = "\n".join(lines[:index])
+        candidate_start = len(preceding) + (1 if index else 0)
+        if active_user_start is not None and active_user_start > candidate_start:
+            # A newer submitted user cell supersedes this old quota error.
+            # The caller excludes the idle footer suggestion from that index.
+            continue
         last_user = None
         for user_match in re.finditer(USER_PREFIX_PATTERN, preceding, re.IGNORECASE | re.MULTILINE):
             last_user = user_match
         if last_user is not None:
             if _find_assistant_marker(preceding[last_user.start() :]) is not None:
                 continue
-        elif not line.casefold().startswith("error:"):
+        elif re.match(CODEX_ERROR_LABEL_PATTERN, line, re.IGNORECASE) is None:
             # A bare sentence with no active user-turn context can be copied
             # prose; only Codex's explicit error-labelled form is decisive.
             continue
@@ -1681,7 +1697,9 @@ class CodexProvider(BaseProvider):
         # tail-anchored and rejects assistant transcript text, so an agent
         # explaining a quota error cannot falsely park an otherwise completed
         # task.
-        if _has_active_exhausted_quota(clean_output):
+        if _has_active_exhausted_quota(
+            clean_output, active_user_start=last_user.start() if last_user is not None else None
+        ):
             return TerminalStatus.WAITING_QUOTA
 
         # Check trust prompt early — the trust menu uses › which matches the idle prompt
