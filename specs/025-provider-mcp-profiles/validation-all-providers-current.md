@@ -1,5 +1,7 @@
 # Comprobación actual por proveedor
 
+T178 cierra el recorrido gestionado Codex de parcial→401 en05f1c369: API502/failed35,311s, captura visible vinculada220x50, join/veredicto/limpieza exactos y padre accesible;199PASS/arquitectura5/0. No acepta cuotas parciales, cancelación/timeout, rawclassification ni otros proveedores. [Recibo y alcance](validation-t178.md).
+
 T177 corrige Codex partial→HTTPerror en de3fc61f, basado en capturas CLI0.164/5c646430.399PASS/3opt-in omitidos,24nuevos, arquitectura5/0. Mantiene citas, diálogos y entrada multilínea. Aceptación del parser sobre viewport; no API gestionada parcial, rawpipepane, cuota parcial ni otros proveedores. [Recibo y límites](validation-t177.md).
 
 Actualización T176: tres errores Codex mediante API/CLI real y HTTP sintético pasan en303d3f65; auth/throttle502→failed, cuota409→reconcile, join y limpieza preservan veredicto.172 contratos/18nuevos y arquitectura5/0. No transfiere aceptación a OpenCode/Claude ni cierra cancelación, auto-resume, cuotas reales o todos los gates. [Recibo acotado](validation-t176.md).

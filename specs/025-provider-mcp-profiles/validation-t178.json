@@ -1,0 +1,117 @@
+{
+  "schema": "caos.validation.managed-partial-error.v1",
+  "date": "2026-10-27",
+  "status": "PASS_SCOPED",
+  "source_head": "05f1c36907697543684ae2bc31a1827f6c3f6f12",
+  "source_files_pinned": 1729,
+  "source_manifest_sha256": "fb26afce1fe3a9be88a9a4500370b4b187d21badca13278b00e15a5613662b0c",
+  "executed_launcher_sha256": "9cf1e03d3545b6cd14b0818acdb27b3a9046f56663a66b678b7ce5c18147a01d",
+  "executed_wrapper_sha256": "1e921d634dfe54a73f7ad45f7af0297c6be7e3ad02d120a57bea835f48320785",
+  "executed_backend_sha256": "145bf3ea3f47ba23346e09c258f91375e3b9eeb4724cea8c2532e31c30f69b88",
+  "native_binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+  "native_cli_version": "0.164.0",
+  "backend": "synthetic SSE partial response then failed event; subsequent HTTP401",
+  "managed": {
+    "schema": "caos.managed-native-error.v1",
+    "case": "auth",
+    "http_status": 502,
+    "kind": "error",
+    "step_seconds": 35.311,
+    "timeout_seconds": 180,
+    "prompt_redelivery": false,
+    "request_schema_validated": true,
+    "delivery_may_have_occurred": true,
+    "retryable": false,
+    "provider_may_resume": false,
+    "receipt_state": "failed",
+    "same_child_join_verified": true,
+    "child_retained_before_explicit_cleanup": true,
+    "cleanup_preserved_verdict": true,
+    "scenario": "partial_reply_then_auth_failure",
+    "rendered_witness": {
+      "partial_reply_observed": true,
+      "native_error_after_partial_observed": true,
+      "native_finished_marker_absent": true,
+      "viewport_sha256": "a9bb1c969688d2c0c0a7af037eaec35d8e76fb2eae4de4fe2451d8a8ac2e3ef2",
+      "visible_capture_count": 1,
+      "pane_width": 220,
+      "pane_height": 50
+    },
+    "child_pane_absent_after_delete": true,
+    "parent_alive_after_child_delete": true,
+    "partial_stream_finished": true,
+    "native_http_responses": 12,
+    "one_backend_receipt_generation": true,
+    "wrapper_exited_after_delete": true,
+    "operator_home_masked": true,
+    "loopback_only": true
+  },
+  "native_http_responses": {
+    "200": 1,
+    "401": 11
+  },
+  "memory_before_launch_mib": 9968,
+  "memory_before_parent_mib": 9768,
+  "memory_before_turn_mib": 9623,
+  "pytest_and_cleanup_seconds": 97.335,
+  "preflight": {
+    "seconds": 9.001,
+    "native_profile_loaded": true,
+    "native_tty_ready": true,
+    "native_partial_then_auth_frame_observed": true,
+    "pane_dimensions": [
+      220,
+      50
+    ],
+    "positive_witness_controls": 1,
+    "negative_witness_controls": 6
+  },
+  "tests": {
+    "red_missing_observer_failed": 21,
+    "focused_passed": 85,
+    "new_observer_failure_cases": 3,
+    "regression_passed": 199,
+    "regression_seconds": 48.28,
+    "regression_skips": 0,
+    "regression_warnings": 0,
+    "architecture_kept": 5,
+    "architecture_broken": 0
+  },
+  "cleanup": {
+    "home_removed": true,
+    "tmux_roots_removed": true,
+    "api_process_dead": true,
+    "registered_owner_absent": true,
+    "owned_native_sessions_absent": true,
+    "observed_native_processes_absent": true,
+    "sampler_stopped": true,
+    "wrapper_processes_exited": true,
+    "physical_cleanup_verified": true
+  },
+  "postgres": {
+    "context_closed": true,
+    "container_absent": true,
+    "network_absent": true,
+    "borrowers": 0,
+    "private_databases": 0
+  },
+  "source_binary_python_unchanged": true,
+  "descriptors_closed": true,
+  "operator_auth_staged": false,
+  "review": {
+    "claude_implementation": "3dfd8754f57147d1a25d451b84159410 GO; did not inspect wrapper",
+    "claude_final": "eef1c60680674043852e7506d9c999f5 GO public/native result and backend/PG ledgers; manifest, preflight and test receipts verified by lead"
+  },
+  "limits": [
+    "No raw pipe-pane classification-only acceptance; managed API verdict plus independently captured rendered viewport",
+    "No wrapped/footerless HTTP or partial-response quota acceptance",
+    "No active cancellation, timeout reconciliation, automatic resume or full CX08/global acceptance",
+    "No real account rejection or operator credential use",
+    "No new native acceptance for other providers"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261027-caos-managed-partial-error",
+    "pages": 4,
+    "strict_issues": 0
+  }
+}

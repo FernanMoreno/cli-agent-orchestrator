@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T178: recorrido gestionado Codex parcial→401 PASS en05f1c369: API502/error/failed en35,311s, captura visible única220x50 vinculada al hijo, join y veredicto conservados tras limpieza. Padre accesible; procesos/PG cerrados y1729pins intactos.199PASS/3controles nuevos/arquitectura5/0. Backend sintético, sin login del operador. Quedan wrap/footer ausente, cuota parcial y cancelación/timeout. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t178.md).
+
 T177: corregido un error HTTP nativo tras respuesta parcial: antes se clasificaba completed/processing; ahora ERROR sin alterar el recibo. Capturas CLI0.164 en5c646430 y consumidor de3fc61f; cita correcta, entrada multilínea y diálogos con separadores conservados.399PASS/3omisiones opt-in previas/24casos nuevos, arquitectura5/0 y procesos/PG cerrados. No acepta aún este caso por API gestionada, cuota parcial, errores envueltos ni cancelación/timeout. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t177.md).
 
 T176: API gestionada Codex PASS en303d3f65: auth/throttle→502/error/failed y cuota→409/quota_wait/reconcile; join conserva identidad/veredicto tras limpieza explícita. CLI0.164 real con backend HTTP sintético aislado, sin login del operador. 172 contratos PASS, 18 nuevos, arquitectura5/0;1726pins y cierre de procesos/PG verificados. No acepta cuota real, auto-resume, cancelación activa ni todoCX-08. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t176.md).
