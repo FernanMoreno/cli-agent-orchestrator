@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T174 [US4] [FR152/SC136] Add/review the reusable production run-step Unicode observer, negative exact-text/same-child contracts, then one source-bound real Codex interactive task with native-child succeeded/settled/cleanup/join, operator preservation and exact owned cleanup. Keep internal generation CAS, auth/quota/cancel and full CX-08 independent.
+
 - [x] T173 [US4] [FR151/SC135] Reproduce/fix text-command enabled_tools missing server filter, preserve native client intersection and operation authority, test all7profiles and empty/partial/full dialects. Verify pinned native Codex no-model catalog/direct-call cases and structured source-bound evidence, with private auth/source/cleanup guards; distinguish catalog from operation authorization and model/task acceptance.194tests/architecture5-0; native21cases plus2-client catalog control PASS on96f3eaae, source/operator/cleanup preserved. [Evidence](validation-t173.md).
 
 - [x] T172 [US4] [CX-07] Add private wait-entry/PID observation and exact owned API crash/reap; verify real-socket/PG in-flight interruption with witnessed ConnectionError and no duplicate delivery/ACK. Add default-off native Codex same-invocation recovery acceptance, preserving all budgets, snapshots, source/operator/cleanup gates.143contractsPASS; nativePASS50.03s on418a9853,1wait across2workerPIDs/19→3s/ACK2/AGUI3,1510pins and closed resources. [Spec022 evidence](../022-provider-agui-restart/validation-cx07-current.md); other-provider/global gates remain separate.

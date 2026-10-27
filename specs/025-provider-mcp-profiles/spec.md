@@ -1,5 +1,18 @@
 # Provider MCP profiles and current acceptance
 
+## Native Unicode task observation · T174
+
+FR152/SC136: Observe one explicitly selected provider through the production
+interactive run-step route. Preserve a unique Unicode substring exactly,
+including composed and decomposed characters, without normalization or forcing
+JSON on model prose. Validate the request against the live API schema before
+submission; preserve 180 seconds, no prompt redelivery and owned teardown.
+Require the returned terminal's native-child receipt to be succeeded, settled
+and cleaned, and require join to preserve that same receipt identity/state.
+This observes the public task/child-lifecycle boundary, not an independently
+instrumented internal turn-generation CAS or the full CX-08 error/cancel matrix.
+Keep actual model execution separate from credential-free helper contracts.
+
 ## Text-command filter enforcement · T173
 
 FR151/SC135: A selected CAO MCP profile with explicit enabled_tools must enforce

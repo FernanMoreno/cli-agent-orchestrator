@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T174 · production Unicode task and native-child receipt
+
+Reuse the actual matrix fixture and POST /terminals/run-step, not the exec-json
+MCP journey. The existing public task path owns provider extraction and receipt
+verification. Add a small reusable observer with live-schema validation, exact
+Unicode preservation, fixed 180s/no-redelivery and same-child join invariants;
+test corruption/normalization and receipt mismatch before real execution.
+Graphify contains CodexProvider/extraction nodes; verify links against actual
+provider/base/terminal_service and matrix fixture source. No production behavior
+change is justified without a reproduced failure. Use a fresh source-bound
+private launcher, the pinned CLI/model, copied Codex auth only, verified owned
+PostgreSQL metadata, >=6144MiB and exact owned API/tmux/native/auth cleanup.
+Report missing native acceptance or an unobserved internal CAS honestly; do not
+close all CX-08 from this one baseline. Preserve T173 and other providers' receipts.
+
 ## T173 · native Codex catalog and text filter
 
 The array dialect propagates explicit enabled_tools to the server environment,
