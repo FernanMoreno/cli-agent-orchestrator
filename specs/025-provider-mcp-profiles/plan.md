@@ -1,5 +1,18 @@
 # Plan: provider MCP profiles
 
+## T188 · Claude native catalog control
+
+Reuse the provider builder and existing read-only subprocess sandbox. Implement
+a separate Claude reader: its envelope is not Codex JSON-RPC. Follow official
+Agent SDK initialize/mcp_status requests; ignore system/init inventory as evidence,
+correlate exact IDs and refuse
+unexpected execution callbacks/events. Use bounded UTF8 JSON lines with
+duplicate-key rejection and one absolute deadline. Pending is retryable;
+failed/missing catalogs are errors. Test fragmented real child pipes and
+negative protocol cases before installed-binary observation. Record native
+feasibility separately from the21-case matrix. Keep T032 deferred and historical
+receipts untouched. No product permission/persistence changes or model turns.
+
 ## T170 · consistent machine output for cao agent
 
 FR148/SC132 follows the completed T169/T168 boundary. The actual non-TTY

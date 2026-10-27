@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T188: catálogo MCP nativo de Claude2.1.303 validado en los7perfiles × completo/vacío/parcial:21PASS; aislamiento real3/12 tambiénPASS.53pruebas offline, arquitectura5/0;23sesiones nativas sin turnos de modelo, red/login aislados y procesos retirados. No acredita llamadas autorizadas, efectos PostgreSQL/AG-UI ni aceptación global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t188.md).
+
 T170 compartido: corregida la salida de `cao agent` para tuberías/automatización; JSON según su política existente y texto humano en TTY.107 pruebas pasan en los9subcomandos, incluidos errores/interrupción/hilos; arquitectura5/0 y revisión sin bloqueos. Conserva los payloads, permisos y transportes; no añade aceptación nativa de proveedores. [Evidencia](../specs/025-provider-mcp-profiles/validation-t170.md).
 
 T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t186.md).

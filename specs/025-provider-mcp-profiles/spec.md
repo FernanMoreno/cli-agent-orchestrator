@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Claude model-free native catalog · T188
+
+FR166/SC150: Observe the installed Claude CLI's MCP catalog using only its
+streaming control protocol (`initialize`, `mcp_status`), without sending a user
+message or accepting tool/permission callbacks. Keep production configuration
+and strict MCP scope. Validate seven profiles with full, empty and partial
+filters, readiness and independent-session isolation. Reject malformed,
+duplicate, failed or ambiguous status responses; pending is not an empty
+successful catalog. Bound framing, total input and time. Native controls require
+source/binary pins, private state, no external networking, owned-process cleanup
+and the6144MiB floor. Catalog inspection does not attest model offers, call
+authorization, effects, resources/prompts absent from the protocol, or global
+Claude acceptance.
+
 ## Native timeout and explicit reconciliation · T185
 
 FR163/SC147: A real pinned Codex run-step with timeout180, teardown=True and

@@ -113,6 +113,8 @@ Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics
 
+- Apply credential masks after broader filesystem binds: a later parent mount can cover an earlier mask. Before starting a native diagnostic, probe the actual sandbox namespace for credential invisibility and the required network isolation; requested flags alone are not evidence.
+
 - An interpreter digest binds executable bytes, not its virtual environment. Validate the exact invocation through closed imports before activation; use the verified virtualenv entrypoint when its resolved binary alone lacks dependencies. A generated enabled runner is not yet its executed archive: create that separate0600 archive from independently verified bytes before launch, retain its actual hash, and reclose only operational descriptors after owner closure while preserving executed evidence unchanged.
 
 - State the first unobserved boundary and the one observation that will distinguish the current hypotheses. Prefer instrumenting an existing working real journey over constructing a surrogate journey.
