@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Explicit quiescent EOF before Claude native exit · T202
+
+FR180/SC164: Provide an explicit, diagnostic-only Claude quiescent-EOF mode in
+the selected generic-message harness, reusing the existing source-bound SDK
+transport/controller. Keep the native/default path unchanged. Preserve two
+successful calls/rows/redacted events, API/terminal/turn/receipt continuity,
+UID/birth/pidfd/audit-inode ownership and a single6s budget for EOF plus CLI
+exit plus normal seal. No signal may substitute for normal run return. Emit
+harness_requested_eof and native_automatic_shutdown_accepted=false. This new
+scoped acceptance never closes T197's native/automatic observation or Work/
+profile/global gates and never changes product permissions or runtime code.
+
 ## SDK stdio completion under native signal sequences · T201
 
 FR179/SC163: Reproduce the first missing FastMCP.run boundary with the installed

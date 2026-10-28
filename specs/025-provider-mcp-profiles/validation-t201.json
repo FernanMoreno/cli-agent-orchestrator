@@ -1,0 +1,95 @@
+{
+  "schema": "caos.t201.sdk-stdio-comparison.v1",
+  "versions": {
+    "fastmcp": "3.2.0",
+    "mcp": "1.28.1",
+    "anyio": "4.15.1"
+  },
+  "source_scope": "installed SDK plus canonical observer/normal marker; no provider app",
+  "native_cli_started": false,
+  "auth_staged": false,
+  "postgres_started": false,
+  "model_calls": 0,
+  "results": [
+    {
+      "case": "eof",
+      "stdin_held_open": false,
+      "requested_signals": [],
+      "forced_cleanup": false,
+      "initialized": true,
+      "ping": true,
+      "returned_within_original6s": true,
+      "close_observation_seconds": 0.162,
+      "seal_before_cleanup": true,
+      "outcome_before_cleanup": {
+        "run_returned_normally": true,
+        "exception_type": null
+      },
+      "returncode": 0,
+      "reader_threads_retired": true,
+      "wire_overflow": false
+    },
+    {
+      "case": "sigint",
+      "stdin_held_open": true,
+      "requested_signals": [
+        "SIGINT"
+      ],
+      "forced_cleanup": true,
+      "initialized": true,
+      "ping": true,
+      "returned_within_original6s": false,
+      "close_observation_seconds": 6.0044,
+      "seal_before_cleanup": false,
+      "outcome_before_cleanup": null,
+      "cleanup_signal": "SIGTERM",
+      "returncode": -15,
+      "reader_threads_retired": true,
+      "wire_overflow": false
+    },
+    {
+      "case": "sigint_sigterm",
+      "stdin_held_open": true,
+      "requested_signals": [
+        "SIGINT",
+        "SIGTERM"
+      ],
+      "forced_cleanup": false,
+      "initialized": true,
+      "ping": true,
+      "returned_within_original6s": true,
+      "close_observation_seconds": 0.1103,
+      "seal_before_cleanup": false,
+      "outcome_before_cleanup": null,
+      "returncode": -15,
+      "reader_threads_retired": true,
+      "wire_overflow": false
+    },
+    {
+      "case": "sigint_then_eof",
+      "stdin_held_open": true,
+      "requested_signals": [
+        "SIGINT"
+      ],
+      "forced_cleanup": false,
+      "initialized": true,
+      "ping": true,
+      "child_running_when_stdin_closed": true,
+      "stdin_closed_after_sigint": true,
+      "returned_within_original6s": true,
+      "close_observation_seconds": 0.3434,
+      "seal_before_cleanup": false,
+      "outcome_before_cleanup": {
+        "run_returned_normally": false,
+        "exception_type": "KeyboardInterrupt"
+      },
+      "returncode": -2,
+      "reader_threads_retired": true,
+      "wire_overflow": false
+    }
+  ],
+  "all_direct_children_waited": true,
+  "all_reader_threads_retired": true,
+  "ordinary_eof_only_has_normal_seal": true,
+  "native_t197_accepted": false
+}

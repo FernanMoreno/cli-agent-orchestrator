@@ -30,6 +30,19 @@ PROVIDER_GATE_ENV = {
 OBSERVER_ENABLE_ENV = "CAO_SPEC023_MCP_OBSERVER"
 OBSERVER_AUDIT_PATH_ENV = "CAO_SPEC023_MCP_AUDIT_PATH"
 SOURCE_ROOT_ENV = "CAO_SPEC023_SOURCE_ROOT"
+CLAUDE_EOF_ENV = "CAO_SPEC023_CLAUDE_REQUEST_QUIESCENT_EOF"
+CLAUDE_EOF_OUTCOMES = frozenset(
+    {
+        "not_requested",
+        "requested",
+        "history_invalid",
+        "eof_request_failed",
+        "deadline_exhausted",
+        "eof_control_error",
+        "normal_seal_missing",
+        "normal_eof_verified",
+    }
+)
 
 _ROW_FIELDS = frozenset({"id", "sender_id", "receiver_id", "message", "created_at"})
 _AGUI_METADATA_FIELDS = frozenset({"sender", "receiver", "orchestration_type"})
@@ -239,10 +252,15 @@ def build_message_mcp_server_config(
     source_root: Path,
     candidate_test_dir: Path,
     audit_path: Path,
+    claude_quiescent_eof: bool = False,
 ) -> dict[str, Any]:
     """Build a private, source-pinned MCP entry for the actual bundled server."""
     if provider not in PROVIDERS:
         raise RuntimeError("selected_provider_unavailable")
+    if type(claude_quiescent_eof) is not bool or (
+        claude_quiescent_eof and provider != "claude_code"
+    ):
+        raise RuntimeError("invalid_claude_shutdown_mode")
     try:
         if not python_executable.is_absolute() or ".." in python_executable.parts:
             raise RuntimeError("mcp_snapshot_unavailable")
@@ -307,6 +325,8 @@ def build_message_mcp_server_config(
         config["args"] = ["-m", "cli_agent_orchestrator.mcp_server.server"]
         config["cao_tool_profile"] = "collaboration"
         config["enabled_tools"] = ["send_message"]
+        if claude_quiescent_eof:
+            env["CAO_SPEC023_MCP_GRACEFUL_EOF"] = "1"
     return config
 
 
@@ -484,6 +504,14 @@ def _contains_message_body_key(value: Any) -> bool:
     return False
 
 
+def parse_claude_eof_gate(environment: Mapping[str, Any]) -> bool:
+    """Explicit diagnostic shutdown selection; never infer from truthiness."""
+    value = environment.get(CLAUDE_EOF_ENV, "0")
+    if type(value) is not str or value not in {"0", "1"}:
+        raise ValueError("invalid_claude_shutdown_mode")
+    return value == "1"
+
+
 def parse_provider_gates(environment: Mapping[str, Any]) -> tuple[str, ...]:
     """Return explicitly selected lanes; missing gates default to off."""
     selected: list[str] = []
@@ -518,9 +546,14 @@ def message_mcp_config_ready(
     source_root: Path,
     candidate_test_dir: Path,
     audit_path: Path,
+    claude_quiescent_eof: bool = False,
 ) -> bool:
     """Check the selected server-level grant and the dispatch observer pins."""
     if provider not in PROVIDERS or not isinstance(config, Mapping):
+        return False
+    if type(claude_quiescent_eof) is not bool or (
+        claude_quiescent_eof and provider != "claude_code"
+    ):
         return False
     try:
         python_path = Path(os.path.abspath(python_executable))
@@ -553,7 +586,11 @@ def message_mcp_config_ready(
             "PYTHONDONTWRITEBYTECODE",
             "PYTHONPATH",
         }
-        | ({"CAO_SPEC023_MCP_GRACEFUL_EOF"} if provider == "codex" else set())
+        | (
+            {"CAO_SPEC023_MCP_GRACEFUL_EOF"}
+            if provider == "codex" or claude_quiescent_eof
+            else set()
+        )
         and config.get("command") == str(python_path)
         and config.get("args") == expected_command_args
         and (
@@ -562,7 +599,10 @@ def message_mcp_config_ready(
         )
         and (provider != "claude_code" or config.get("cao_tool_profile") == "collaboration")
         and environment.get(OBSERVER_ENABLE_ENV) == "1"
-        and (provider != "codex" or environment.get("CAO_SPEC023_MCP_GRACEFUL_EOF") == "1")
+        and (
+            not (provider == "codex" or claude_quiescent_eof)
+            or environment.get("CAO_SPEC023_MCP_GRACEFUL_EOF") == "1"
+        )
         and environment.get(OBSERVER_AUDIT_PATH_ENV) == str(audit_file)
         and environment.get(SOURCE_ROOT_ENV) == str(source_path)
         and environment.get("CAO_ENABLE_SENDER_ID_INJECTION") == "true"
@@ -657,10 +697,18 @@ def project_safe_receipt(raw: Mapping[str, Any]) -> dict[str, Any]:
         "result": result,
         "mcp_calls": calls,
     }
-    if provider == "codex":
+    if provider in {"codex", "claude_code"}:
         mode = raw.get("shutdown_mode")
         receipt["shutdown_mode"] = mode if mode == "harness_requested_eof" else "not_observed"
         receipt["native_automatic_shutdown_accepted"] = False
+    if provider == "claude_code":
+        receipt["claude_quiescent_eof_requested"] = (
+            raw.get("claude_quiescent_eof_requested") is True
+        )
+        outcome = raw.get("claude_eof_outcome", "not_requested")
+        receipt["claude_eof_outcome"] = (
+            outcome if type(outcome) is str and outcome in CLAUDE_EOF_OUTCOMES else "not_observed"
+        )
     for name in (
         "first_row_identity_matched",
         "events_redacted",

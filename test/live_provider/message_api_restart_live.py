@@ -45,6 +45,7 @@ from message_api_restart import (
     expected_persisted_message,
     message_mcp_config_ready,
     owned_session_name,
+    parse_claude_eof_gate,
     parse_provider_gates,
     phase_trigger,
     project_safe_receipt,
@@ -200,6 +201,8 @@ class RunState:
     terminals_preserved: bool = False
     audit_failed: bool = False
     shutdown_mode: str = "not_observed"
+    claude_quiescent_eof: bool = False
+    claude_eof_outcome: str = "not_requested"
     expected_turn_sequence: int | None = None
     previous_turn_generation: str | None = None
     observed_turn_generation: str | None = None
@@ -1223,6 +1226,43 @@ def _graceful_claude_sender_exit_and_wait_for_seal(state: RunState, base_url: st
     budget_outcome = _ClaudeExitBudgetOutcome.WITHIN_NOMINAL_BUDGET
     remaining = max(0.0, deadline - time.monotonic())
     try:
+        if getattr(state, "claude_quiescent_eof", False) is True:
+            from message_mcp_shutdown import request_shutdown
+
+            state.claude_eof_outcome = "requested"
+            try:
+                if not validate_dispatch_history(
+                    read_dispatch_audit(state.audit_path), expected_calls=2
+                ):
+                    state.claude_eof_outcome = "history_invalid"
+                    return False
+            except (OSError, ValueError, RuntimeError):
+                state.claude_eof_outcome = "history_invalid"
+                return False
+            try:
+                if state.shutdown_mode != "harness_requested_eof":
+                    if not request_shutdown(state.audit_path, deadline=deadline):
+                        state.claude_eof_outcome = "eof_request_failed"
+                        if time.monotonic() >= deadline:
+                            budget_outcome = _ClaudeExitBudgetOutcome.EXHAUSTED_BEFORE_REQUEST
+                            state.claude_eof_outcome = "deadline_exhausted"
+                        return False
+                if time.monotonic() >= deadline:
+                    budget_outcome = _ClaudeExitBudgetOutcome.EXHAUSTED_BEFORE_REQUEST
+                    state.claude_eof_outcome = "deadline_exhausted"
+                    return False
+                if not _audit_completion_present(state):
+                    state.claude_eof_outcome = "normal_seal_missing"
+                    return False
+                state.shutdown_mode = "harness_requested_eof"
+                state.claude_eof_outcome = "normal_eof_verified"
+            except (OSError, ValueError, RuntimeError):
+                state.claude_eof_outcome = "eof_control_error"
+                if time.monotonic() >= deadline:
+                    budget_outcome = _ClaudeExitBudgetOutcome.EXHAUSTED_BEFORE_REQUEST
+                    state.claude_eof_outcome = "deadline_exhausted"
+                return False
+            remaining = max(0.0, deadline - time.monotonic())
         if remaining > 0:
             try:
                 timeout = requests.adapters.TimeoutSauce(
@@ -1614,6 +1654,12 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
     if not selected:
         pytest.skip("Spec023 real-provider lane disabled; all provider gates default off")
     provider = selected[0]
+    try:
+        claude_quiescent_eof = (
+            parse_claude_eof_gate(os.environ) if provider == "claude_code" else False
+        )
+    except ValueError:
+        pytest.fail("spec023_preflight_failed", pytrace=False)
     source_env = os.environ.get(SOURCE_ROOT_ENV)
     evidence_env = os.environ.get(EVIDENCE_ROOT_ENV)
     if not source_env or not evidence_env:
@@ -1657,6 +1703,7 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
         home=run_root / "workspace" / "home",
         source_root=source_root,
         audit_path=run_root / "sender-mcp-audit.jsonl",
+        claude_quiescent_eof=claude_quiescent_eof,
     )
     state.workspace.mkdir(mode=0o700)
     state.home.mkdir(mode=0o700)
@@ -1684,6 +1731,7 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
             source_root=source_root,
             candidate_test_dir=Path(__file__).parent,
             audit_path=state.audit_path,
+            claude_quiescent_eof=state.claude_quiescent_eof,
         )
         tools_ready = message_mcp_config_ready(
             provider,
@@ -1692,6 +1740,7 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
             source_root=source_root,
             candidate_test_dir=Path(__file__).parent,
             audit_path=state.audit_path,
+            claude_quiescent_eof=state.claude_quiescent_eof,
         )
         require_selected_provider_ready(
             provider,
@@ -2252,6 +2301,8 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
         {
             "provider": state.provider,
             "shutdown_mode": state.shutdown_mode,
+            "claude_quiescent_eof_requested": state.claude_quiescent_eof,
+            "claude_eof_outcome": state.claude_eof_outcome,
             "result": state.result,
             "mcp_calls": records,
             "first_row_identity_matched": state.first_row_identity_matched,

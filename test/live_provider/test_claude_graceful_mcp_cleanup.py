@@ -353,7 +353,7 @@ def test_claude_exit_failure_still_deletes_owned_ids_and_keeps_audit_failure(
     assert state.cleanup == "pass"
 
 
-@pytest.mark.parametrize("provider", ["codex", "opencode_cli"])
+@pytest.mark.parametrize("provider", ["opencode_cli"])
 def test_non_claude_cleanup_keeps_delete_first_and_never_sends_exit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str
 ) -> None:
@@ -374,5 +374,20 @@ def test_non_claude_cleanup_keeps_delete_first_and_never_sends_exit(
         ("DELETE", state.receiver_id),
     ]
     assert timings == [[], [6.0]]
+    assert not live.audit_completion_seal_valid(state.audit_path)
+    assert cleanup_ok
+
+
+def test_codex_unknown_audit_refuses_eof_without_legacy_seal_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex's existing two-success gate rejects this fixture's unknown results."""
+    state, server, calls, observer, clock = _setup_cleanup(tmp_path, monkeypatch, provider="codex")
+    cleanup_ok, timings = _run_cleanup_with_fake_api(
+        state, server, calls, observer, clock, monkeypatch, exit_mode="normal-return"
+    )
+    assert calls == [("DELETE", state.sender_id), ("DELETE", state.receiver_id)]
+    assert timings == [[], []]
+    assert state.audit_failed
     assert not live.audit_completion_seal_valid(state.audit_path)
     assert cleanup_ok

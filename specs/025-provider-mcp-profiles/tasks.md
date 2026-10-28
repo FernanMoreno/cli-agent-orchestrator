@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T201 [US4] [FR179/SC163; T197] Reproduce real SDK stdio EOF/SIGINT/SIGINT→SIGTERM outcomes with actual audit observer/normal marker and parent-owned exit status, no Claude/auth/model/API/PG. Preserve6s criteria, exceptions and failed receipts; distinguish forced cleanup and synthetic transport evidence before implementing a shutdown fix.
+- [ ] T202 [US4] [FR180/SC164] Implement explicit diagnostic Claude quiescent EOF before exit using the existing owned SDK transport, shared6s deadline and unchanged exact message/receipt/audit criteria. Keep default/native path, grants and product code intact; validate strict mode projection and failure controls, review, probe without model then accept only the new explicit-mode full case. T197 native/automatic remains open.
+
+- [x] T201 [US4] [FR179/SC163; T197] Reproduce real SDK stdio EOF/SIGINT/SIGINT→SIGTERM outcomes with actual audit observer/normal marker and parent-owned exit status, no Claude/auth/model/API/PG. Preserve6s criteria, exceptions and failed receipts; distinguish forced cleanup and synthetic transport evidence before implementing a shutdown fix.
 
 - [x] T200 [US4] [FR178/SC162; T197] Diagnose HTTP200 exit without normal MCP seal using a zero-model sender-ready control and private before/after viewport + exact MCP identity observations before DELETE. Preserve6s budget/criteria/source/account/PG ownership and original failed receipts; reproduce the first incorrect boundary before fixing shutdown.
 

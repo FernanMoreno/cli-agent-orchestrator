@@ -1,5 +1,22 @@
 # Plan: provider MCP profiles
 
+## T202 · reuse explicit SDK EOF without weakening native acceptance
+
+T201 shows genuine EOF returns/seals while SIGINT with open stdin stalls and
+SIGINT followed by EOF throws KeyboardInterrupt. T200 shows native CLI signal
+intents and retirement, not normal run completion. Add an explicit Claude-only
+boolean to diagnostic config/readiness and a strict opt-in runner gate before
+auth/services. Keep defaults unchanged. The cleanup helper validates exactly
+two successful audit calls, requests quiescent EOF through the existing bound
+pidfd control, then requests native exit and polls the genuine seal under one
+original6s deadline; no fallback or late success. Make the receipt projection
+state the explicit mode and refuse automatic acceptance. Test defaults, closed
+config keys/profile/filter, bad flag types, deadlines/history/EOF failure/late
+seal/idempotence/privacy and existing signal distinction. Graph fixtures are
+absent; verify builder -> native env -> controlled_stdio -> request_shutdown ->
+normal marker -> exit/cleanup directly. Review and run focused checks, then a
+zero-model transport/exit control before a fresh full native message case.
+
 ## T201 · observe SDK return/exception directly before a shutdown change
 
 T200 observes actual CLI signal intents and child retirement but lacks the
