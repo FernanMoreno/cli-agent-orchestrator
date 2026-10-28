@@ -1,5 +1,23 @@
 # Provider MCP profiles and current acceptance
 
+## Claude model-origin generic messages across API replacement · T197
+
+FR175/SC159: Exercise the existing selected-provider generic-message journey
+with Claude Code's real sender and receiver. Require exactly two successful
+send_message calls, exact delivered PostgreSQL/API rows and redacted AG-UI
+events on both sides of one API restart, first-row identity continuity,
+verified current sender turns, native terminal continuity and original audit/
+seal/cleanup. Preserve180s/6144MiB and Claude's existing6s exit/seal allowance.
+For Claude, require the collaboration server profile intersected with exactly
+send_message in the client entry; verify the produced native config actually
+installs the matching server filter and denies excluded calls before handlers.
+An observer-only dispatch guard is insufficient catalog/profile admission.
+Pin current source/interpreter/installed native executable before activation;
+use only private account-file copies, preserve original login and existing
+credential archiving, and hold verified PostgreSQL ownership until borrowers
+retire. Generic messages do not establish Work equivalence, every profile or
+operation authorization; failure must remain a failed scoped diagnostic.
+
 ## Structured rejection diagnostics without incidental IDs · T196
 
 FR174/SC158: Healthy informational rate_limit_event messages and opaque IDs

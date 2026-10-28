@@ -74,6 +74,8 @@ _SOURCE_BINDING_FILES = (
     "src/cli_agent_orchestrator/models/inbox.py",
     "src/cli_agent_orchestrator/models/terminal.py",
     "src/cli_agent_orchestrator/mcp_server/server.py",
+    "src/cli_agent_orchestrator/mcp_server/interaction_pull_flow_only.py",
+    "src/cli_agent_orchestrator/mcp_server/tool_profiles.py",
     "src/cli_agent_orchestrator/plugins/__init__.py",
     "src/cli_agent_orchestrator/plugins/base.py",
     "src/cli_agent_orchestrator/plugins/builtin/event_log_publisher.py",

@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T197 [US4] [FR175/SC159; T011] Execute the existing real-Claude generic-message/API-restart lane with current source/native/interpreter/auth/PG ownership admission and original exact row/event/turn/audit/seal/cleanup criteria. Validate/review fresh closed adapter before staging; retain failed and accepted evidence distinctly, without Work/profile/global inference or login mutation.
+
 - [x] T196 [US4] [FR174/SC158] Reproduce and correct false auth/quota diagnostic flags from incidental401 IDs and healthy rate_limit_event status. Share typed rejection evidence with no-ACK failure classification, retain explicit real error/text compatibility and timeout/success/receipt/cleanup gates, test malformed/unknown/status/type/privacy controls, review and integrate without rewriting prior native receipts or repeating healthy model runs.
 
 T196 corregido:12RED/4controles→144pruebas distintas PASS (125interacción/reinicio+19consumidorOpenCode), arquitectura5-0/ClaudeGO. Metadata nativa para rechazos, sin401porID ni rate_limit_event informativo; timeout/aceptación/recibos previos intactos. Sin nuevo modelo ni cambio productivo. [Resultado](validation-t196.md).

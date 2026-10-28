@@ -1,5 +1,27 @@
 # Plan: provider MCP profiles
 
+## T197 · reuse the current generic-message provider lane for Claude
+
+The selected-provider journey already supports claude_code and its bounded
+native exit/seal. Source preflight found its raw Claude MCP entry had no selected
+profile/filter (only the dispatch observer blocked other calls). Reproduce the
+missing contract before the model; narrow that diagnostic entry to collaboration
+with enabled_tools=[send_message], make readiness require those exact fields,
+and compose the actual Claude builder/environment/middleware with direct denial
+controls. That composition rejects the legacy -B command under the canonical
+profile validator; use canonical -m invocation for Claude only while preserving
+PYTHONDONTWRITEBYTECODE=1, rather than relaxing the validator. Preserve Codex/OpenCode entry semantics and all existing safety gates. Codex T190 and Claude Q/A/active-wait T195 do not substitute
+for this message gate. Derive a closed private adapter from the reviewed T190
+owner/retirement controller, replace only provider/account/native selection,
+remove Codex-only package/proc admission and retain the existing message/API
+implementation and strict public receipt. Use explicit Sonnet4.6/model/source
+pins, isolated canonical Claude auth-file stage and exact owned PG metadata.
+Reject stale descriptors or unheld external PG ownership. Validate actual
+imports/signatures/context-manager protocols and optional failure-observer
+controls before account staging. Review the scoped adapter, integrate spec,
+repin, archive enabled bytes and run one serialized current-source case.
+Do not change provider/runtime behavior before a demonstrated failure boundary.
+
 ## T196 · first incorrect diagnostic classification boundary
 
 T195 actual successful CLI returned coarse auth/quota flags. Source inspection

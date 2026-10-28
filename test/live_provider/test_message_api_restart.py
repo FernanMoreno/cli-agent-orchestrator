@@ -68,6 +68,8 @@ EXPECTED_BODY = "Escribe una nota privada: café, español y 日本語. SPEC023_
 _REQUIRED_GENERIC_MESSAGE_SOURCE_BINDINGS = frozenset(
     {
         "src/cli_agent_orchestrator/mcp_server/server.py",
+        "src/cli_agent_orchestrator/mcp_server/interaction_pull_flow_only.py",
+        "src/cli_agent_orchestrator/mcp_server/tool_profiles.py",
         "src/cli_agent_orchestrator/utils/orchestration.py",
         "src/cli_agent_orchestrator/api/main.py",
         "src/cli_agent_orchestrator/clients/database.py",
@@ -1042,7 +1044,10 @@ def test_mcp_profile_config_pins_snapshot_python_and_observer_without_credential
         candidate_test_dir=candidate_test_dir,
         audit_path=audit_dir / "claude-sender.jsonl",
     )
-    assert "enabled_tools" not in claude_config
+    assert claude_config["enabled_tools"] == ["send_message"]
+    assert claude_config["cao_tool_profile"] == "collaboration"
+    assert claude_config["args"] == ["-m", "cli_agent_orchestrator.mcp_server.server"]
+    assert claude_config["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     assert message_mcp_config_ready(
         "claude_code",
         claude_config,
@@ -2590,3 +2595,104 @@ def test_non_opencode_lane_does_not_install_native_profiles(
     )
     assert sequence == ["create_receiver"]
     assert receipt["failure_stage"] == "native_terminals"
+
+
+@pytest.fixture
+def claude_message_scope(tmp_path):
+    root = _source_root_from_test_file()
+    audit = tmp_path / "audit"
+    audit.mkdir(mode=0o700)
+    kwargs = dict(
+        python_executable=Path(sys.executable),
+        source_root=root,
+        candidate_test_dir=root / "test/live_provider",
+        audit_path=audit / "calls.jsonl",
+    )
+    return build_message_mcp_server_config(provider="claude_code", **kwargs), kwargs
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("cao_tool_profile", None),
+        ("cao_tool_profile", "coordination"),
+        ("enabled_tools", None),
+        ("enabled_tools", []),
+        ("enabled_tools", ["list_siblings"]),
+        ("enabled_tools", ["send_message", "send_message"]),
+        ("enabled_tools", False),
+    ],
+)
+def test_claude_message_config_requires_exact_profile_and_filter(
+    claude_message_scope, field, value
+):
+    config, kwargs = claude_message_scope
+    expected = {**config, "cao_tool_profile": "collaboration", "enabled_tools": ["send_message"]}
+    assert message_mcp_config_ready("claude_code", expected, **kwargs)
+    bad = dict(expected)
+    if value is None:
+        del bad[field]
+    else:
+        bad[field] = value
+    assert not message_mcp_config_ready("claude_code", bad, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_claude_message_config_reaches_actual_builder_and_server_filter(
+    claude_message_scope, monkeypatch, tmp_path
+):
+    import shlex
+
+    from fastmcp import Client, FastMCP
+    from fastmcp.exceptions import ToolError
+
+    from cli_agent_orchestrator.mcp_server import server
+    from cli_agent_orchestrator.models.agent_profile import AgentProfile
+    from cli_agent_orchestrator.providers import claude_code
+    from cli_agent_orchestrator.utils.mcp_tool_policy import (
+        MCP_TOOL_FILTER_ENV,
+        MCP_TOOL_PROFILE_ENV,
+    )
+
+    config, _ = claude_message_scope
+    assert config.get("cao_tool_profile") == "collaboration"
+    assert config.get("enabled_tools") == ["send_message"]
+    profile = AgentProfile(
+        name="message-scope",
+        description="test",
+        allowedTools=["@cao-mcp-server"],
+        mcpServers={"cao-mcp-server": config},
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(claude_code, "CAO_HOME_DIR", tmp_path)
+        patch.setattr(claude_code, "load_agent_profile", lambda _: profile)
+        provider = claude_code.ClaudeCodeProvider("test1234", "session", "window", "message-scope")
+        args = shlex.split(provider._build_claude_command())
+        entry = json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())["mcpServers"][
+            "cao-mcp-server"
+        ]
+        assert "cao_tool_profile" not in entry and "enabled_tools" not in entry
+        assert entry["env"][MCP_TOOL_PROFILE_ENV] == "collaboration"
+        assert json.loads(entry["env"][MCP_TOOL_FILTER_ENV]) == ["send_message"]
+        patch.setenv(MCP_TOOL_PROFILE_ENV, entry["env"][MCP_TOOL_PROFILE_ENV])
+        patch.setenv(MCP_TOOL_FILTER_ENV, entry["env"][MCP_TOOL_FILTER_ENV])
+        app = FastMCP("message-scope")
+        invoked = []
+
+        @app.tool()
+        async def send_message() -> str:
+            invoked.append("send_message")
+            return "sent"
+
+        @app.tool()
+        async def list_siblings() -> str:
+            invoked.append("list_siblings")
+            return "not allowed"
+
+        server._install_tool_profile_middleware_if_requested(app)
+        async with Client(app) as client:
+            assert {tool.name for tool in await client.list_tools()} == {"send_message"}
+            assert (await client.call_tool("send_message")).data == "sent"
+            with pytest.raises(ToolError):
+                await client.call_tool("list_siblings")
+        assert invoked == ["send_message"]

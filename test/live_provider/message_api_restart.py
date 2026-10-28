@@ -301,6 +301,12 @@ def build_message_mcp_server_config(
     if provider == "codex":
         config["enabled_tools"] = ["send_message"]
         env["CAO_SPEC023_MCP_GRACEFUL_EOF"] = "1"
+    elif provider == "claude_code":
+        # Profiled servers require the canonical module command. The pinned
+        # environment preserves no-bytecode behavior without the extra flag.
+        config["args"] = ["-m", "cli_agent_orchestrator.mcp_server.server"]
+        config["cao_tool_profile"] = "collaboration"
+        config["enabled_tools"] = ["send_message"]
     return config
 
 
@@ -524,15 +530,15 @@ def message_mcp_config_ready(
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
     expected_keys = {"command", "args", "env"}
-    if provider == "codex":
+    if provider in {"codex", "claude_code"}:
         expected_keys.add("enabled_tools")
+    if provider == "claude_code":
+        expected_keys.add("cao_tool_profile")
     if set(config) != expected_keys:
         return False
-    expected_command_args = [
-        "-B",
-        "-m",
-        "cli_agent_orchestrator.mcp_server.server",
-    ]
+    expected_command_args = ["-m", "cli_agent_orchestrator.mcp_server.server"]
+    if provider != "claude_code":
+        expected_command_args.insert(0, "-B")
     environment = config.get("env")
     if not isinstance(environment, Mapping):
         return False
@@ -550,7 +556,11 @@ def message_mcp_config_ready(
         | ({"CAO_SPEC023_MCP_GRACEFUL_EOF"} if provider == "codex" else set())
         and config.get("command") == str(python_path)
         and config.get("args") == expected_command_args
-        and (provider != "codex" or config.get("enabled_tools") == ["send_message"])
+        and (
+            provider not in {"codex", "claude_code"}
+            or config.get("enabled_tools") == ["send_message"]
+        )
+        and (provider != "claude_code" or config.get("cao_tool_profile") == "collaboration")
         and environment.get(OBSERVER_ENABLE_ENV) == "1"
         and (provider != "codex" or environment.get("CAO_SPEC023_MCP_GRACEFUL_EOF") == "1")
         and environment.get(OBSERVER_AUDIT_PATH_ENV) == str(audit_file)
