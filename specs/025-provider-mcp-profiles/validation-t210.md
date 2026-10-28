@@ -131,3 +131,37 @@ legacy wiring check remains failing at its unchanged baseline. This is not a
 global type-check PASS. The initial hybrid one-file shadow added two artificial
 missing-helper diagnostics; the complete five-file baseline replaces that
 comparison and its failed receipt is preserved. No ignores or limits changed.
+
+## Current native admission
+
+T210 r4 on source6d443125d9f6f8e9e9abf8cf964cf20cd4e9e477 passes the explicit
+interaction-profile zero-turn control:544 Git-blob-verified source bindings,
+Claude2.1.303, two stable catalog observations of3tools,0 dispatched calls,
+1exact production SIGINT/normal-return witness/retired identity, genuine SDK
+completion seal and CLIexit0. The explicit post-wait observation closes within
+494.424ms of the original shared6s deadline. Total58.549s; minimum9642MiB
+against6144MiB. No operator login copied, real provider inference, proxy,
+harness-requested MCP EOF, API or PostgreSQL usage. The existing PostgreSQL
+owner merely remains alive outside this control for the next gate.
+
+All15preexisting container and19network identities remain present. Owned group
+and exact MCP identity retired; source/HEAD/archive checks pass and operational
+descriptors are RECLOSED. The MCP kernel wait status was not observed; do not
+infer MCPwait0 from its normal SDK witness. Direct-child installed-SDK tests
+separately established actual MCPprocess0. Public projection:
+[validation-t210-native-r4.json](validation-t210-native-r4.json).
+
+Preserved preparation history: r1's empty-JSON text comparison was rejected
+before any CLI; r2's namespace probe inherited the observer and timed out
+importing the SDK before any CLI. Actual masks/network namespace were exercised
+before the corrected run; only the auxiliary stdlib probe disables that hook,
+while the actual MCP retains the real source-bound observer. Actual r3 then
+passed its bounded-wait diagnostic in57.712s/min9645MiB. A deterministic offline
+late-return control exposed the missing explicit post-wait clock assertion;
+r4 adds that assertion and records the shared duration without changing any
+wait timeout or acceptance limit. These receipts/archives are retained.
+
+T209 is complete at this explicit local-stop/source/SDK/native-zero scope.
+T210 and full T197 remain open until the original messages/API-restart journey
+passes using production `/exit` pre-stop. No global/default/all-profile or
+intrinsic vendor500ms cleanup acceptance is inferred.

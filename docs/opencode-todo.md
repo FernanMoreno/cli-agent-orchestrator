@@ -1,11 +1,11 @@
 # OpenCode v1 y v2: análisis y pendientes
 
-Actualización T210 (2026-10-28): cierre MCP antes del CLI integrado en el checkout
-principal, todavía sin aceptación nativa. Suite SDK/componentes108 PASS; tras
-corregir admisión Work y carreras de registro, selección final68 PASS, tipos
-y arquitectura5/0 PASS, revisión Claude GO. Regresión PostgreSQL/API final:347 PASS
-tras corregir el registro ausente en DrvFS; control adicional1 PASS y revisión GO;
-T209/T210 y T197 siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t210.md).
+Actualización T209/T210 (2026-10-28): cierre MCP antes del CLI integrado en
+main6d443125. Regresión PostgreSQL/API/SDK347 PASS y rutas finales29 PASS;
+control nativo sin modelo PASS: cierre494ms dentro de6s, catálogo3/calls0,
+sello normal/CLI0/MCPretirado y15contenedores/19redes preservados. T209 cerrado
+en ese alcance explícito; T210/T197 siguen pendientes del recorrido real de
+mensajes y reinicio. No activación global. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t210.md).
 
 
 T208: observador de EOF/señales/salida y estado del proceso implementado,24pruebas PASS y revisión GO. Conserva errores originales, privacidad y límites; diagnóstico r2 completo: SIGINT/SIGTERM y SIGKILL confirmado a~0,5s, antes de EOF y de la limpieza del lanzador; sin operaciones pendientes ni salida70 del guard. Fuente535 intacta/procesos retirados. Emisor no observado; cierre automático sigue FALLANDO y T197 abierto. [Validación](../specs/025-provider-mcp-profiles/validation-t208.md).
