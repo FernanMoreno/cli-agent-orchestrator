@@ -1,0 +1,69 @@
+{
+  "schema": "caos.t205.proxy-shutdown-observation.v1",
+  "diagnosis_accepted": true,
+  "native_preflight_accepted": false,
+  "native_client_denial_accepted": false,
+  "source_commit": "32e5755d4832662dfd8e9f19c00ca769d33c49cc",
+  "source_bindings": 528,
+  "seconds": 40.542,
+  "minimum_sampled_memory_mib": 10621,
+  "memory_floor_satisfied": true,
+  "sandbox_probe_passed": true,
+  "owned_group_retired": true,
+  "sources_unchanged": true,
+  "synthetic_turns_requested": 0,
+  "real_provider_inference": false,
+  "operator_login_copied": false,
+  "api_postgres_used": false,
+  "worker_cli_exit_status": 0,
+  "received_signal": 2,
+  "proxy_stdin_eof_observed": false,
+  "signal_after_worker_stdin_close": true,
+  "signal_before_parent_cleanup": true,
+  "child_cleanup_term_intent": true,
+  "child_wait_status": -15,
+  "child_wait_after_term_intent": true,
+  "normal_close_marker_observed": false,
+  "proxy_event_sequence": [
+    {
+      "event": "proxy_started"
+    },
+    {
+      "event": "child_spawned"
+    },
+    {
+      "event": "signal",
+      "status": 2
+    },
+    {
+      "event": "abort_keyboard_interrupt"
+    },
+    {
+      "event": "cleanup_sigterm"
+    },
+    {
+      "event": "child_wait_cleanup",
+      "status": -15
+    },
+    {
+      "event": "proxy_finished"
+    }
+  ],
+  "worker_event_sequence": [
+    {
+      "event": "worker_close_started"
+    },
+    {
+      "event": "worker_stdin_closed"
+    },
+    {
+      "event": "worker_cli_exit",
+      "status": 0
+    },
+    {
+      "event": "worker_close_cutoff"
+    }
+  ],
+  "signal_sender_identity_observed": false,
+  "signal_before_worker_recorded_cli_exit": true
+}
