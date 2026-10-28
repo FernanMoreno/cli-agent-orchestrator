@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Native supervision operation authority · T203
+
+FR181/SC165: Extend T007 acceptance with one source-bound native Codex app-server
+case using the complete pinned runtime and supervision profile. Both inspect and
+cancel must be present in the native catalog. Inspect self and a directly assigned
+child against actual private API/PostgreSQL metadata. Attempt cancellation of an
+existing unrelated active terminal using its current generation; require the exact
+server target-authority refusal, one successful HTTP200 foreign metadata lookup and no recovery-action HTTP dispatch, with
+unchanged receipt/turn/action observations. An excluded client tool, missing target,
+stale generation, transport error or parse failure is not an authorization success.
+Use fixture-seeded pending PostgreSQL receipts for the controlled actors, explicitly not provider turn-delivery evidence. Use strict structured MCP results with consistent JSON text fallback; report fixed
+content-free evidence. Keep real backend actors controlled and disclose them; no
+model turn, Work/global acceptance or repeated catalog matrix is inferred.
+
 T202 evidence clarification: persist private exact container inventories before native resources and after owner closure, with public counts only; do not attribute a missing resource to a deleting client without evidence. Admit a fresh retry only after a60s unchanged inventory observation with no container create/destroy events, preserving the original all-preexisting-containers criterion.
 
 ## Explicit quiescent EOF before Claude native exit · T202

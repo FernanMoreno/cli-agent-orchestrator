@@ -1,5 +1,9 @@
 # Codex: análisis y pendientes
 
+T203 implementado como verificador de supervisión Codex:44pruebas nuevas y60regresiones de autoridad pasan. Observación HTTP/PG tipada y negativa antes de mutación; controles de imports/Popen/tmux/esquema nativo completados sin auth/PG/modelo. Caso real aún pendiente; no cierra T007/T008/global. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t203.md).
+
+Conciliación de casillas: AUTH/LOCAL/CATALOG completados sólo en su alcance compartido de implementación, inventario y controles offline (T036:79operaciones/7perfiles). Las aceptaciones nativas por operación y AUTH-03 siguen separadas. [Base y límites](../specs/025-provider-mcp-profiles/validation-t036.md).
+
 T202 cerrado: recorrido real r4 aceptado en5fddafaf/510fuentes. Dos mensajes/filas/eventos, reinicio y sello normal mediante EOF explícito dentro de6s;14contenedores originales conservados,37identidades/PG retirados y login intacto.178,052s/mínimo9324MiB. No acredita cierre automático T197 ni Work/perfiles/global. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t202.md).
 
 T202: captura de inventario compartida implementada,16pruebas PASS y consultas Docker privadas verificadas. Dos ventanas de60s fallan (24/66altas-bajas); el armado rechaza antes de credenciales/servicios/modelo. No hubo reintento nativo; T202/T197 automático siguen abiertos y r3 permanece fallido. [Evidencia](../specs/025-provider-mcp-profiles/validation-t202.md).
@@ -169,9 +173,9 @@ El perfil inicial propuesto combina interacción humana, colaboración básica y
 
 El helper `_tool_denied_reason` autoriza las operaciones que lo utilizan mediante el selector de servidor `@cao-mcp-server` o `*`; los nombres sueltos de herramientas en `allowed_tools` no son una allowlist MCP por operación. Las rutas de interacción tienen además su autoridad propia. El filtro histórico de tres herramientas solo se instala en el proceso hijo marcado; no es global. La base opt-in de perfiles integrada el 2026-10-20 añade otro filtro por hijo mediante el overlay, según el avance registrado al final; no convierte los nombres de allowed_tools en permisos MCP por operación.
 
-- [ ] CX-AUTH Implementar o extender una política del servidor por perfil/herramienta para los nuevos perfiles, antes de dar por efectiva la separación propuesta. Verificar tanto catálogo como invocación directa y conservar las comprobaciones de autoridad de cada operación.
-- [ ] CX-LOCAL Documentar y probar que la coordinación local pasa hoy por `_tool_denied_reason("assign", local_only=True)` y requiere identidad de terminal y contexto del proyecto; habilitar solo el nombre en el cliente no basta.
-- [ ] CX-CATALOG Auditar también `handoff`, `assign`, `assign_elastic`, `list_native_children`, `join_native_child`, `get_handoff_result`, `delete_terminal`, `answer_user_prompt` y `emit_ui`, más las familias de workflows, trabajo, Beads, Ralph y escritura/borrado de memoria. Decidir explícitamente por perfil qué se expone y qué se deniega; la tabla anterior es una propuesta inicial, no un inventario exhaustivo ni una exclusión ya implementada.
+- [x] CX-AUTH Implementar o extender una política del servidor por perfil/herramienta para los nuevos perfiles, antes de dar por efectiva la separación propuesta. Verificar tanto catálogo como invocación directa y conservar las comprobaciones de autoridad de cada operación.
+- [x] CX-LOCAL Documentar y probar que la coordinación local pasa hoy por `_tool_denied_reason("assign", local_only=True)` y requiere identidad de terminal y contexto del proyecto; habilitar solo el nombre en el cliente no basta.
+- [x] CX-CATALOG Auditar también `handoff`, `assign`, `assign_elastic`, `list_native_children`, `join_native_child`, `get_handoff_result`, `delete_terminal`, `answer_user_prompt` y `emit_ui`, más las familias de workflows, trabajo, Beads, Ralph y escritura/borrado de memoria. Decidir explícitamente por perfil qué se expone y qué se deniega; la tabla anterior es una propuesta inicial, no un inventario exhaustivo ni una exclusión ya implementada.
 
 ## Fuentes
 
@@ -186,7 +190,7 @@ Aplicación de Spec Kit a todos los pendientes: [Spec 025](../specs/025-provider
 
 - [x] CX-AUTH-01 Base opt-in del servidor: `interaction` limita a las tres operaciones existentes; `collaboration` añade únicamente `send_message`, `list_siblings`, `cao_list_interactions`, `cao_get_interaction` y `cao_escalate_interaction`. Filtrado exacto de catálogo y llamadas directas, incluidos desconocidos; recursos y prompts denegados. [Inventario actual](../specs/025-provider-mcp-profiles/catalog-inventory.md): 79 herramientas registradas, sin activar MCP Apps opcional. La autoridad interna de cada operación se conserva.
 - [x] CX-AUTH-02 El overlay consume `cao_tool_profile` en la declaración MCP canónica, protege la variable interna y rechaza selecciones desconocidas o comandos no reconocidos antes del lanzamiento. Codex protege también esa política frente a overrides MCP. Los filtros vacíos/parciales del cliente se conservan; no se conceden permisos nativos adicionales.
-- [ ] CX-AUTH-03 Completar propagación/permisos nativos y preflight por perfil antes de aceptación real ampliada. El marcador histórico de OpenCode sigue intersectando a tres herramientas, incluso con `collaboration`; v1 no queda validado por el overlay privado de v2. Los pendientes AUTH/01–04 de alcance mayor no se cierran por esta base.
+- [ ] CX-AUTH-03 Completar propagación/permisos nativos y preflight por perfil antes de aceptación real ampliada. Con el marcador histórico presente se conserva la intersección a tres herramientas; sin él, T161/T166 acreditan8/12 en v2. Ninguno acredita todos los perfiles v1. Los pendientes AUTH/01–04 de alcance mayor no se cierran por esta base.
 
 La configuración opt-in es `"cao_tool_profile": "interaction"` o `"collaboration"` dentro de una entrada cuyo comando sea el MCP CAO canónico. No se ha aplicado a las configuraciones del operador ni ejecutado proveedores para esta fase. La lista sigue describiendo propuestas donde no se indica expresamente integración.
 

@@ -1,5 +1,18 @@
 # Plan: provider MCP profiles
 
+## T203 · native client to server target authority
+
+Reuse codex_mcp_catalog.CatalogClient, schema-checked direct mcpServer/tool/call and
+production profile construction. Add a focused supervision contract helper with
+strict MCP payload validation, distinct bound identities, existing cancellable
+foreign generation, exact successful self/child inspection and exact server denial.
+Snapshot actual foreign turn/receipt and recovery-action request count before/after;
+reject any mismatch or missing observation. Test malformed/ambiguous results and
+false-positive negatives before native activation. Reuse actual PostgreSQL/API and
+controlled terminal actors in an owned source-bound run after complete runtime,
+private namespace/auth, imports/helper/owner and memory admission. No production
+authority change and no repetition of T173's21catalog cases. Root sole writer.
+
 T202 follow-up: preserve exact private before/after container identity (ID/name/image/session) through shared test/live_provider/native_container_inventory.py and the existing exclusive0600 writer/reader. Require one60s read-only inventory observation without create/destroy events before a fresh full run; original preservation comparison, messages,6s seal budget and all acceptance gates remain unchanged. Retain failed r3; Docker event attributes/commands are never projected.
 
 ## T202 · reuse explicit SDK EOF without weakening native acceptance
