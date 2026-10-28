@@ -1,6 +1,8 @@
 # Claude Code: análisis y pendientes
 
-T195: habilitado el modo existente de reinicio durante espera activa para Claude;102pruebas PASS/arquitectura5-0/ClaudeGO. Conserva barreras, descenso estricto del plazo, ACK y límites. Falta aceptación nativa; CL-09/T012 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t195.md).
+T195 real PASS en00d3dac5: espera nativa única interrumpida/recuperada, workers distintos/plazo decreciente,2respuestas/ACK exacto/AG-UI estable. CLI46,62s,total72,712s,min10063MiB,505pins/limpieza/originales intactos.102pruebas offline/arquitectura5-0/ClaudeGO. CL-09 cerrado; T012 matriz y gates globales separados. [Resultado](../specs/025-provider-mcp-profiles/validation-t195.md).
+
+T195: modo existente de reinicio durante espera activa habilitado y aceptado para Claude;102pruebas PASS/arquitectura5-0/ClaudeGO. Conserva barreras, descenso estricto del plazo, ACK y límites. CL-09 cerrado; T012 agregado sigue abierto. [Evidencia](../specs/025-provider-mcp-profiles/validation-t195.md).
 
 Auditoría de pendientes históricos: T079/T092/T117 ya cubiertos por T101/T134/T135, cerrados sin repetir modelos ni modificar recibos fallidos. Comparaciones históricas no observadas y gates globales siguen separados. [Contraste](../specs/025-provider-mcp-profiles/validation-pending-reconciliation-20261028.md).
 
@@ -111,7 +113,7 @@ Empezar por interacción humana, colaboración básica y consulta de interaccion
 - [ ] CL-06 Definir e implementar perfiles de interacción, colaboración y coordinación; añadir las herramientas propuestas con permisos explícitos de cliente y servidor. Mantener la capacidad de interacción protegida frente a overrides.
 - [ ] CL-07 Probar herramientas permitidas/denegadas, catálogos parciales, descubrimiento diferido, señal de disponibilidad, recursos/prompts y aislamiento entre terminales; no resolverlo con permisos globales.
 - [ ] CL-08 Completar una aceptación de mensajes genéricos con dos envíos, persistencia PostgreSQL, AG-UI, reinicio de API, sello de auditoría y limpieza. Investigar por separado el contrato externo `cao.work.message`.
-- [ ] CL-09 Completar la aceptación final de preguntas/respuestas/ACK y reinicio vinculada a fuente/runner actuales. Verificar recuperación acotada de espera, identidad estable y ausencia de duplicados; un reinicio por sí solo no prueba recuperación de una llamada interrumpida.
+- [x] CL-09 Completar la aceptación final de preguntas/respuestas/ACK y reinicio vinculada a fuente/runner actuales. Verificar recuperación acotada de espera, identidad estable y ausencia de duplicados; un reinicio por sí solo no prueba recuperación de una llamada interrumpida.
 - [ ] CL-10 Validar concurrencia: trabajos y esperas acotados, cancelación por generación, ausencia de cruces de configuración/credenciales y limpieza propia. Medir latencia de control separada de la inferencia; una cuota del proveedor no es capacidad escalable de CAOS.
 - [ ] CL-11 Actualizar Spec 022/023 con evidencia final y cerrar solo los criterios demostrados. Mantener aparte la reconciliación del job histórico `RECONCILE_REQUIRED`; no reinstalar ni reejecutar ese job como atajo.
 

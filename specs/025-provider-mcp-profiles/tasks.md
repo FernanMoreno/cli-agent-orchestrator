@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T195 [US4] [FR173/SC157; T012/CL-09] Extend existing interrupted-wait admission to Claude using its native normalized tool stream; preserve the exact active-call/server-worker barrier, one-call/two-entry bounded recovery and ACK/AGUI/cleanup criteria. Validate actual event-shape positive/negative controls, review/integrate/repin and execute one current native case; no plain-restart or offline-only acceptance inference.
+- [x] T195 [US4] [FR173/SC157; T012/CL-09] Extend existing interrupted-wait admission to Claude using its native normalized tool stream; preserve the exact active-call/server-worker barrier, one-call/two-entry bounded recovery and ACK/AGUI/cleanup criteria. Validate actual event-shape positive/negative controls, review/integrate/repin and execute one current native case; no plain-restart or offline-only acceptance inference.
+
+T195 real PASS en00d3dac5: espera nativa única interrumpida/recuperada, workers distintos/plazo decreciente,2respuestas/ACK exacto/AG-UI estable. CLI46,62s,total72,712s,min10063MiB,505pins/limpieza/originales intactos.102pruebas offline/arquitectura5-0/ClaudeGO. CL-09 cerrado; T012 matriz y gates globales separados. [Resultado](validation-t195.md).
 
 2026-10-28 · auditoría de recibos/código: T079/T092/T117 cerrados en su alcance por aceptaciones posteriores T101/T134/T135. No se reejecutan ni se renombran recibos fallidos; diagnósticos históricos sin frontera causal conservan sus límites. [Contraste](validation-pending-reconciliation-20261028.md).
 

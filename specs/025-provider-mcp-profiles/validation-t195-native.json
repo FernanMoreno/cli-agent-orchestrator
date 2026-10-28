@@ -1,0 +1,143 @@
+{
+  "accepted": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "journey": {
+    "ack_identity_diagnostics": {
+      "ack_call_count": 1,
+      "ack_checks": [
+        {
+          "ack_count": 2,
+          "ack_succeeded": true,
+          "group_matches_created": true,
+          "group_matches_waited": true,
+          "question_versions_match_created": true,
+          "question_versions_match_returned": true,
+          "receipt_hashes_match_returned": true
+        }
+      ],
+      "create_group_seen": true,
+      "created_group_matches_database": true,
+      "created_questions_match_database": true,
+      "ready_wait_count": 1,
+      "ready_wait_matches_database": true,
+      "wait_call_count": 1
+    },
+    "agent_tool_scope_exact": true,
+    "agui_final_acknowledged": true,
+    "agui_identity_stable": true,
+    "agui_projection_redacted": true,
+    "agui_restart_enabled": true,
+    "agui_snapshot_count": 3,
+    "api_worker_restarts": 1,
+    "cleanup_failure_categories": [],
+    "cleanup_status": "complete",
+    "delivery_states": [
+      "agent_acknowledged",
+      "agent_acknowledged"
+    ],
+    "elapsed_seconds": 46.62,
+    "exit_code": 0,
+    "failure_diagnostics": {
+      "codex_linux_optional_dependency_missing": false,
+      "filesystem_write_denied": false,
+      "mcp_handshake_failed": false,
+      "mcp_process_exited": false,
+      "mcp_spawn_failed": false,
+      "mcp_startup_timeout": false,
+      "provider_auth_rejected": true,
+      "provider_configuration_rejected": false,
+      "provider_rate_limited": true
+    },
+    "host_filesystem_read_only": true,
+    "human_answers_posted": 2,
+    "inflight_wait_interrupted": true,
+    "inflight_wait_recovered": true,
+    "inflight_wait_restart_enabled": true,
+    "mcp_tool_calls": [
+      {
+        "error_code": null,
+        "error_present": false,
+        "result_present": true,
+        "server": "cao-mcp-server",
+        "status": "completed",
+        "tool": "cao_acknowledge_user_answers"
+      },
+      {
+        "error_code": null,
+        "error_present": false,
+        "result_present": true,
+        "server": "cao-mcp-server",
+        "status": "completed",
+        "tool": "cao_ask_user"
+      },
+      {
+        "error_code": null,
+        "error_present": false,
+        "result_present": true,
+        "server": "cao-mcp-server",
+        "status": "completed",
+        "tool": "cao_wait_for_user_answers"
+      }
+    ],
+    "model_usage_counts": {
+      "input_tokens": 8,
+      "output_tokens": 772
+    },
+    "model_usage_records": 1,
+    "observed_interaction_tools": [
+      "cao_acknowledge_user_answers",
+      "cao_ask_user",
+      "cao_wait_for_user_answers"
+    ],
+    "provider": "claude_code",
+    "provider_event_counts": {
+      "assistant": 4,
+      "rate_limit_event": 1,
+      "result": 1,
+      "system": 1,
+      "user": 3
+    },
+    "provider_home_isolated": true,
+    "provider_item_type_counts": {
+      "tool_result": 3,
+      "tool_use": 3
+    },
+    "question_count": 2,
+    "question_kinds": [
+      "single_choice",
+      "text"
+    ],
+    "question_lifecycles": [
+      "answered"
+    ],
+    "raw_provider_output_printed": false,
+    "requested_model": "sonnet",
+    "result": "completed_and_acknowledged",
+    "sanitized_failure_signals": [
+      "provider_auth_rejected",
+      "provider_rate_limited"
+    ],
+    "temporary_files_removed": true,
+    "version": "2.1.303 (Claude Code)"
+  },
+  "memory_floor_satisfied": true,
+  "minimum_sampled_memory_mib": 10063,
+  "native_unchanged": true,
+  "observer_retired": true,
+  "operator_unchanged": true,
+  "original_containers_preserved": true,
+  "postgres_owned": true,
+  "postgres_owner_closed": true,
+  "private_run_roots_removed": true,
+  "provider": "claude_code",
+  "schema": "caos.claude.interaction-restart.v1",
+  "seconds": 72.712,
+  "source_head": "00d3dac59705d6a48aa0c93dc406ce21d21cbd9c",
+  "source_pin_count": 505,
+  "source_unchanged": true,
+  "date": "2026-10-28",
+  "executed_archive_preserved": true,
+  "operational_descriptor_reclosed": true,
+  "served_model_attested": false
+}

@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T195 real PASS en00d3dac5: espera nativa única interrumpida/recuperada, workers distintos/plazo decreciente,2respuestas/ACK exacto/AG-UI estable. CLI46,62s,total72,712s,min10063MiB,505pins/limpieza/originales intactos.102pruebas offline/arquitectura5-0/ClaudeGO. CL-09 cerrado; T012 matriz y gates globales separados. [Resultado](../specs/025-provider-mcp-profiles/validation-t195.md).
+
 Auditoría de pendientes históricos: T079/T092/T117 ya cubiertos por T101/T134/T135, cerrados sin repetir modelos ni modificar recibos fallidos. Comparaciones históricas no observadas y gates globales siguen separados. [Contraste](../specs/025-provider-mcp-profiles/validation-pending-reconciliation-20261028.md).
 
 Claude interacción actual PASS enf77e3e66:2preguntas/2respuestas/ACK con identidad/versiones/recibos exactos y reinicio/AG-UI estable. CLI37,64s, total70,898s/min10090MiB,505pins y limpieza/originales intactos. Falta reiniciar durante espera activa: CL-09/T012 siguen abiertos; no explica504 histórico ni acepta cuota/Work/global. [Resultado](../specs/025-provider-mcp-profiles/validation-claude-interaction-restart-current.md).
