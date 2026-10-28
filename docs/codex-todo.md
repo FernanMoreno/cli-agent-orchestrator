@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T202 cerrado: recorrido real r4 aceptado en5fddafaf/510fuentes. Dos mensajes/filas/eventos, reinicio y sello normal mediante EOF explícito dentro de6s;14contenedores originales conservados,37identidades/PG retirados y login intacto.178,052s/mínimo9324MiB. No acredita cierre automático T197 ni Work/perfiles/global. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t202.md).
+
 T202: captura de inventario compartida implementada,16pruebas PASS y consultas Docker privadas verificadas. Dos ventanas de60s fallan (24/66altas-bajas); el armado rechaza antes de credenciales/servicios/modelo. No hubo reintento nativo; T202/T197 automático siguen abiertos y r3 permanece fallido. [Evidencia](../specs/025-provider-mcp-profiles/validation-t202.md).
 
 T202 real:2mensajes/2filas/2eventos/1reinicio y cierre EOF con sello dentro de6s correctos;35identidades/PG propios retirados. Aceptación global FALSE por contenedor preexistente ausente al final, con actividad Docker Testcontainers observada. No se rebaja preservación; T202/T197 automático siguen abiertos.268pruebas PASS y revisión GO. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t202.md).

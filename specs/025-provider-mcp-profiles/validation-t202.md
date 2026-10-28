@@ -1,4 +1,28 @@
-# T202 · Cierre EOF explícito: recorrido correcto, aceptación global pendiente
+# T202 · Recorrido real aceptado con cierre EOF explícito
+
+## Resultado actual: r4 aceptado
+
+El propietario da accepted=true en **5fddafaf**, con510fuentes fijadas.
+Claude2.1.303 realizó dos send_message correctos; se verificaron dos filas exactas
+PostgreSQL, dos eventos AG-UI redactados, un reinicio de API y la identidad/turnos/
+recibos causales. Perfil collaboration, filtro send_message y flag EOF real se
+atestaron antes de ambas fases. El cierre solicitado por el harness produjo un
+sello normal genuino y exitHTTP200 dentro del mismo presupuesto de6s.
+
+La admisión observó60,188s con14→14contenedores y0eventos create/destroy.
+Los inventarios privados antes/después acreditan14→14 y0faltantes. Las37identidades
+observadas y el PG/contenedor/red propios quedaron retirados; fuentes/binario y
+login originales intactos, staging de credenciales retirado. Total178,052s, mínimo
+9324MiB. Descriptor recerrado; archivo ejecutado y evidencia fallida anterior intactos.
+[Recibo aceptado r4](validation-t202-native-r4.json).
+
+**T202 cerrado sólo para el modo explícito `harness_requested_eof`.** El recibo
+mantiene native_automatic_shutdown_accepted=false. T197 automático, Work, ACK exacto
+del receptor, matriz completa de perfiles y gates globales siguen separados.
+No se reconstruye el cliente que eliminó el contenedor de r3 ni se convierte ese
+fallo en éxito. Los apartados siguientes conservan la historia y sus límites.
+
+## Implementación y validación offline (historia previa a r4)
 
 Se añade una opción estricta 0/1 para Claude, desactivada por defecto, que cierra
 stdin mediante el transporte ya existente antes de pedir exit. Exige exactamente
@@ -104,3 +128,5 @@ canceladas. No se aplica ese atajo. T197 automático queda separado de EOF expl�
 T202 permanece abierto mientras no pase su gate global con el inventario preservado.
 
 Revisión Claude final GO del helper/test/delegación; no ejecutó comandos. Obsidian actualizado mediante save-20261028-caos-container-inventory-admission (nota/índice/registro, hot intacto), lint estricto0hallazgos.
+
+Revisión final de aceptación Claude GO: recibo/alcance/listas consistentes; no ejecutó comandos ni pruebas. Composición actual5contratos/0rotos PASS. Obsidian actualizado con save-20261028-caos-t202-eof-acceptance (nota/índice/registro; hot intacto), lint estricto0hallazgos.
