@@ -1,5 +1,28 @@
 # Plan: provider MCP profiles
 
+## T193 · same-session window-label reuse after cleanup deferral
+
+Trace ordinary delete's pane stop, deferred provider cleanup and retained row,
+then the supported add-window path with new_session=False and deletion retry.
+Verify actual backend duplicate-label and exact-cleanup contracts before choosing
+the minimal fix. Reproduce the collision with migrated PostgreSQL and controlled
+backend/provider owners; no terminal-ID ABA or direct-SQL bypass assumption.
+Prefer refusal before creating an ambiguous label under existing session locks,
+with a bounded PostgreSQL lookup if needed; otherwise prove exact native identity
+without changing unrelated backend semantics. Test collision refusal, preserved
+old ownership, sibling/different-label progress and safe retry. Run affected
+creation/deletion/session tests, composition and independent review. Keep native
+diagnostics serialized and do not relabel T192 or full T143 as this proof.
+
+T193 uses a scalar exact session/window lookup over rows whose runtime is not
+reclaimed. A partial non-unique index excludes reclaimed history; a new additive
+core v3 migration preserves v1/v2 checksums and data. Prove upgrade, idempotence,
+rollback of a failed v3 and runtime DDL denial on an owned PostgreSQL target.
+Runtime identities do not migrate; no operator database is changed by tests.
+Fully reclaimed tombstones keep their existing exact-cleanup semantics and do
+not reserve labels forever. Session locking remains process-local: no new
+cross-process reservation or uniqueness claim.
+
 ## T192 · refuse recreation after ordinary stale-row cleanup deferral
 
 Trace the actual create-terminal session lock, stale-row purge, retirement

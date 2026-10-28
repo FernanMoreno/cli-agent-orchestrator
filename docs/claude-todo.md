@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T193 compartido: corregido el DELETE reintentado que podía matar una ventana sustituta tras cleanup diferido. Guarda PostgreSQL exacta/indexada antes de crear, migración corev3 aditiva;421pruebas distintas PASS/arquitectura5-0/ClaudeGO, hermanos y tombstones preservados. Sin nueva aceptación nativa; T143 amplio/T013 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t193.md).
+
 T192 compartido: recreación de sesión rechazada cuando la limpieza de una fila antigua queda pendiente; conserva propietario y permite reintento.127pruebas distintas PASS, incluidas3integraciones PostgreSQL/tmux, arquitectura5-0/ClaudeGO. No añade aceptación nativa ni cierra CL-10/T143. [Evidencia](../specs/025-provider-mcp-profiles/validation-t192.md).
 
 T189 PASS acotado: Codex0.164 app-server MCP→API autenticada→1fila PostgreSQL/1evento AG-UI exactos; reinicio sin reenvío,401sin efecto y denegación nativa del cliente.101,572s/498pins/10170MiB, limpieza y login intactos;66pruebas pasan. Los actores registrados/receptor son mock_cli: no cierra recorrido de terminal Codex, autorización por operación, Work ni CX-05/global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t189.md).

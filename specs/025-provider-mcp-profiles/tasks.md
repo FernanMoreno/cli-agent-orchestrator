@@ -1,5 +1,9 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [x] T193 [US4] [FR171/SC155; T143] Reproduce supported same-session window-label reuse after ordinary deletion stops a pane but retains its provider/row. Prevent a retry from targeting a replacement; preserve sibling/different-label progress, old cleanup retry and bounded PostgreSQL/session authority. Verify actual backend contracts before the minimal fix; separate native/distributed gates.
+
+T193: DELETE antiguo mataba sustituta en el RED PostgreSQL; guarda escalar/indexada antes de crear backend y migración corev3 aditiva.421pruebas distintas PASS, arquitectura5-0/ClaudeGO; reintento/hermanos/tombstones preservados. Tramo local T143 cubierto; T143 amplio permanece abierto por sus límites históricos distribuidos/generación. [Evidencia](validation-t193.md).
+
 - [x] T192 [US4] [FR170/SC154; T143] Reproduce ignored stale-row retirement refusal during actual new-session creation with PostgreSQL, then fail before replacement publication and roll back the newly created backend only. Preserve ordinary row/provider authority, intentional tombstones and successful retry. Verify callers/composition/review; no full lifecycle/distributed/native credit.
 
 T192:2RED→23PASS enfocadas y124PASS compartidas (23incluidas), más3integraciones PostgreSQL/tmux PASS:127distintas/2avisos, arquitectura5-0/ClaudeGO. Rechazo explícito antes de publicar y reintento comprobado; T143 completo sigue separado. [Evidencia](validation-t192.md).
@@ -676,6 +680,8 @@ T141 bounded acceptance: cached/cold progress RED2failures4controls →9focusedP
 T142 bounded acceptance: original3RED failures plus pinnedbaselineR2reproduction;18 focused and241final PostgreSQL/profile/controller regressions pass. Explicit option owner preserved, cached/cold cleanup serialized and reentrant replacement returnsFalse, snapshot formattingoutside mapguard, zero idle leases. Composition5/0, Luna sourceaudit and Claude finalcode/testGO. [Evidence](validation-t142.md).
 
 - [ ] T143 [US4] [OC-06/T013] Trace and reproduce the remaining boundary from provider cleanup through caller-side terminal-row deletion/initialization. Verify actual session/advisory/deferred-init fences and row incarnation authority before changing persistence; do not assume same-ID relaunch is possible on every path or add tombstones from source suspicion alone. Separate local manager ordering from the complete lifecycle and distributed ownership.
+
+T192/T193 cierran las dos fronteras locales actuales (purga rechazada y reutilización de ventana tras cleanup diferido), con PostgreSQL/421pruebas de T193. No se convierte ese hito en cierre del alcance amplio que T146–T165 mantuvieron bajo T143: generación/ABA, lecturas SQL inciertas, trabajadores escapados y propiedad distribuida siguen explícitos. [Alcance y controles](validation-t193.md).
 
 
 - [x] T144 [US4] [FR122/SC106] Urgent async integration of T142: move provider publication and create rollback cleanup off the shared loop, retain actual worker ownership through repeated cancellation, preserve context/results/errors and existing lifecycle semantics. Actual create-terminal heartbeat RED/GREEN, cancellation/context/error controls, PostgreSQL/profile/controller regression and peer/composition review before final integration. T143 remains separate.

@@ -18,7 +18,7 @@ def test_core_v2_adds_legacy_indexes_without_changing_v1_or_rows(postgres_target
     from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
 
     target = postgres_targets.main
-    assert [migration.version for migration in CORE_MIGRATIONS] == [1, 2]
+    assert [migration.version for migration in CORE_MIGRATIONS] == [1, 2, 3]
     assert CORE_MIGRATIONS[0].checksum == (
         "cb4d6f0973a20961854be52f2ac90fd93bd5fbdf6eb06e5b9b2f2fcb3038aae1"
     )
@@ -91,3 +91,64 @@ def test_core_v2_index_failure_rolls_back_only_the_new_migration(postgres_target
         (1, CORE_MIGRATIONS[0].checksum)
     ]
     assert "idx_memory_scope" not in indexes
+
+
+def test_core_v3_indexes_unreclaimed_window_labels_without_changing_rows(postgres_targets):
+    from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
+
+    assert [m.version for m in CORE_MIGRATIONS] == [1, 2, 3]
+    target = postgres_targets.main
+    migrate_component(target, CORE_MIGRATIONS[:2])
+    with connect(target) as connection:
+        with connection.transaction():
+            connection.execute(
+                "INSERT INTO terminals (id,tmux_session,tmux_window,provider) "
+                "VALUES (%s,%s,%s,%s)",
+                ("window-old", "cao-s", "worker", "mock_cli"),
+            )
+        history_before = connection.execute(
+            "SELECT version,checksum FROM _cao_schema_migrations WHERE component='core' ORDER BY version"
+        ).fetchall()
+
+    migrate_component(target, CORE_MIGRATIONS)
+    migrate_component(target, CORE_MIGRATIONS)
+    with connect(target, readonly=True) as connection:
+        verify_component(connection, CORE_MIGRATIONS)
+        definition = connection.execute(
+            "SELECT indexdef FROM pg_indexes WHERE schemaname=%s AND indexname=%s",
+            (target.schema, "idx_terminal_live_window"),
+        ).fetchone()["indexdef"]
+        assert "(tmux_session, tmux_window)" in definition
+        assert "deferred_init_runtime_reclaimed IS FALSE" in definition
+        assert connection.execute("SELECT id,tmux_window FROM terminals").fetchall() == [
+            ("window-old", "worker")
+        ]
+        history_after = connection.execute(
+            "SELECT version,checksum FROM _cao_schema_migrations WHERE component='core' ORDER BY version"
+        ).fetchall()
+    assert history_after[:2] == history_before
+    assert len(history_after) == 3
+
+
+def test_core_v3_failure_keeps_v2_history_and_rolls_back_index(postgres_targets):
+    from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
+
+    assert len(CORE_MIGRATIONS) == 3
+    target = postgres_targets.main
+    migrate_component(target, CORE_MIGRATIONS[:2])
+    broken = replace(
+        CORE_MIGRATIONS[2], statements=CORE_MIGRATIONS[2].statements + ("SELECT 1 / 0",)
+    )
+    with pytest.raises(DatabaseError):
+        migrate_component(target, (*CORE_MIGRATIONS[:2], broken))
+    with connect(target, readonly=True) as connection:
+        assert connection.execute(
+            "SELECT version FROM _cao_schema_migrations WHERE component='core' ORDER BY version"
+        ).fetchall() == [(1,), (2,)]
+        assert (
+            connection.execute(
+                "SELECT indexname FROM pg_indexes WHERE schemaname=%s AND indexname=%s",
+                (target.schema, "idx_terminal_live_window"),
+            ).fetchone()
+            is None
+        )

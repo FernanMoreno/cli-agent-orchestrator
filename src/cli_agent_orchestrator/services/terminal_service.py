@@ -61,6 +61,7 @@ from cli_agent_orchestrator.clients.database import (
     get_terminal_metadata,
     get_terminal_turn_receipt,
     get_terminal_turn_recovery,
+    has_unreclaimed_window_label,
     list_all_terminals,
     list_pending_deferred_init_external_owner_terminal_ids,
     list_siblings_by_group_prefix,
@@ -2533,6 +2534,8 @@ async def create_terminal(
                     # lives on).
                     if not get_backend().session_exists(session_name):
                         raise ValueError(f"Session '{session_name}' not found")
+                    if has_unreclaimed_window_label(session_name, window_name):
+                        raise ValueError("window label is reserved by an unreclaimed terminal")
                     # Resolve the durable logical session generation before
                     # creating a new backend object. Old retained tombstones may
                     # share this reusable label but cannot define the current

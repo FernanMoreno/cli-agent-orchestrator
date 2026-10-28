@@ -986,6 +986,8 @@ def core_migrations():
     Version 1 remains the frozen ORM baseline. Version 2 adds indexes for
     existing query paths so installations already running v1 can upgrade
     without changing the recorded version-1 checksum.
+    Version 3 indexes unreclaimed terminal labels without changing either
+    earlier migration or retaining reclaimed history in the live-label index.
     """
     from sqlalchemy.dialects.postgresql import dialect
     from sqlalchemy.schema import CreateIndex, CreateTable
@@ -1015,7 +1017,18 @@ def core_migrations():
         ),
         ("memory_metadata", "memory_relationships"),
     )
-    return (baseline, indexes)
+    live_window_index = ComponentMigration(
+        "core",
+        "main",
+        3,
+        (
+            "CREATE INDEX idx_terminal_live_window "
+            "ON terminals (tmux_session, tmux_window) "
+            "WHERE deferred_init_runtime_reclaimed IS FALSE",
+        ),
+        ("terminals",),
+    )
+    return (baseline, indexes, live_window_index)
 
 
 CORE_MIGRATIONS = core_migrations()
@@ -2488,6 +2501,26 @@ def list_siblings_by_group_prefix(
                     }
                 )
         return siblings
+
+
+def has_unreclaimed_window_label(tmux_session: str, tmux_window: str) -> bool:
+    """Check one exact live label without loading sibling rows or reclaimed history.
+
+    This read does not reserve a label across processes. Creation callers hold
+    their session lifecycle lock through backend creation and row publication.
+    """
+    statement = (
+        select(literal_column("1"))
+        .select_from(TerminalModel)
+        .where(
+            TerminalModel.tmux_session == tmux_session,
+            TerminalModel.tmux_window == tmux_window,
+            TerminalModel.deferred_init_runtime_reclaimed.is_(False),
+        )
+        .limit(1)
+    )
+    with SessionLocal() as db:
+        return db.execute(statement).scalar_one_or_none() is not None
 
 
 def list_terminals_by_session(tmux_session: str) -> List[Dict[str, Any]]:

@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T193 compartido: corregido el DELETE reintentado que podía matar una ventana sustituta tras cleanup diferido. Guarda PostgreSQL exacta/indexada antes de crear, migración corev3 aditiva;421pruebas distintas PASS/arquitectura5-0/ClaudeGO, hermanos y tombstones preservados. Sin nueva aceptación nativa; T143 amplio/T013 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t193.md).
+
 T192 compartido: corregida la recreación que ignoraba una limpieza antigua diferida.2RED→127pruebas distintas PASS, incluidas3integraciones PostgreSQL/tmux, arquitectura5-0/ClaudeGO; fila/proveedor antiguos conservados y reintento validado. Sin aceptación nativa ni cierre global de T143. [Evidencia](../specs/025-provider-mcp-profiles/validation-t192.md).
 
 T190 R4 real99eeafff: FAILED en faseA/reconcile_required; secuencia3/completado2 y generación nueva sin recibo verificado,0llamadas/filas/eventos.87,023s/min9027MiB, limpieza propia íntegra y operador intacto. Captura privada conservada: la respuesta sobre ejecutable ausente no prueba la causa, porque el hijo MCP arrancó y selló su cierre. Sigue abierto; observar estado/catálogo nativo antes de otro turno. [Recibo](../specs/025-provider-mcp-profiles/validation-t190-native-r4.json).

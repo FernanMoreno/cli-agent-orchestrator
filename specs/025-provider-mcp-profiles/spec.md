@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Retained terminal rows and reusable window labels · T193
+
+FR171/SC155: Within a still-live session, a deletion that stops the old pane
+but defers provider cleanup must not allow a replacement window to inherit the
+retained ordinary row's destructive label authority. Reproduce through the
+supported delete/add-window/retry path with PostgreSQL and deterministic label
+reuse. Refuse ambiguous replacement before backend mutation, or establish exact
+terminal identity before destructive cleanup. Preserve different-label progress,
+retryable old resources, existing session authority and intentional tombstones.
+Use bounded existing PostgreSQL authority; no new SQLite store or implicit
+global/distributed/native acceptance.
+
 ## Refused stale-row retirement during session recreation · T192
 
 FR170/SC154: New-session creation must not publish a replacement incarnation

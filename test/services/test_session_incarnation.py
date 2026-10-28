@@ -218,6 +218,140 @@ async def test_recreation_cleanup_deferral_rolls_back_before_publication_and_can
     assert not manager._restore_locks
 
 
+@pytest.mark.asyncio
+async def test_retained_deleted_window_cannot_be_reused_before_cleanup_retry(monkeypatch):
+    name, label = "cao-reuse", "developer-cafe"
+    db.create_terminal(
+        "old00001",
+        name,
+        label,
+        "mock_cli",
+        session_incarnation_id="inc",
+        new_session_incarnation=True,
+    )
+    db.create_terminal("sibling1", name, "sibling", "mock_cli", session_incarnation_id="inc")
+    windows = {label: "old00001", "sibling": "sibling1"}
+    backend = MagicMock()
+    backend.session_exists.return_value = True
+    backend.supports_event_inbox.return_value = True
+    backend.kill_window.side_effect = lambda session, window: windows.pop(window, None) is not None
+    backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+        TerminalCleanupOutcome.ABSENT
+    )
+
+    def create_window(session, window, terminal_id, *args, **kwargs):
+        windows[window] = terminal_id
+        return window
+
+    backend.create_window.side_effect = create_window
+    monkeypatch.setattr(registry, "_backend", backend)
+    monkeypatch.setattr(ts, "capture_terminal_snapshot", db.get_terminal_metadata)
+    monkeypatch.setattr(ts, "get_herdr_inbox_service", lambda: None)
+    monkeypatch.setattr(
+        ts, "load_agent_profile", lambda _: AgentProfile(name="developer", description="Developer")
+    )
+    ids = iter(["new00001", "new00002"])
+    names = iter([label, "developer-beef"])
+    monkeypatch.setattr(ts, "generate_terminal_id", lambda: next(ids))
+    monkeypatch.setattr(ts, "generate_window_name", lambda _: next(names))
+    manager = ProviderManager()
+    old = MagicMock()
+    old.cleanup.return_value = False
+    manager._providers["old00001"] = old
+    monkeypatch.setattr(manager, "create_provider", MagicMock(return_value=AsyncMock()))
+    monkeypatch.setattr(ts, "provider_manager", manager)
+
+    assert ts.delete_terminal("old00001") is False
+    assert windows == {"sibling": "sibling1"}
+    assert db.get_terminal_metadata("old00001") is not None
+
+    try:
+        collision = await ts.create_terminal(
+            "mock_cli", "developer", session_name=name, new_session=False
+        )
+    except ValueError as error:
+        assert "window label" in str(error)
+        backend.create_window.assert_not_called()
+        assert db.get_terminal_metadata("new00001") is None
+    else:
+        # An implementation permitting reuse must prove that the old owner's
+        # retry cannot address the replacement through its reusable label.
+        assert ts.delete_terminal("old00001") is False
+        assert windows.get(label) == collision.id, "old cleanup retry killed the replacement"
+        pytest.fail("colliding window label was admitted without a reservation refusal")
+
+    assert manager._providers["old00001"] is old
+    assert db.get_terminal_metadata("sibling1") is not None
+    backend.kill_session.assert_not_called()
+    replacement = await ts.create_terminal(
+        "mock_cli", "developer", session_name=name, new_session=False
+    )
+    assert windows["developer-beef"] == replacement.id
+    assert windows["sibling"] == "sibling1"
+    assert replacement.session_incarnation_id == "inc"
+
+    old.cleanup.return_value = True
+    assert ts.delete_terminal("old00001") is True
+    assert db.get_terminal_metadata("old00001") is None
+    assert windows == {"sibling": "sibling1", "developer-beef": replacement.id}
+
+
+def test_window_label_lookup_is_exact_scoped_and_ignores_reclaimed_history():
+    db.create_terminal("ordinary", "cao-s", "worker", "mock_cli")
+    assert db.has_unreclaimed_window_label("cao-s", "worker") is True
+    assert db.has_unreclaimed_window_label("cao-other", "worker") is False
+    assert db.has_unreclaimed_window_label("cao-s", "work") is False
+    assert db.has_unreclaimed_window_label("cao-s", "worker-suffix") is False
+    db.update_terminal_deferred_init_runtime_reclaimed("ordinary", True)
+    assert db.has_unreclaimed_window_label("cao-s", "worker") is False
+    assert db.get_terminal_metadata("ordinary") is not None
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_tombstone_does_not_reserve_replacement_window(monkeypatch):
+    name, label = "cao-history", "developer-cafe"
+    db.create_terminal("history1", name, label, "mock_cli", session_incarnation_id="old")
+    db.update_terminal_deferred_init_failure("history1", {"message": "retained failure"})
+    db.update_terminal_deferred_init_runtime_reclaimed("history1", True)
+    db.create_terminal(
+        "sibling1",
+        name,
+        "sibling",
+        "mock_cli",
+        session_incarnation_id="current",
+        new_session_incarnation=True,
+    )
+    backend = MagicMock()
+    backend.session_exists.return_value = True
+    backend.supports_event_inbox.return_value = True
+    backend.create_window.return_value = label
+    backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+        TerminalCleanupOutcome.ABSENT
+    )
+    monkeypatch.setattr(registry, "_backend", backend)
+    monkeypatch.setattr(ts, "generate_window_name", lambda _: label)
+    monkeypatch.setattr(ts, "generate_terminal_id", lambda: "new00001")
+    monkeypatch.setattr(
+        ts, "load_agent_profile", lambda _: AgentProfile(name="developer", description="Developer")
+    )
+    monkeypatch.setattr(ts, "capture_terminal_snapshot", db.get_terminal_metadata)
+    monkeypatch.setattr(ts, "get_herdr_inbox_service", lambda: None)
+    manager = ProviderManager()
+    monkeypatch.setattr(manager, "create_provider", MagicMock(return_value=AsyncMock()))
+    monkeypatch.setattr(ts, "provider_manager", manager)
+
+    replacement = await ts.create_terminal(
+        "mock_cli", "developer", session_name=name, new_session=False
+    )
+    assert replacement.id == "new00001"
+    assert db.get_terminal_metadata("history1")["deferred_init_failure"] is not None
+    assert ts.delete_terminal("history1") is True
+    backend.kill_window.assert_not_called()
+    backend.stop_pipe_pane.assert_not_called()
+    assert db.get_terminal_metadata(replacement.id) is not None
+    assert db.get_terminal_metadata("sibling1") is not None
+
+
 def test_failed_legacy_terminal_is_backfilled_only_after_exact_proof(monkeypatch):
     add_terminal("old-fail", "cao-s", "inc-old", failed=True, reclaimed=True)
     add_terminal("legacy", "cao-s", failed=True)
