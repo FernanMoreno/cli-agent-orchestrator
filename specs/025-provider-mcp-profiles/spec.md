@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Complete pinned Codex runtime admission · T194
+
+FR172/SC156: A model/tool diagnostic must not admit only the Codex executable
+when its pinned package also requires a code-mode host and bundled assets.
+Verify the complete selected package against independently frozen source asset
+hashes before credential staging or services. Preserve the version, metadata,
+relative layout, executable companion and declared resources; reject missing,
+redirected, mismatched or altered assets and ambient host overrides. Never fix
+this by disabling Code Mode, widening permissions or reinstalling globally.
+An incomplete private snapshot is a harness defect; it does not negate scoped
+direct-MCP evidence or prove every historical model failure. Validate host
+handshake without a model before a freshly pinned real T190 retry; all original
+effect/audit/180s/6144MiB/cleanup criteria remain.
+
 ## Retained terminal rows and reusable window labels · T193
 
 FR171/SC155: Within a still-live session, a deletion that stops the old pane

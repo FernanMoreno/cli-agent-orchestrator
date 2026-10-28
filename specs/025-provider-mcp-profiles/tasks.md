@@ -1,5 +1,9 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [x] T194 [US4] [FR172/SC156; T190] Reproduce incomplete Codex package snapshots, require independently pinned package/host/resource closure before credential staging, preserve complete runtime layout and validate model-free host handshake before a fresh actual message journey. No Code Mode disabling, permission widening, global reinstall or automatic historical-cause claim.
+
+T194 validado:267pruebas distintas PASS/arquitectura5-0/ClaudeGO; lector antes de auth/PG, snapshot43assets y handshake nativo hello/abrir/cerrar/EOF/salida0/grupo retirado PASS sin modelo/red/auth (10848MiB). T190 sigue abierto; copia antigua solo-binario era defecto del lanzador, sin causa histórica completa acreditada. [Preparación](validation-t194-preparation.md).
+
 - [x] T193 [US4] [FR171/SC155; T143] Reproduce supported same-session window-label reuse after ordinary deletion stops a pane but retains its provider/row. Prevent a retry from targeting a replacement; preserve sibling/different-label progress, old cleanup retry and bounded PostgreSQL/session authority. Verify actual backend contracts before the minimal fix; separate native/distributed gates.
 
 T193: DELETE antiguo mataba sustituta en el RED PostgreSQL; guarda escalar/indexada antes de crear backend y migración corev3 aditiva.421pruebas distintas PASS, arquitectura5-0/ClaudeGO; reintento/hermanos/tombstones preservados. Tramo local T143 cubierto; T143 amplio permanece abierto por sus límites históricos distribuidos/generación. [Evidencia](validation-t193.md).

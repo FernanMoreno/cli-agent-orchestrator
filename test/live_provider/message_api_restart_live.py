@@ -486,6 +486,8 @@ def _hash_candidate_bindings(candidate_dir: Path) -> dict[str, str]:
         "message_mcp_shutdown.py",
         "test_message_mcp_shutdown.py",
         "test_message_phase_binding.py",
+        "codex_runtime_snapshot.py",
+        "test_codex_runtime_snapshot.py",
         "sitecustomize.py",
         "claude_auth_archive.py",
     )
@@ -1548,6 +1550,38 @@ def _cleanup_private_tmux_root(
     )
 
 
+def _admit_codex_runtime(state: RunState, binary_name: str) -> None:
+    """Bind the full package before staging account files or acquiring services."""
+    started = time.monotonic()
+    try:
+        module = importlib.import_module("test.live_provider.codex_runtime_snapshot")
+        expected_source = state.source_root / "test/live_provider/codex_runtime_snapshot.py"
+        if not Path(module.__file__).samefile(expected_source):
+            raise RuntimeError("codex_runtime_snapshot_unavailable")
+        selected = shutil.which(binary_name)
+        manifest = os.environ.get("CAO_SPEC023_CODEX_RUNTIME_MANIFEST", "")
+        expected = os.environ.get("CAO_SPEC023_CODEX_RUNTIME_SHA256", "")
+        if not selected or not manifest or not expected:
+            raise RuntimeError("codex_runtime_snapshot_unavailable")
+        result = module.verify_codex_runtime_snapshot(
+            Path(selected), Path(manifest), expected_manifest_sha256=expected
+        )
+        _write_private_json(
+            state.run_root / "codex-runtime-admission.json",
+            {
+                "schema": "caos.codex.runtime-admission.v1",
+                "version": result["version"],
+                "asset_count": result["asset_count"],
+                "manifest_sha256": expected,
+            },
+        )
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+        _record_native_failure(
+            state, point="runtime_admission", kind="invalid_shape", started_at=started
+        )
+        raise AcceptanceFailure("preflight") from None
+
+
 def _build_sender_prompt(provider: str, receiver_id: str) -> str:
     input_rule = "the entire user message is exactly one of these phase triggers"
     reply_rule = "reply only with `sent`"
@@ -1637,6 +1671,8 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
         state.stage = "preflight"
         authorize_live_provider, stage_live_provider_auth = _provider_auth_helpers(server_module)
         authorization = authorize_live_provider(provider, opt_in_env=LIVE_ENABLE_ENV)
+        if provider == "codex":
+            _admit_codex_runtime(state, authorization.binary)
         if provider == "claude_code":
             state.claude_auth_staging_attempted = True
         stage_live_provider_auth(state.home, authorization)

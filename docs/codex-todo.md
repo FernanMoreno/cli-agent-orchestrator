@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T194: corregida la admisión que permitía copiar solo `codex` sin `codex-code-mode-host`/assets.267pruebas distintas PASS/arquitectura5-0/ClaudeGO; paquete completo43assets verificado antes de auth/servicios. Handshake nativo real PASS (hello/abrir/cerrar/EOF/salida0, sin modelo/red/auth, grupo retirado); T194 cerrado y T190 sigue pendiente; no se desactiva Code Mode ni se amplían permisos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t194-preparation.md).
+
 T193 compartido: corregido el DELETE reintentado que podía matar una ventana sustituta tras cleanup diferido. Guarda PostgreSQL exacta/indexada antes de crear, migración corev3 aditiva;421pruebas distintas PASS/arquitectura5-0/ClaudeGO, hermanos y tombstones preservados. Sin nueva aceptación nativa; T143 amplio/T013 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t193.md).
 
 T192 compartido: corregida la recreación que ignoraba una limpieza antigua diferida.2RED→127pruebas distintas PASS, incluidas3integraciones PostgreSQL/tmux, arquitectura5-0/ClaudeGO; fila/proveedor antiguos conservados y reintento validado. Sin aceptación nativa ni cierre global de T143. [Evidencia](../specs/025-provider-mcp-profiles/validation-t192.md).

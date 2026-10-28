@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T194 · package closure before Codex model/tool diagnostics
+
+The installed0.164 package contains bin/codex-code-mode-host but historical
+private bin snapshots copied only codex. Pinned upstream install-context source
+resolves that helper from package resources/bin or the executable's sibling.
+Reproduce missing-package admission offline, implement a bounded strict package
+snapshot reader and exercise actual source/target hashes and redirected assets.
+Wire admission into the selected Codex message journey before auth staging,
+without changing production provider permissions or other lanes. Preserve whole
+package layout in fresh private snapshots; never mutate old executed receipts.
+Use a source-verified no-model host handshake as capability preflight, not a
+substitute for model-origin messages. Review actual bytes/protocol/ownership,
+retain all failed controls, integrate and repin before the real retry. Codex's
+internal logs are diagnostic artifacts, not CAOS persistence; state remains PG.
+
 ## T193 · same-session window-label reuse after cleanup deferral
 
 Trace ordinary delete's pane stop, deferred provider cleanup and retained row,

@@ -2302,6 +2302,7 @@ def _exercise_native_profile_order_offline(
     sequence: list[str] = []
     profile_paths: dict[str, Path] = {}
     patched_live_names = (
+        "_admit_codex_runtime",
         "_verify_selected_setup",
         "_hash_source_bindings",
         "_hash_candidate_bindings",
@@ -2359,6 +2360,9 @@ def _exercise_native_profile_order_offline(
             return object()
 
     with monkeypatch.context() as patch:
+        # These synthetic routes test profile-install ordering; complete runtime
+        # admission and its before-credentials refusal are covered separately.
+        patch.setattr(live_module, "_admit_codex_runtime", lambda *_args: None)
         patch.setattr(opencode_cli, "OPENCODE_AGENTS_DIR", native_agents)
         patch.setattr(
             opencode_cli,

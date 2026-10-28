@@ -113,6 +113,9 @@ Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics
 
+- Pin complete native runtime packages, not only their main executable. Codex0.164 resolves its Code Mode host relative to the installed package/executable; a loose copied binary can pass version/catalog/direct-MCP controls and still fail when the model first invokes Code Mode. Verify independently frozen metadata, helper/resource inventory, hashes and layout before credential staging; exercise the real helper handshake without a model before a model/tool retry. Do not disable Code Mode or enlarge permissions to hide missing assets.
+- Reuse the production terminal-escape parser for raw status patterns and a rendered pane for screen claims. A new greedy OSC regex can erase a real footer, and a quiet gap during `loading` is not startup completion. Replay the actual captured bytes offline before another native run; account bootstrap may require network even when no model turn is requested.
+
 - Before arming a new launcher, compile its actual bytes, execute all its import statements under the exact invocation/PYTHONPATH, bind its direct helper calls to current signatures, and verify owner context-manager versus iterator protocols without acquiring services. Selected smoke imports do not validate historical fixtures' bare imports; a callable signature alone does not establish its returned ownership protocol.
 
 - For authenticated MCP-to-API controls, carry the API's auth-enablement selectors as well as its private credential source into the MCP child. A token file alone is ignored by `get_local_bearer` in a child with auth disabled. Check the live AG-UI route is enabled before subscribing, and retain the raw native result privately before waiting for downstream effects so a rejected call cannot become an unexplained delivery timeout.

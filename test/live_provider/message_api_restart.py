@@ -52,6 +52,7 @@ NATIVE_FAILURE_POINTS = frozenset(
         "inbox_check",
         "phase_wait",
         "phase_input",
+        "runtime_admission",
     }
 )
 NATIVE_FAILURE_KINDS = frozenset(
