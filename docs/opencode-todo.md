@@ -1,6 +1,6 @@
 # OpenCode v1 y v2: análisis y pendientes
 
-T203 implementado como verificador de supervisión Codex:44pruebas nuevas y60regresiones de autoridad pasan. Observación HTTP/PG tipada y negativa antes de mutación; controles de imports/Popen/tmux/esquema nativo completados sin auth/PG/modelo. Caso real aún pendiente; no cierra T007/T008/global. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t203.md).
+T203 cerrado en su alcance: Codex nativo supervision11herramientas, inspección propia/hijo y cancelación de tercero activo denegada antes del POST; recibo/turno intactos. API/PG reales, actores MockCLI, recibo sembrado y auth local desactivada;0turnos de modelo. R2PASS/100,333s/mínimo9695MiB, limpieza/originales intactos.44pruebas nuevas+60regresiones previas. T007/T008/global siguen abiertos. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t203.md).
 
 T202 cerrado: recorrido real r4 aceptado en5fddafaf/510fuentes. Dos mensajes/filas/eventos, reinicio y sello normal mediante EOF explícito dentro de6s;14contenedores originales conservados,37identidades/PG retirados y login intacto.178,052s/mínimo9324MiB. No acredita cierre automático T197 ni Work/perfiles/global. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t202.md).
 

@@ -1,4 +1,4 @@
-# T203 · Supervisión nativa: preparación y contrato de evidencia
+# T203 · Supervisión nativa: aceptación acotada
 
 Implementado un caso estrecho para Codex: catálogo supervision completo, inspección
 propia y de hijo directo, cancelación de tercero existente y activo denegada por el
@@ -35,11 +35,42 @@ Control previo separado: paquete completo43assets fijado, generación real del
 esquema por Codex0.164 sin credenciales y en namespace sin red; invisibilidad de
 credenciales probada dentro de ese namespace y proceso retirado. Confirma el
 formato de respuesta, no una operación de supervisión ni aislamiento de una futura
-ejecución autenticada. No se ejecutó todavía el caso nativo con API/PG.
+ejecución autenticada. Ese control previo quedó separado del recorrido autenticado posterior.
 
-T203/T007/T008 y los gates globales permanecen abiertos hasta su evidencia exacta.
+T203 queda cerrado en el alcance descrito abajo; T007/T008 y los gates globales permanecen abiertos.
 No se repite la matriz de21catálogos de T173. Los datos/IDs/generaciones, hashes de
 credenciales y stdout nativo quedan privados; el recibo público tendrá sólo conteos,
 categorías y pruebas booleanas. T032 y los jobs históricos siguen separados.
 
-Revisión Claude final GO de código/controlador, condicionada a admisión de fuentes/runtime/memoria/observador antes del caso real. No es aceptación nativa. La fuente de esquema generada0.164 confirma el contrato de respuesta, incluido isError nullable.
+Revisión Claude final GO de código/controlador (previa a r2), condicionada a admisión de fuentes/runtime/memoria/observador antes del caso real. No es aceptación nativa. La fuente de esquema generada0.164 confirma el contrato de respuesta, incluido isError nullable.
+
+## Resultado real, 2026-10-28
+
+R2 aceptado sobre main0e40d9d1/520fuentes, Codex0.164.0/43assets,
+100,333s y mínimo9695MiB (umbral6144). Catálogo supervision exacto11herramientas;
+inspección propia e hijo directo correctas; tercero existente/activo consultado
+con200, cancelación denegada por autoridad del servidor antes de cualquier POST
+de recuperación, turno/recibo inalterados. Control positivo POST desconocido404
+y auditoría HTTP real; ventana nativa de lecturas exacta verificada.
+
+API, sesiones, tmux, procesos nativos/observador, PostgreSQL y red propios retirados;
+contenedores y redes originales conservados, fuente y credenciales originales
+intactas, copia privada retirada. Descriptor operativo recerrado después de
+terminar; archivo ejecutado inmutable y pins comprobados antes de editar documentos.
+[Recibo público](validation-t203-native-r2.json).
+
+R1 se conserva FAILED por admisión antes de API/PG. La segunda admisión aisló
+el falso bloqueo: cinco redes etiquetadas preexistentes sin contenedor. La fixture
+siempre crea red única; se corrigió únicamente el controlador privado para rechazar
+contenedores PostgreSQL ajenos, exigir una red propia nueva y conservar todas las
+redes originales. Cuatro casos del predicado real pasan; imports/Popen/tmux
+revalidados y Claude confirmó el cambio por lectura independiente. No se borraron
+redes ajenas ni se relajó la comprobación de autorización.
+
+Límites: transporte nativo app-server y MCP reales, API/PG reales, API local con
+auth desactivada, actores MockCLI y recibo sembrado después del input. Cero turnos
+de modelo solicitados. No acredita entrega nativa de trabajo, aislamiento de API
+autenticada, todos los perfiles ni aceptación global.
+
+Revisión final del recibo y alcance por Claude: GO, sin hallazgos bloqueantes.
+Composición repetida tras el recorrido:5contratos conservados/0rotos.

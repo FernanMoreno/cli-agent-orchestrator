@@ -1,6 +1,6 @@
 # Codex: análisis y pendientes
 
-T203 implementado como verificador de supervisión Codex:44pruebas nuevas y60regresiones de autoridad pasan. Observación HTTP/PG tipada y negativa antes de mutación; controles de imports/Popen/tmux/esquema nativo completados sin auth/PG/modelo. Caso real aún pendiente; no cierra T007/T008/global. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t203.md).
+T203 cerrado en su alcance: Codex nativo supervision11herramientas, inspección propia/hijo y cancelación de tercero activo denegada antes del POST; recibo/turno intactos. API/PG reales, actores MockCLI, recibo sembrado y auth local desactivada;0turnos de modelo. R2PASS/100,333s/mínimo9695MiB, limpieza/originales intactos.44pruebas nuevas+60regresiones previas. T007/T008/global siguen abiertos. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t203.md).
 
 Conciliación de casillas: AUTH/LOCAL/CATALOG completados sólo en su alcance compartido de implementación, inventario y controles offline (T036:79operaciones/7perfiles). Las aceptaciones nativas por operación y AUTH-03 siguen separadas. [Base y límites](../specs/025-provider-mcp-profiles/validation-t036.md).
 
