@@ -1,5 +1,23 @@
 # Plan: provider MCP profiles
 
+## T189 · native collaboration effect
+
+First implement a pure strict effect witness with negative controls for stale
+rows/events, duplicate effects, Unicode changes, mismatched identities and
+unstructured/false success. Reuse the existing generic message AG-UI validator
+and native Codex tool-call/schema path, not the Work message contract. Match
+the API response's message_id to the new inbox row; redacted AG-UI currently
+identifies the receiver terminal, not the inbox row. Require exactly one new
+matching delivery event in an operation-local capture, without inventing a
+message-row ID in that event. Revalidate after restart using reads only, passing the exact row returned by
+the initial effect witness as the restart baseline.
+Then compose a held verified PostgreSQL owner, production API and delivery
+path with the native app-server client. Pin source/binary, private state and
+own resources, preserve6144MiB and the accepted app-server75s control budget
+(no model turn or completion budget is consumed), and retire borrowers before
+owner cleanup. No model/credential renewal or historical job actions. Offline
+witness controls do not count as native/backend acceptance.
+
 ## T188 · Claude native catalog control
 
 Reuse the provider builder and existing read-only subprocess sandbox. Implement

@@ -1,0 +1,94 @@
+{
+  "schema": "caos.spec025.t189.native-generic-message-effect.v1",
+  "session_date": "2026-10-28",
+  "status": "PASS_SCOPED",
+  "execution_base_head": "64aa28da3de4ee64af387b40339f74d2507cc678",
+  "new_witness_uncommitted_but_hash_bound_at_execution": true,
+  "source_count": 498,
+  "source_map_sha256": "7c81452c560dfd167d4fa2f74bb26b5f6c66762ce7ddebfe6864507b7ad0afed",
+  "changed_python_sha256": {
+    "test/live_provider/codex_message_effect.py": "9bc8d695a65dd5bfbb7284d146631553349fb0189f0699fff63682b76c28f764",
+    "test/live_provider/test_codex_message_effect.py": "b5b2b906b2fb4ce0594f027dd766461c3935af65065679c2b5c58937b3d46138"
+  },
+  "runner_executed_sha256": "2873b4e2cb10262df174a845ef6d6ee3b58b5fff12594d5861dc746a54b8b5dd",
+  "native_cli": "Codex0.164.0",
+  "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+  "newer_installed_0_165_not_credited": true,
+  "offline": {
+    "new_witness_cases": 34,
+    "focused_passed": 66,
+    "seconds": 25.61,
+    "skipped": 0,
+    "reproduced_unchecked_event_leak_failures": 2
+  },
+  "native": {
+    "postgres_reused": false,
+    "postgres_service_profile": "cao-spec021-local-postgres-v3",
+    "stage": "restart_readonly_witness",
+    "memory_before_native_mib": 10170,
+    "effect_pass": true,
+    "structured_result": true,
+    "postgres_exact_row": true,
+    "agui_exact_redacted_event": true,
+    "native_client_denial": true,
+    "unauthenticated_ingress_401": true,
+    "restart_readonly_identity": true,
+    "model_turns_sent": 0,
+    "receiver_provider": "mock_cli",
+    "sender_registration_provider": "mock_cli",
+    "native_protocol": "Codex app-server MCP direct call",
+    "tmux_root_retired": true,
+    "borrowers_physically_stopped": true,
+    "staged_credentials_removed": true,
+    "cleanup_failures": [],
+    "operator_unchanged": true,
+    "sources_unchanged": true,
+    "seconds": 101.572,
+    "exact_postgres_container_absent": true,
+    "original_containers_preserved": true,
+    "exact_postgres_network_absent": true,
+    "unauthenticated_no_row": true,
+    "excluded_call_no_additional_row_or_event": true
+  },
+  "authorization_scope": "private test JWT with read/write/admin scopes; no per-operation server authorization acceptance",
+  "registration_scope": "both actor registrations and receiving process are mock_cli; Codex app-server performs the actual direct MCP call",
+  "model_turns_started": 0,
+  "authorized_messages": 1,
+  "matching_delivered_rows": 1,
+  "matching_redacted_events": 1,
+  "api_restarts": 1,
+  "read_only_restart_without_resend": true,
+  "denial_scope": "exact Codex native-client disabled-tool refusal, not server operation-policy proof",
+  "ownership": {
+    "all_operational_descriptors_reclosed": true,
+    "exact_executed_archives_preserved": true,
+    "postgres_owner_closed_after_borrowers": true
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "retained_failures": [
+    "syntax admission before arming",
+    "r1 bare fixture import path before staging/services",
+    "r2 owner context protocol before PostgreSQL start; private staged credentials explicitly removed",
+    "r3 AGUI disabled404; real service/actor cleanup passed",
+    "r4 native MCP auth selectors absent401; complete cleanup passed"
+  ],
+  "scope": {
+    "t189_complete": true,
+    "native_codex_provider_terminal_journey_accepted": false,
+    "work_message_accepted": false,
+    "cx05_complete": false,
+    "global_acceptance": false,
+    "t032_deferred": true
+  },
+  "review": {
+    "witness": "62086ded81ea4ed2bb4db98c1ec74640",
+    "native_launcher": "5c55f59c88bf441a979123420746a5b7",
+    "mode": "read",
+    "blocking_findings_corrected_before_accepted_execution": true,
+    "acceptance_scope_job": "53a823eb8fff46b19a5a8e157cec4cc1",
+    "acceptance_scope_blockers": 0
+  }
+}

@@ -1,5 +1,19 @@
 # Provider MCP profiles and current acceptance
 
+## Native collaboration effect · T189
+
+FR167/SC151: Reuse the accepted Codex app-server MCP control route for one
+generic `send_message`, without a model turn. Require an explicit structured
+success with positive integer message identity and exact sender/receiver,
+one new PostgreSQL inbox row with the exact expected Unicode body, and one
+redacted AG-UI delivery event attributed to that pair. Capture the pre-call
+baseline so an existing row/event cannot satisfy the new operation. Reject
+duplicate/ambiguous effects, textual success fallbacks and boolean IDs. A
+post-restart read must preserve row identity, body and creation time without
+resending. An excluded call must be denied without an additional effect.
+Keep client catalog denial, backend authority, delivery, restart stability and
+physical cleanup as separate predicates. No `cao.work.message` or global credit.
+
 ## Claude model-free native catalog · T188
 
 FR166/SC150: Observe the installed Claude CLI's MCP catalog using only its

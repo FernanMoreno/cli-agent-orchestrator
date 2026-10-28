@@ -113,6 +113,10 @@ Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics
 
+- Before arming a new launcher, compile its actual bytes, execute all its import statements under the exact invocation/PYTHONPATH, bind its direct helper calls to current signatures, and verify owner context-manager versus iterator protocols without acquiring services. Selected smoke imports do not validate historical fixtures' bare imports; a callable signature alone does not establish its returned ownership protocol.
+
+- For authenticated MCP-to-API controls, carry the API's auth-enablement selectors as well as its private credential source into the MCP child. A token file alone is ignored by `get_local_bearer` in a child with auth disabled. Check the live AG-UI route is enabled before subscribing, and retain the raw native result privately before waiting for downstream effects so a rejected call cannot become an unexplained delivery timeout.
+
 - Apply credential masks after broader filesystem binds: a later parent mount can cover an earlier mask. Before starting a native diagnostic, probe the actual sandbox namespace for credential invisibility and the required network isolation; requested flags alone are not evidence.
 
 - An interpreter digest binds executable bytes, not its virtual environment. Validate the exact invocation through closed imports before activation; use the verified virtualenv entrypoint when its resolved binary alone lacks dependencies. A generated enabled runner is not yet its executed archive: create that separate0600 archive from independently verified bytes before launch, retain its actual hash, and reclose only operational descriptors after owner closure while preserving executed evidence unchanged.

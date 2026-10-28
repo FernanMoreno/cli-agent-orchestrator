@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T189 PASS acotado: Codex0.164 app-server MCP→API autenticada→1fila PostgreSQL/1evento AG-UI exactos; reinicio sin reenvío,401sin efecto y denegación nativa del cliente.101,572s/498pins/10170MiB, limpieza y login intactos;66pruebas pasan. Los actores registrados/receptor son mock_cli: no cierra recorrido de terminal Codex, autorización por operación, Work ni CX-05/global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t189.md).
+
 T188: catálogo MCP nativo de Claude2.1.303 validado en los7perfiles × completo/vacío/parcial:21PASS; aislamiento real3/12 tambiénPASS.53pruebas offline, arquitectura5/0;23sesiones nativas sin turnos de modelo, red/login aislados y procesos retirados. No acredita llamadas autorizadas, efectos PostgreSQL/AG-UI ni aceptación global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t188.md).
 
 T170 compartido: corregida la salida de `cao agent` para tuberías/automatización; JSON según su política existente y texto humano en TTY.107 pruebas pasan en los9subcomandos, incluidos errores/interrupción/hilos; arquitectura5/0 y revisión sin bloqueos. Conserva los payloads, permisos y transportes; no añade aceptación nativa de proveedores. [Evidencia](../specs/025-provider-mcp-profiles/validation-t170.md).
