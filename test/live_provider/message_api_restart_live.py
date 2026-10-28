@@ -55,7 +55,9 @@ from message_api_restart import (
     validate_restart_handoff,
 )
 
-PINNED_PYTHON = "/home/felni/.cache/caos-spec016-validation-venv/bin/python"
+PINNED_PYTHON = os.environ.get(
+    "CAO_SPEC023_PYTHON", "/home/felni/.cache/caos-spec016-validation-venv/bin/python"
+)
 LIVE_ENABLE_ENV = "CAO_RUN_MESSAGE_API_RESTART_LIVE"
 EVIDENCE_ROOT_ENV = "CAO_SPEC023_EVIDENCE_ROOT"
 POSTGRES_METADATA_ENV = "CAO_TEST_POSTGRES_METADATA_FILE"
@@ -80,6 +82,8 @@ _SOURCE_BINDING_FILES = (
     "src/cli_agent_orchestrator/providers/base.py",
     "src/cli_agent_orchestrator/providers/mcp_interactions.py",
     "src/cli_agent_orchestrator/providers/manager.py",
+    "src/cli_agent_orchestrator/providers/codex.py",
+    "src/cli_agent_orchestrator/providers/claude_code.py",
     "src/cli_agent_orchestrator/providers/opencode_cli.py",
     "src/cli_agent_orchestrator/services/install_service.py",
     "src/cli_agent_orchestrator/services/agui_stream.py",
@@ -89,6 +93,9 @@ _SOURCE_BINDING_FILES = (
     "src/cli_agent_orchestrator/services/terminal_service.py",
     "src/cli_agent_orchestrator/utils/orchestration.py",
     "src/cli_agent_orchestrator/utils/mcp_resolution.py",
+    "src/cli_agent_orchestrator/utils/tool_mapping.py",
+    "src/cli_agent_orchestrator/utils/mcp_tool_policy.py",
+    "src/cli_agent_orchestrator/utils/mcp_readiness.py",
     "src/cli_agent_orchestrator/utils/opencode_config.py",
     "src/cli_agent_orchestrator/utils/opencode_permissions.py",
     "src/cli_agent_orchestrator/utils/opencode_v2.py",
@@ -189,6 +196,7 @@ class RunState:
     first_row_identity_matched: bool = False
     terminals_preserved: bool = False
     audit_failed: bool = False
+    shutdown_mode: str = "not_observed"
     claude_auth_staging_attempted: bool = False
     api_replacements: int = 0
     stage: str = "preflight"
@@ -469,6 +477,8 @@ def _hash_candidate_bindings(candidate_dir: Path) -> dict[str, str]:
         "message_api_restart_live.py",
         "test_message_api_restart.py",
         "message_mcp_observer.py",
+        "message_mcp_shutdown.py",
+        "test_message_mcp_shutdown.py",
         "sitecustomize.py",
         "claude_auth_archive.py",
     )
@@ -1082,6 +1092,27 @@ def _graceful_claude_sender_exit_and_wait_for_seal(state: RunState, base_url: st
         )
 
 
+def _graceful_codex_mcp_shutdown(state: RunState) -> bool:
+    from message_mcp_shutdown import request_shutdown
+
+    deadline = time.monotonic() + 6.0
+    try:
+        if not validate_dispatch_history(read_dispatch_audit(state.audit_path), expected_calls=2):
+            return False
+        if getattr(state, "shutdown_mode", None) == "harness_requested_eof":
+            return _audit_completion_present(state)
+        completed = (
+            request_shutdown(state.audit_path, deadline=deadline)
+            and time.monotonic() < deadline
+            and _audit_completion_present(state)
+        )
+        if completed:
+            state.shutdown_mode = "harness_requested_eof"
+        return completed
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _cleanup(state: RunState, *, server_module: Any, tmux_module: Any | None = None) -> bool:
     okay = _stream_close_all(state)
     owned_ids = [
@@ -1108,6 +1139,9 @@ def _cleanup(state: RunState, *, server_module: Any, tmux_module: Any | None = N
             state.active_server = recovery
         except BaseException:
             okay = False
+    if state.provider == "codex" and state.sender_id is not None:
+        if not _graceful_codex_mcp_shutdown(state):
+            state.audit_failed = True
     if state.provider == "claude_code" and state.sender_id is not None:
         if state.sender_id in owned_ids and state.active_server is not None:
             if not _graceful_claude_sender_exit_and_wait_for_seal(state, state.active_server.url):
@@ -1143,7 +1177,7 @@ def _cleanup(state: RunState, *, server_module: Any, tmux_module: Any | None = N
             okay = False
     state.audit_failed = state.audit_failed or _audit_failure_present(state)
     if state.sender_id is not None:
-        if state.provider == "claude_code":
+        if state.provider in {"claude_code", "codex"}:
             if not _audit_completion_present(state):
                 state.audit_failed = True
         elif not _wait_for_audit_completion(state):
@@ -1990,6 +2024,7 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
     safe = project_safe_receipt(
         {
             "provider": state.provider,
+            "shutdown_mode": state.shutdown_mode,
             "result": state.result,
             "mcp_calls": records,
             "first_row_identity_matched": state.first_row_identity_matched,

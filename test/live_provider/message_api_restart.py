@@ -298,6 +298,7 @@ def build_message_mcp_server_config(
     }
     if provider == "codex":
         config["enabled_tools"] = ["send_message"]
+        env["CAO_SPEC023_MCP_GRACEFUL_EOF"] = "1"
     return config
 
 
@@ -544,10 +545,12 @@ def message_mcp_config_ready(
             "PYTHONDONTWRITEBYTECODE",
             "PYTHONPATH",
         }
+        | ({"CAO_SPEC023_MCP_GRACEFUL_EOF"} if provider == "codex" else set())
         and config.get("command") == str(python_path)
         and config.get("args") == expected_command_args
         and (provider != "codex" or config.get("enabled_tools") == ["send_message"])
         and environment.get(OBSERVER_ENABLE_ENV) == "1"
+        and (provider != "codex" or environment.get("CAO_SPEC023_MCP_GRACEFUL_EOF") == "1")
         and environment.get(OBSERVER_AUDIT_PATH_ENV) == str(audit_file)
         and environment.get(SOURCE_ROOT_ENV) == str(source_path)
         and environment.get("CAO_ENABLE_SENDER_ID_INJECTION") == "true"
@@ -642,6 +645,10 @@ def project_safe_receipt(raw: Mapping[str, Any]) -> dict[str, Any]:
         "result": result,
         "mcp_calls": calls,
     }
+    if provider == "codex":
+        mode = raw.get("shutdown_mode")
+        receipt["shutdown_mode"] = mode if mode == "harness_requested_eof" else "not_observed"
+        receipt["native_automatic_shutdown_accepted"] = False
     for name in (
         "first_row_identity_matched",
         "events_redacted",

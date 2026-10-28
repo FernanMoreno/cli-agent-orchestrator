@@ -12,6 +12,7 @@ import functools
 import os
 import stat
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,14 @@ _EXPECTED_MODULE = "cli_agent_orchestrator.mcp_server.server"
 _AUDIT_FAILURE_EXIT_CODE = 86
 _AUDIT_FAILURE_MARKER = b"SPEC023_AUDIT_WRITE_FAILED\n"
 _AUDIT_COMPLETE_MARKER = b"SPEC023_AUDIT_COMPLETE\n"
+
+
+def _message_shutdown_context(server: Any):
+    if os.environ.get("CAO_SPEC023_MCP_GRACEFUL_EOF", "0") == "0":
+        return nullcontext()
+    from message_mcp_shutdown import controlled_stdio
+
+    return controlled_stdio(server, Path(os.environ["CAO_SPEC023_MCP_AUDIT_PATH"]))
 
 
 def _terminate_startup() -> None:
@@ -129,6 +138,9 @@ def _finish_source_bound_run(result: Any, observer: Any) -> Any:
 def _install_source_bound_run_hook() -> None:
     message_gate = os.environ.get(_OBSERVER_ENABLE_ENV, "0")
     opencode_gate = os.environ.get(_OPENCODE_OBSERVER_ENABLE_ENV, "0")
+    shutdown_gate = os.environ.get("CAO_SPEC023_MCP_GRACEFUL_EOF", "0")
+    if shutdown_gate not in {"0", "1"} or (shutdown_gate == "1" and message_gate != "1"):
+        _terminate_startup()
     if message_gate == "0" and opencode_gate == "0":
         return
     if (
@@ -193,7 +205,8 @@ def _install_source_bound_run_hook() -> None:
         except BaseException:
             _terminate_startup()
         try:
-            result = original_run(server, *args, **kwargs)
+            with _message_shutdown_context(server):
+                result = original_run(server, *args, **kwargs)
         except BaseException:
             try:
                 if observer_mode == "opencode":

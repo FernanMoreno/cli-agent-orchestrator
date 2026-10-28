@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T190 sigue abierto: cierre diagnóstico por EOF implementado y revisado, conservando el sello original.201pruebas combinadas pasan (incluidos21controles del módulo); control nativo sin modelo confirma salida/sello antes de cerrar Codex en0,356s,501pins y10747MiB, sin tocar login. Las dos fases nativas de mensajes aún no se han ejecutado. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t190-preparation.md).
+
 T189 PASS acotado: Codex0.164 app-server MCP→API autenticada→1fila PostgreSQL/1evento AG-UI exactos; reinicio sin reenvío,401sin efecto y denegación nativa del cliente.101,572s/498pins/10170MiB, limpieza y login intactos;66pruebas pasan. Los actores registrados/receptor son mock_cli: no cierra recorrido de terminal Codex, autorización por operación, Work ni CX-05/global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t189.md).
 
 T188: catálogo MCP nativo de Claude2.1.303 validado en los7perfiles × completo/vacío/parcial:21PASS; aislamiento real3/12 tambiénPASS.53pruebas offline, arquitectura5/0;23sesiones nativas sin turnos de modelo, red/login aislados y procesos retirados. No acredita llamadas autorizadas, efectos PostgreSQL/AG-UI ni aceptación global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t188.md).

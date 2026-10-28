@@ -87,6 +87,11 @@ _REQUIRED_GENERIC_MESSAGE_SOURCE_BINDINGS = frozenset(
         "src/cli_agent_orchestrator/backends/tmux_backend.py",
         "src/cli_agent_orchestrator/providers/base.py",
         "src/cli_agent_orchestrator/providers/manager.py",
+        "src/cli_agent_orchestrator/providers/codex.py",
+        "src/cli_agent_orchestrator/providers/claude_code.py",
+        "src/cli_agent_orchestrator/utils/tool_mapping.py",
+        "src/cli_agent_orchestrator/utils/mcp_tool_policy.py",
+        "src/cli_agent_orchestrator/utils/mcp_readiness.py",
         "src/cli_agent_orchestrator/providers/mcp_interactions.py",
         "src/cli_agent_orchestrator/providers/opencode_cli.py",
         "src/cli_agent_orchestrator/services/install_service.py",
@@ -459,6 +464,31 @@ def test_source_bindings_cover_generic_message_persistence_delivery_and_agui_own
     assert _REQUIRED_GENERIC_MESSAGE_SOURCE_BINDINGS <= set(
         message_api_restart_live._SOURCE_BINDING_FILES
     )
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_native_lane_interpreter_binding_is_selected_at_actual_module_import(explicit):
+    repo = Path(__file__).resolve().parents[2]
+    env = dict(os.environ)
+    env.pop("CAO_SPEC023_PYTHON", None)
+    if explicit:
+        env["CAO_SPEC023_PYTHON"] = sys.executable
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(repo / "test/live_provider"), str(repo), str(repo / "src")]
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", "import message_api_restart_live as m; print(m.PINNED_PYTHON)"],
+        env=env,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, "native lane import failed"
+    expected = (
+        sys.executable if explicit else "/home/felni/.cache/caos-spec016-validation-venv/bin/python"
+    )
+    assert result.stdout.strip() == expected
 
 
 @pytest.mark.parametrize(
@@ -1233,6 +1263,8 @@ def test_safe_receipt_drops_body_auth_paths_and_raw_diagnostics() -> None:
     assert receipt == {
         "provider": "codex",
         "result": "pass",
+        "shutdown_mode": "not_observed",
+        "native_automatic_shutdown_accepted": False,
         "mcp_calls": [
             {"tool": "send_message", "status": "completed", "outcome": "success"},
             {"tool": "send_message", "status": "completed", "outcome": "unknown"},

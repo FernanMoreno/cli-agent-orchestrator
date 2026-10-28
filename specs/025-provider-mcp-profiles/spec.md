@@ -1,5 +1,28 @@
 # Provider MCP profiles and current acceptance
 
+## Native provider message journey · T190
+
+FR168/SC152: Reuse the existing generic-message restart journey with actual
+Codex sender and receiver registrations/processes. Observe one model-origin
+`send_message` before and one after an API restart, exact Unicode/row identity,
+redacted AG-UI delivery, dispatch audit and physical owned cleanup. Bind the
+selected interpreter explicitly to the actual invoking entrypoint and bind
+native provider/configuration dependencies before staging credentials or
+launching services. Keep all opt-in gates closed by default,180s phase budgets,
+6144MiB admission and held verified PostgreSQL ownership. Keep T189's direct
+MCP/mock-actor evidence and `cao.work.message` authority separate; no global
+acceptance or served-model identity is inferred.
+
+T190 diagnostic shutdown is explicitly `harness_requested_eof`, with
+`native_automatic_shutdown_accepted=false`. Only the source-bound observed
+Codex child may opt in. A private request may end stdin only when dispatch is
+quiescent; active/late calls, malformed requests and exceptions must refuse
+finalization. Preserve the original observer, normal-run seal writer and seal
+validator. Require the exact two successful audits before requesting shutdown,
+and verified child exit plus the genuine seal before closing the native actor,
+within the existing six-second cleanup observation. Default production and
+Claude transports remain unchanged.
+
 ## Native collaboration effect · T189
 
 FR167/SC151: Reuse the accepted Codex app-server MCP control route for one

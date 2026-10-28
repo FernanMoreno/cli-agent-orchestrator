@@ -1,5 +1,9 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T190 [US4] [FR168/SC152] Refresh interpreter/provider-source admission in the existing generic-message journey, then validate actual Codex sender/receiver model-origin messages on both sides of API restart with exact PostgreSQL/AG-UI/audit/cleanup and unchanged budgets. Separate preparation, failed diagnostics and native acceptance; Work/global gates remain independent.
+
+T190 preparación: EOF diagnóstico implementado/revisado;201pruebas combinadas PASS (21del módulo incluidas), arquitectura5-0. Control nativo0,356s confirma hijo retirado y sello antes de cerrar Codex; dos fases de mensajes del modelo pendientes. No acredita cierre automático nativo ni rebaja criterios. [Evidencia y límites](validation-t190-preparation.md).
+
 - [x] T189 [US4] [FR167/SC151] Validate the exact structured native send_message result against one new PostgreSQL row and redacted AG-UI delivery; reject stale/duplicate effects, preserve identity through API restart without resend, and prove excluded-call no-effect plus owned cleanup. Keep offline witness preparation and native acceptance separate; no Work/global credit.
 
 - [x] T188 [US4] [FR166/SC150] Validate a model-free Claude control reader, then observe seven native profile catalogs with full/empty/partial filters, production configuration, readiness, session isolation and source/binary/private-network/process fences. Distinguish offline controls, native feasibility and matrix acceptance; no call/effect/global credit. Complete:53offlinePASS,21nativecatalogPASS plus2liveisolation sessions, all groups retired/operator unchanged; [evidence](validation-t188.md).

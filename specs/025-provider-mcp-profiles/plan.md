@@ -1,5 +1,29 @@
 # Plan: provider MCP profiles
 
+## T190 · current native Codex generic messages
+
+Refresh the existing message_api_restart_live lane rather than constructing a
+second provider journey. Preserve the historical default interpreter but allow
+an explicit CAO_SPEC023_PYTHON binding; existing setup must still require exact
+equality with sys.executable and a real file. Extend source binding to Codex,
+Claude and shared tool-profile/mapping/readiness owners. Test the missing-source
+gate and actual module-import interpreter selection before implementation.
+Run existing offline contracts before native activation. Stage only the selected
+Codex login privately, select a hash-pinned installed binary via private PATH,
+validate every actual launcher import/helper protocol, and hold the verified PG
+owner through both native phases and cleanup. Record native failures at their
+first observed boundary without repeating unchanged expensive runs. No broad
+T032 validation, historical job action or Claude login operation.
+
+For T190 only, use a private filesystem EOF rendezvous rather than signalling
+an arbitrary PID: the polling raw reader feeds the SDK's existing UTF-8 text
+decoder/framing. Track dispatch quiescence outside the unchanged observer;
+refuse busy/late calls. Publish a private audit-inode/process-birth ready record,
+bind a pidfd before requesting EOF, and require child exit plus the unchanged
+positive seal. Source-bind the helper and its tests. Cover fragmented Unicode,
+CRLF, actual SDK framing, busy/late calls, unsafe/stale artifacts and cleanup
+ordering before a model-free native control and the two real message phases.
+
 ## T189 · native collaboration effect
 
 First implement a pure strict effect witness with negative controls for stale
