@@ -225,6 +225,39 @@ MODEL_UPGRADE_PROMPT_PATTERN = r"Newer \S+ model available"
 # match intentionally narrow so CAO never presses Enter on an arbitrary
 # interactive question that happens to mention a style.
 TEXT_STYLE_PROMPT_PATTERN = r"Choose the text style that looks best with your terminal"
+
+
+# Exact first-run informational screen captured from Claude2.1.303. It is not
+# an authentication route, permission request or task question. Require every
+# note in order and the final footer, rather than a generic continuation key.
+_STARTUP_SECURITY_NOTES_BODY = (
+    "Security notes: 1. Claude can make mistakes. "
+    "You're responsible for Claude's actions and should always "
+    "review them, especially when running code. "
+    "2. Due to prompt injection risks, only use it with code you trust "
+    "Learn more: https://code.claude.com/docs/en/security "
+    "Press Enter to continue…"
+)
+
+
+def _is_security_notes_viewport(output: str) -> bool:
+    lines = strip_terminal_escapes(output).strip().splitlines()
+    # A visible pane can retain MOTD/launch echo above the TUI. The latest
+    # native banner owns the notice; a newer banner fences older notices out.
+    banners = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(r"Welcome to Claude Code v\d+\.\d+\.\d+", line.strip())
+    ]
+    if not banners:
+        return False
+    for index in range(banners[-1] + 1, len(lines)):
+        line = lines[index]
+        if line.strip() == "Security notes:":
+            return " ".join(" ".join(lines[index:]).split()) == _STARTUP_SECURITY_NOTES_BODY
+    return False
+
+
 # Claude Code displays this first-run route chooser even when its local OAuth
 # credential receipt is already present. The selected subscription route is
 # compatible with that receipt; CAO confirms it only when the exact selected
@@ -830,7 +863,7 @@ class ClaudeCodeProvider(BaseProvider):
     ) -> None:
         """Answer startup prompts that may appear before the REPL is ready.
 
-        Claude Code may show up to five prompts during startup:
+        Claude Code may show informational and interactive prompts during startup:
 
         1. **Bypass permissions confirmation** (``--dangerously-skip-permissions``)
            – shows "Yes, I accept" as option 2; requires ``Down`` + ``Enter``.
@@ -862,6 +895,9 @@ class ClaudeCodeProvider(BaseProvider):
            exact option plus a reusable local receipt (or an explicitly
            supplied documented OAuth override). Without both witnesses this
            remains an operator-owned login choice.
+
+        The first-run Security notes continuation is also confirmed, once,
+        only when its entire current viewport matches the captured notice.
 
         Note that only the FIRST of these is prevented by config. The trust
         dialog and the upgrade nudge are dismissed here, at the TUI, because
@@ -912,6 +948,7 @@ class ClaudeCodeProvider(BaseProvider):
         trust_accepted = False
         trust_navigation_at = None
         text_style_accepted = False
+        security_notes_accepted = False
         oauth_login_route_accepted = False
         # Keyed on the matched title ("Newer Opus model available"), not a bool:
         # one nudge can be shown PER TIER, so a single flag would swallow the
@@ -939,6 +976,38 @@ class ClaudeCodeProvider(BaseProvider):
                 continue
 
             clean_output = re.sub(ANSI_CODE_PATTERN, "", output)
+
+            # This first-run notice is informational. Confirm only its complete
+            # current viewport, once per launch. Historical notes must not send
+            # Enter into a later login/permission dialog. Use that fresh frame
+            # for the following handlers too, so earlier prompts in scrollback
+            # cannot act while this notice (or its successor) owns the screen.
+            if "Security notes:" in clean_output:
+                viewport = await asyncio.to_thread(
+                    get_backend().get_history,
+                    self.session_name,
+                    self.window_name,
+                    visible_only=True,
+                )
+                clean_output = strip_terminal_escapes(viewport or "")
+                if _is_security_notes_viewport(clean_output):
+                    if not security_notes_accepted:
+                        from cli_agent_orchestrator.services.status_monitor import status_monitor
+
+                        status_monitor.notify_input_sent(self.terminal_id)
+                        await asyncio.to_thread(
+                            get_backend().send_special_key,
+                            self.session_name,
+                            self.window_name,
+                            "Enter",
+                        )
+                        security_notes_accepted = True
+                        any_prompt_handled = True
+                        last_prompt_time = time.monotonic()
+                    # Acknowledging a notice is not readiness. Continue observing
+                    # until it actually disappears; retain the original cap.
+                    await asyncio.sleep(1.0)
+                    continue
 
             # 1) Handle bypass permissions prompt (appears before trust prompt).
             #    Only act once — the text stays in the buffer after dismissal.

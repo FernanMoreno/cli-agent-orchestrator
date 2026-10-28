@@ -20,8 +20,11 @@ No hubo ejecución nativa de la versión rechazada.
 Composición: controlador -> entrada API -> proveedor -> viewport/tmux ->
 compensación -> retiro de borrowers -> cierre PG. Sin nueva API/esquema/DB o
 migración; Pact no aplica a este observador privado. Arquitectura5-0 PASS.
-Graphify no tiene source_location para estas fixtures/proveedor en el grafo
-consultado; las conexiones se verifican directamente contra fuente. No se
+La primera consulta Graphify buscó la ruta en source_location, que sólo guarda
+líneas; fue una consulta incorrecta. Consultando source_file se encuentran
+initialize/handler/probe y sus aristas a backend/settings/readiness; no las
+fixtures de mensajes. Las líneas generadas están desplazadas respecto a fuente
+actual, por lo que se verifican directamente las conexiones contra el código. No se
 regenera ni modifica el trabajo ajeno de Graphify. La evidencia cruda queda
 privada; se publicarán solamente conclusiones revisadas y recibo permitido.
 
@@ -38,3 +41,29 @@ El lead verifica hashes/preflight: el revisor read no ejecuta comandos.
 Sin nueva conclusión durable de causa todavía; el resultado y los artefactos
 permanecen en el repositorio/recibos privados. No hace falta regenerar Graphify.
 Veredicto de preparación: PASS; diagnóstico real y aceptación pendientes.
+
+
+## Resultado real · 2026-10-28
+
+Fuente7f1e5eeb7fe4633701fd7ae862a8cb4aade64493/505bindings. HTTP500
+provider_init_timeout reproducido en146577ms; initialize146,233s,
+controlador184,431s, mínimo8850MiB. Binario resuelto en el pane coincide con
+el fijado2.1.303. Se capturó el viewport antes de compensación: pantalla inicial
+informativa «Security notes» y «Press Enter to continue…»;20probes originales
+UNKNOWN. El handler contempla estilo/rutaOAuth/trust/bypass/upgrade pero no
+esta pantalla. Esa frontera concreta explica el bloqueo reproducido actual;
+no prueba retrospectivamente la pantalla del r1 de T197, que no fue retenida.
+El texto «code you trust» es parte del aviso informativo, no el selector de
+confianza del workspace ni un formulario de autenticación.
+
+No hubo emisor, mensajes/MCP/filas/eventos/reinicio.15identidades observadas
+retiradas, API/tmux/observador detenidos antes de cerrar PG, contenedor/red
+exactos ausentes y contenedores originales preservados. Source/native/original
+login intactos; staging auth retirado, archivo ejecutado conservado y descriptor
+recerrado a su hash cerrado. El viewport crudo permanece privado0600. El campo
+private_observation tardío sigue diciendo viewport_saved=false: describe otro
+observador posterior, no invalida el startup.viewport_saved=true previo.
+
+T198 diagnóstico completado; T197/T011 siguen abiertos. T199 corregirá este
+caso con reconocimiento estricto de viewport actual, nunca Enter genérico ni
+aceptación de un banner como readiness. [Recibo](validation-t198-native.json).

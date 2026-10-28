@@ -1,11 +1,26 @@
 # Plan: provider MCP profiles
 
+## T199 · fix the reproduced first incorrect startup boundary
+
+T198 captures the same provider-init timeout with actual fixed executable,
+20UNKNOWN probes and an unhandled Security notes continuation viewport. Replay
+a privacy-reviewed rendered UI fixture offline, with production escape stripping.
+Add a narrow pure recognizer and a once-per-launch branch in the existing async
+handler; confirm against a fresh visible-only read before Enter. Keep the real
+readiness probe and following dialogs active. Test exact captured screen,
+partial/footer/title/body variants, stale scrollback, single confirmation and
+continuation without treating acknowledgment as ready. Graphify source_file plus source_location identifies initialize/handler/probe
+and their backend/settings/readiness edges; line offsets are stale, so verify
+handler -> backend -> StatusMonitor -> API compensation against actual source. Run focused RED, then affected
+provider/handler regressions and composition/peer review before a real retry.
+
 ## T198 · observe the first missing startup boundary
 
 T197 r1 failed before receiver registration and cleanup removed its viewport.
-Read-only Graphify lookup has no source_location entries for the relevant
-provider/API fixtures; verify initialize -> backend history/status -> API
-compensation directly against source. Wrap the private API entrypoint to install
+Read-only Graphify lookup initially treated source_location as a path, missing
+the provider nodes. Corrected source_file + source_location traversal finds
+initialize/handler/probe and backend/readiness edges; fixture nodes are absent.
+Verify initialize -> backend history/status -> API compensation against source. Wrap the private API entrypoint to install
 an exception-preserving initialize observer and a shell command lookup in a
 subshell before the original command. Capture backend history before rollback,
 without extra status transitions or key presses. Validate wrapper imports,

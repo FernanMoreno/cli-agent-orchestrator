@@ -1,5 +1,14 @@
 # Provider MCP profiles and current acceptance
 
+## First-run security-notes startup screen · T199
+
+FR177/SC161: Claude2.1.303's captured first-run informational security-notes
+screen must not block initialization until timeout. Confirm Enter at most once
+per launch only when a fresh visible viewport contains the exact welcome,
+security notes/body and final continuation footer. Never act on scrollback-only,
+partial, unrelated or login/permission dialogs. Confirmation is not readiness;
+retain all existing status/MCP gates, startup budgets and account protection.
+
 ## Claude startup evidence before compensation · T198
 
 FR176/SC160: Capture the actual receiver startup viewport and executable lookup
