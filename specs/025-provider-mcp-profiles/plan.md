@@ -1,5 +1,21 @@
 # Plan: provider MCP profiles
 
+## T204 · deterministic Claude client exclusion control
+
+First implement a strict pure proof reducer and Anthropic SSE fixture with typed
+negative controls. Reuse claude_mcp_catalog strict JSON decoding; keep its
+model-free control allowlist unchanged. Derive native setup from T188 and the
+production builder, inspect the actual outgoing HTTP offer and correlated native
+assistant/user events; require an alive initialized/listed MCP witness with zero
+call frames. Inject one explicitly client-excluded qualified MCP name. All native
+processes and the local HTTP service must share a verified no-egress namespace
+with masked operator files; no login copying. Preserve180s/6144MiB and exact owner
+retirement. Schema/fixture tests alone leave native acceptance pending. No
+production permission or SDK monkeypatch. Root is sole writer. Graphify identifies
+_build_claude_command and config resolution; current source confirms actual flags
+and CAO_INTERNAL_MCP_ENABLED_TOOLS are different boundaries.
+
+
 ## T203 · native client to server target authority
 
 Reuse codex_mcp_catalog.CatalogClient, schema-checked direct mcpServer/tool/call and

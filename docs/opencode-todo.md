@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T204: verificadores de exclusión del cliente y fixture Anthropic local implementados;74pruebas PASS (incluye regresión T188), composición5/0 y ClaudeGO para helpers. Catálogo del servidor, oferta HTTP y denegación nativa se comprueban por separado; control nativo todavía pendiente. T204/CL07 siguen abiertos. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t204.md).
+
 T203 cerrado en su alcance: Codex nativo supervision11herramientas, inspección propia/hijo y cancelación de tercero activo denegada antes del POST; recibo/turno intactos. API/PG reales, actores MockCLI, recibo sembrado y auth local desactivada;0turnos de modelo. R2PASS/100,333s/mínimo9695MiB, limpieza/originales intactos.44pruebas nuevas+60regresiones previas. T007/T008/global siguen abiertos. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t203.md).
 
 T202 cerrado: recorrido real r4 aceptado en5fddafaf/510fuentes. Dos mensajes/filas/eventos, reinicio y sello normal mediante EOF explícito dentro de6s;14contenedores originales conservados,37identidades/PG retirados y login intacto.178,052s/mínimo9324MiB. No acredita cierre automático T197 ni Work/perfiles/global. [Resultado actual](../specs/025-provider-mcp-profiles/validation-t202.md).

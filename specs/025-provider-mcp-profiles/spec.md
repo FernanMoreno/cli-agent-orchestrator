@@ -1,5 +1,22 @@
 # Provider MCP profiles and current acceptance
 
+## Native Claude client denial · T204
+
+FR182/SC166: Add an opt-in synthetic-provider control of native Claude client tool
+exclusion. Keep the actual production MCP profile/build configuration and append
+one explicit diagnostic --disallowedTools name. Distinguish the connected server
+catalog from the HTTP model offer: the excluded name may remain in mcp_status but
+must be absent from offered tools while a permitted MCP name remains. A local
+Anthropic-compatible fixture injects the excluded tool_use; require a native
+correlated tool_result with exact boolean is_error and no MCP tools/call, with
+positive initialize/list observations. Reject missing, duplicate, conflicting,
+unrelated or untyped evidence. Identify the primary request by content, never
+ordinal; record auxiliary traffic separately. Use a private empty HOME/config,
+dummy key, credential masks and verified no-egress namespace containing all
+fixture/CLI/MCP processes. No operator auth staging, real provider inference,
+API/PG state effect, server-authority or global acceptance is inferred.
+
+
 ## Native supervision operation authority · T203
 
 FR181/SC165: Extend T007 acceptance with one source-bound native Codex app-server
