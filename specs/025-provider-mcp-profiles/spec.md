@@ -1,5 +1,7 @@
 # Provider MCP profiles and current acceptance
 
+T202 evidence clarification: persist private exact container inventories before native resources and after owner closure, with public counts only; do not attribute a missing resource to a deleting client without evidence. Admit a fresh retry only after a60s unchanged inventory observation with no container create/destroy events, preserving the original all-preexisting-containers criterion.
+
 ## Explicit quiescent EOF before Claude native exit · T202
 
 FR180/SC164: Provide an explicit, diagnostic-only Claude quiescent-EOF mode in

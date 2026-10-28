@@ -1,5 +1,7 @@
 # Plan: provider MCP profiles
 
+T202 follow-up: preserve exact private before/after container identity (ID/name/image/session) through shared test/live_provider/native_container_inventory.py and the existing exclusive0600 writer/reader. Require one60s read-only inventory observation without create/destroy events before a fresh full run; original preservation comparison, messages,6s seal budget and all acceptance gates remain unchanged. Retain failed r3; Docker event attributes/commands are never projected.
+
 ## T202 · reuse explicit SDK EOF without weakening native acceptance
 
 T201 shows genuine EOF returns/seals while SIGINT with open stdin stalls and

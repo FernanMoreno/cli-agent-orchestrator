@@ -63,3 +63,44 @@ harness_requested_eof. Work/ACK exacto receptor/perfiles/global siguen separados
 Ambos descriptores reales recerrados y sus archivos ejecutados inalterados.
 
 Obsidian actualizado mediante transacción save-20261028-caos-claude-eof-boundaries: nota de límites, índice/registro y hot sin cambios; lint estricto0hallazgos. Próximo gate revisado en lectura: supervisión Codex con objetivos reales; T173 catálogo no equivale a autoridad por operación. No se ejecutó ese caso.
+
+
+## Inventario preservado y reintento bloqueado antes de recursos
+
+La captura se integra como helper compartido en
+`test/live_provider/native_container_inventory.py`, con16pruebas PASS/27,74s
+tras RED por módulo ausente. Una consulta read-only por inventario proyecta sólo
+ID/nombre/imagen/sesión Testcontainers; valida campos/tipos/IDs únicos y conserva
+JSON0600 exclusivo con lectura real de comprobación. Rechaza filas inválidas,
+metadatos adicionales, duplicados, fase inválida antes de consultar Docker,
+sobrescritura, modo incorrecto y contenido alterado. No lee Env/Command/Labels
+completas. Los nombres/sesiones no prueban quién borró un contenedor.
+
+El adaptador r4 delega al helper canónico antes de auth/servicios y después de
+cerrar el propietarioPG. Conserva original_containers<=after y todos los gates.
+19imports reales,7grupos de controles de inventario,8de ámbito,4de viewport,
+9de modo/recibo y dos consultas Docker con writer/reader real pasan. En las dos
+últimas consultas se observaron23→22contenedores; eso NO es estabilidad.
+La primera expectativa privada de error por sobrescritura se corrigió al contrato
+real AcceptanceFailure(cleanup); no se cambió el writer ni se adquirieron recursos.
+
+Dos ventanas completas de60,177s y60,317s FALLAN:15→16/24eventos y15→24/66eventos
+de create/destroy. El armado exige estabilidad,0eventos,60s observados, edad≤120s
+y que ambos inventarios y el actual coincidan. El propio arm rechazó el entorno
+actual antes de manifest/archive/credenciales/PG/modelo. Descriptor r4 CERRADO.
+No se lanza otro recorrido ni se reescribe r3. [Resultados](validation-t202-inventory.json).
+
+Los268tests anteriores corresponden a los mismos cuatro archivos sin cambios,
+no a una nueva ejecución. Composición/arquitectura5-0 y formato/imports pasan
+para este incremento. La revisión de composición verifica productor Docker→JSON
+privado→comparación original→recibo público de conteos; errores no otorgan aceptación.
+Si el recorrido/PG lanza antes de la captura final, ésta puede faltar; se conserva
+el fallo y no se atribuye un cliente borrador. Entre arm y ejecución debe evitarse
+espera; la preservación final sigue obligatoria aunque la admisión haya pasado.
+
+Revisión Luna del SIGINT: AnyIO puede cancelar handlers y lanzar KeyboardInterrupt;
+normalizarlo en el servidor podría producir un sello engañoso de operaciones
+canceladas. No se aplica ese atajo. T197 automático queda separado de EOF explícito.
+T202 permanece abierto mientras no pase su gate global con el inventario preservado.
+
+Revisión Claude final GO del helper/test/delegación; no ejecutó comandos. Obsidian actualizado mediante save-20261028-caos-container-inventory-admission (nota/índice/registro, hot intacto), lint estricto0hallazgos.

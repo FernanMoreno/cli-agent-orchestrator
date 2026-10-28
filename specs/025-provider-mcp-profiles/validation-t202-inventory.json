@@ -1,0 +1,42 @@
+{
+  "schema": "caos.t202.inventory-followup.v1",
+  "shared_helper": "test/live_provider/native_container_inventory.py",
+  "offline_tests": 16,
+  "offline_seconds": 27.74,
+  "actual_pre_resource_imports": 19,
+  "private_inventory_control_groups": 7,
+  "profile_scope_controls": 8,
+  "viewport_controls": 4,
+  "mode_receipt_controls": 9,
+  "actual_docker_read_only_projection_verified": true,
+  "actual_metadata_roundtrip_counts": [
+    23,
+    22
+  ],
+  "stability_observations": [
+    {
+      "observed_seconds": 60.177,
+      "before_count": 15,
+      "after_count": 16,
+      "inventories_equal": false,
+      "lifecycle_event_count": 24,
+      "stable": false
+    },
+    {
+      "observed_seconds": 60.317,
+      "before_count": 15,
+      "after_count": 24,
+      "inventories_equal": false,
+      "lifecycle_event_count": 66,
+      "stable": false
+    }
+  ],
+  "unstable_arm_refused_without_manifest_or_archive": true,
+  "owned_services_acquired": false,
+  "credentials_staged": false,
+  "native_started": false,
+  "model_calls": 0,
+  "t202_parent_accepted": false,
+  "t197_native_automatic_accepted": false,
+  "descriptors_closed": true
+}
