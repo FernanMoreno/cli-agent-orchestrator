@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T205: ledger causal del proxy implementado;83pruebas PASS/composición5/0. Distingue EOF/señales/abortos/limpieza/waitstatus sin cambiar apagado ni conceder cierre normal. Nuevo preflight nativo sin turno preparado, aún pendiente. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t205.md).
+
 T204:74pruebas PASS/composición5/0/ClaudeGO para verificadores. Preflight nativo r2 conecta3herramientas y0llamadas, pero falla cierre limpio del proxy tras salida0 de Claude;43,618s/mínimo10543MiB, grupo retirado,0turnos/login/API/PG. Import privado de r1 reproducido y corregido antes de r2. T204/CL07 siguen abiertos; falta resolver apagado antes del turno sintético. [Resultados y límites](../specs/025-provider-mcp-profiles/validation-t204.md).
 
 T203 cerrado en su alcance: Codex nativo supervision11herramientas, inspección propia/hijo y cancelación de tercero activo denegada antes del POST; recibo/turno intactos. API/PG reales, actores MockCLI, recibo sembrado y auth local desactivada;0turnos de modelo. R2PASS/100,333s/mínimo9695MiB, limpieza/originales intactos.44pruebas nuevas+60regresiones previas. T007/T008/global siguen abiertos. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t203.md).

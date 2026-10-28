@@ -1,5 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T205 [US4] [FR183/SC167; T204] Implement bounded private proxy lifecycle evidence, reproduce EOF/SIGINT/SIGTERM/partial-frame failure controls without Claude, review/integrate and execute one zero-turn native catalog/shutdown diagnostic. Classify actual observation separately from shutdown correction and client-denial acceptance.
+
+
 - [ ] T204 [US4] [FR182/SC166; CL07] Implement typed native-client denial evidence and synthetic Anthropic fixture; test malformed/ambiguous/unrelated/boolean-negative controls, review and integrate. Then execute one source-bound isolated native control requiring offered-tool exclusion, correlated native tool error and live MCP zero-dispatch witness. Keep server/catalog/global scopes distinct. Helpers integrated0b1226b9/74PASS/architecture5-0/ClaudeGO. Zero-turn native r1 import-path defect reproduced/fixed; r2 connected3tools/initialize+list1/call0, CLIexit0 but no clean proxy witness within6s. Preserve FAILED receipts; next instrument shutdown before any synthetic turn. No native client-denial acceptance yet.
 
 

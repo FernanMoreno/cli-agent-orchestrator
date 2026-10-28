@@ -1,5 +1,17 @@
 # Plan: provider MCP profiles
 
+## T205 · observe the existing transport before changing shutdown
+
+Add optional exclusive0600 lifecycle logging to the diagnostic proxy, fixed event
+codes and monotonic timestamps only. Preserve the counter schema and default
+behavior. Cover acquisition/loop/exception/cleanup so a signal and subsequent
+forced child termination cannot be mistaken for normal EOF. Use actual pipe and
+signal tests with exact owned child retirement; then repin a fresh private
+T204-derived catalog-only launcher with unchanged namespace/privacy/deadlines.
+Graphify lacks these current diagnostic nodes; actual proxy/control/ownership
+sources and private r2 receipt are the authority. No production or PG changes.
+
+
 ## T204 · deterministic Claude client exclusion control
 
 First implement a strict pure proof reducer and Anthropic SSE fixture with typed

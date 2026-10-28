@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from test.live_provider.claude_mcp_catalog import decode_frame
+from test.live_provider.claude_proxy_lifecycle import LifecycleAudit
 
 
 class McpWitness:
@@ -60,16 +61,33 @@ def main():
     witness = McpWitness()
     _write(path, witness.counts)
 
-    def stopped(_signum, _frame):
+    lifecycle_path = os.environ.get("CAO_SPEC025_DENIAL_LIFECYCLE")
+    audit = LifecycleAudit(lifecycle_path, root) if lifecycle_path else None
+
+    def event(name, **fields):
+        if audit is not None:
+            audit.event(name, **fields)
+
+    def stopped(signum, frame):
+        event("signal", status=signum)
+        if signum == signal.SIGINT:
+            signal.default_int_handler(signum, frame)
         raise SystemExit(1)
 
     signal.signal(signal.SIGTERM, stopped)
-    child = subprocess.Popen(sys.argv[1:], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
-    selector = selectors.DefaultSelector()
+    signal.signal(signal.SIGINT, stopped)
+    child = None
+    selector = None
     buffers = {"request": b"", "response": b""}
     deadline = time.monotonic() + 180
     received = 0
     try:
+        event("proxy_started")
+        child = subprocess.Popen(
+            sys.argv[1:], stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0
+        )
+        event("child_spawned")
+        selector = selectors.DefaultSelector()
         selector.register(sys.stdin.buffer, selectors.EVENT_READ, "request")
         selector.register(child.stdout, selectors.EVENT_READ, "response")
         while selector.get_map():
@@ -80,6 +98,7 @@ def main():
                 direction = key.data
                 data = os.read(key.fileobj.fileno(), 65536)
                 if not data:
+                    event("stdin_eof" if direction == "request" else "stdout_eof")
                     selector.unregister(key.fileobj)
                     if buffers[direction]:
                         raise ValueError("denial_proxy_partial_frame")
@@ -99,22 +118,41 @@ def main():
                     stream.write(line + b"\n")
                     stream.flush()
         status = child.wait(timeout=max(0.1, deadline - time.monotonic()))
+        event("child_wait_normal", status=status)
         if status == 0 and not witness.pending:
             witness.counts["closed_cleanly"] = True
             _write(path, witness.counts)
+            event("normal_closed")
         return status
+    except BaseException as error:
+        event(
+            "abort_keyboard_interrupt"
+            if isinstance(error, KeyboardInterrupt)
+            else "abort_system_exit" if isinstance(error, SystemExit) else "abort_error"
+        )
+        raise
     finally:
-        selector.close()
-        if child.poll() is None:
-            child.terminate()
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait(timeout=5)
-        for stream in [child.stdin, child.stdout]:
-            if stream and not stream.closed:
-                stream.close()
+        try:
+            if selector is not None:
+                selector.close()
+            if child is not None:
+                if child.poll() is None:
+                    event("cleanup_sigterm")
+                    child.terminate()
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        event("cleanup_sigkill")
+                        child.kill()
+                        child.wait(timeout=5)
+                event("child_wait_cleanup", status=child.wait(timeout=5))
+                for stream in [child.stdin, child.stdout]:
+                    if stream and not stream.closed:
+                        stream.close()
+            event("proxy_finished")
+        finally:
+            if audit is not None:
+                audit.close()
 
 
 if __name__ == "__main__":

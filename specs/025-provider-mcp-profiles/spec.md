@@ -1,5 +1,16 @@
 # Provider MCP profiles and current acceptance
 
+## Native proxy shutdown observation · T205
+
+FR183/SC167: Diagnose T204's missing proxy close witness with an opt-in private
+content-free lifecycle ledger. Distinguish actual stdin/stdout EOF, received
+SIGINT/SIGTERM, exception class, cleanup signal intent and parent-observed child
+wait status. Preserve current signal behavior,180s execution and6s native exit
+budget; signals/forced retirement never create closed_cleanly. Validate actual
+EOF/signal/partial-frame controls with owned processes before one fresh zero-turn
+native run. Preserve failed T204 receipts and all operator credentials/resources.
+
+
 ## Native Claude client denial · T204
 
 FR182/SC166: Add an opt-in synthetic-provider control of native Claude client tool
