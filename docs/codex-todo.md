@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T196 corregido:12RED/4controles→144pruebas distintas PASS (125interacción/reinicio+19consumidorOpenCode), arquitectura5-0/ClaudeGO. Metadata nativa para rechazos, sin401porID ni rate_limit_event informativo; timeout/aceptación/recibos previos intactos. Sin nuevo modelo ni cambio productivo. [Resultado](../specs/025-provider-mcp-profiles/validation-t196.md).
+
 T195 real PASS en00d3dac5: espera nativa única interrumpida/recuperada, workers distintos/plazo decreciente,2respuestas/ACK exacto/AG-UI estable. CLI46,62s,total72,712s,min10063MiB,505pins/limpieza/originales intactos.102pruebas offline/arquitectura5-0/ClaudeGO. CL-09 cerrado; T012 matriz y gates globales separados. [Resultado](../specs/025-provider-mcp-profiles/validation-t195.md).
 
 Auditoría de pendientes históricos: T079/T092/T117 ya cubiertos por T101/T134/T135, cerrados sin repetir modelos ni modificar recibos fallidos. Comparaciones históricas no observadas y gates globales siguen separados. [Contraste](../specs/025-provider-mcp-profiles/validation-pending-reconciliation-20261028.md).

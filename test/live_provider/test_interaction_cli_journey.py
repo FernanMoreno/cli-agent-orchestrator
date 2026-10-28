@@ -1270,3 +1270,68 @@ def test_codex_mcp_result_diagnostic_keeps_invalid_flags_as_enums(
     assert call["mcp_structured_content_present"] is True
     assert call["mcp_result_error_code"] is None
     assert private_marker not in json.dumps(call)
+
+
+@pytest.mark.parametrize("status", ["allowed", "allowed_warning", "unknown", None, False])
+def test_informational_rate_limit_events_are_not_rejections(status):
+    output = json.dumps(
+        {
+            "type": "rate_limit_event",
+            "rate_limit_info": {"status": status},
+            "uuid": "event-401-opaque",
+        }
+    )
+    assert journey._sanitized_failure_signals(output) == []
+    assert journey._failure_category(output, 0, False) == "cli_exited_without_ack"
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        '{"type":"system","session_id":"ca0401dc"}',
+        '{"type":"rate_limit_event","rate_limit_info":null}',
+        '{"type":"rate_limit_event","rate_limit_info":"rejected"}',
+        '{"type":"rate_limit_event","rate_limit_info":{"status":',
+    ],
+)
+def test_incidental_or_malformed_rejection_metadata_stays_unproven(output):
+    assert journey._sanitized_failure_signals(output) == []
+    assert journey._failure_category(output, 0, False) == "cli_exited_without_ack"
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        '{"type":"result","is_error":true,"api_error_status":401}',
+        "HTTP 401",
+        "HTTP/1.1 401",
+    ],
+)
+def test_explicit_auth_rejection_is_kept_without_numeric_substring_matching(output):
+    assert "provider_auth_rejected" in journey._sanitized_failure_signals(output)
+    assert journey._failure_category(output, 1, False) == "authentication_failed"
+    assert journey._failure_category(output, 1, True) == "timed_out"
+
+
+@pytest.mark.parametrize("is_error,status", [(False, 401), (True, "401"), (True, True), (1, 401)])
+def test_structured_auth_rejection_requires_exact_native_field_types(is_error, status):
+    output = json.dumps({"type": "result", "is_error": is_error, "api_error_status": status})
+    assert journey._sanitized_failure_signals(output) == []
+    assert journey._failure_category(output, 0, False) == "cli_exited_without_ack"
+
+
+@pytest.mark.parametrize(
+    "text,signal,category",
+    [
+        ("authentication_error", "provider_auth_rejected", "authentication_failed"),
+        ("not logged in", "provider_auth_rejected", "authentication_failed"),
+        ("unauthorized", "provider_auth_rejected", "authentication_failed"),
+        ("this API key has expired", "provider_auth_rejected", "authentication_failed"),
+        ("rate limit exceeded", "provider_rate_limited", "provider_or_model_rejected"),
+        ("insufficient_quota", "provider_rate_limited", "provider_or_model_rejected"),
+        ("usage limit exceeded", "provider_rate_limited", "provider_or_model_rejected"),
+    ],
+)
+def test_descriptive_native_error_text_remains_compatible(text, signal, category):
+    assert signal in journey._sanitized_failure_signals(text)
+    assert journey._failure_category(text, 1, False) == category

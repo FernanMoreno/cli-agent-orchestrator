@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T196 · first incorrect diagnostic classification boundary
+
+T195 actual successful CLI returned coarse auth/quota flags. Source inspection
+shows raw substring401 matches opaque identifiers and the event type alone
+matches every rate-limit update. Reproduce both paths offline through flags and
+failure_category, including successful/unknown/malformed structural inputs.
+Remove the two context-free markers, share exact typed native rejection evidence
+with explicit HTTP401 text fallback, and retain existing descriptive errors and
+timed-out precedence. The official Claude Agent SDK types define statuses
+allowed/allowed_warning/rejected and result is_error/api_error_status; these are
+protocol metadata, not model response requirements. Preserve old actual receipts
+and causal uncertainty about their individual raw matches. No new native rerun
+is needed for deterministic classifier regression. Same fixture graph coverage
+limitation as T195; verify actual call sites and required composition/tests.
+
 ## T195 · extend the existing active-wait gate to Claude
 
 Baseline Claude2.1.303 Q/A/ACK/AGUI restart passes on f77e3e66 but explicitly

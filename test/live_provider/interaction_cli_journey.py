@@ -2450,20 +2450,11 @@ def _failure_category(output: str, returncode: int | None, timed_out: bool) -> s
     lowered = output.lower()
     if "missing optional dependency @openai/codex-linux-x64" in lowered:
         return "provider_install_incomplete"
-    if any(
-        item in lowered for item in ("authentication_error", "not logged in", "unauthorized", "401")
-    ):
+    signals = _sanitized_failure_signals(output)
+    if "provider_auth_rejected" in signals:
         return "authentication_failed"
-    if any(
-        item in lowered
-        for item in (
-            "rate limit",
-            "rate-limit",
-            "rate_limit_event",
-            "overloaded",
-            "model_not_found",
-            "insufficient_quota",
-        )
+    if "provider_rate_limited" in signals or any(
+        item in lowered for item in ("overloaded", "model_not_found")
     ):
         return "provider_or_model_rejected"
     if any(item in lowered for item in ("mcp server", "mcp connection", "failed to initialize")):
@@ -2473,9 +2464,37 @@ def _failure_category(output: str, returncode: int | None, timed_out: bool) -> s
     return "cli_exited_without_ack"
 
 
+def _rejection_diagnostic_evidence(output: str) -> tuple[str, set[str]]:
+    """Separate native rejection metadata from informational events and IDs."""
+    text_lines = []
+    signals: set[str] = set()
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except (ValueError, TypeError):
+            if re.search(r"\bHTTP(?:/\d+(?:\.\d+)?)?\s+401\b", line, re.IGNORECASE):
+                signals.add("provider_auth_rejected")
+        else:
+            if isinstance(event, dict):
+                if event.get("type") == "rate_limit_event":
+                    info = event.get("rate_limit_info")
+                    if isinstance(info, dict) and info.get("status") == "rejected":
+                        signals.add("provider_rate_limited")
+                    continue
+                if (
+                    event.get("type") == "result"
+                    and event.get("is_error") is True
+                    and type(event.get("api_error_status")) is int
+                    and event["api_error_status"] == 401
+                ):
+                    signals.add("provider_auth_rejected")
+        text_lines.append(line)
+    return "\n".join(text_lines).lower(), signals
+
+
 def _sanitized_failure_signals(output: str) -> list[str]:
     """Return fixed diagnostic labels without exposing provider log text."""
-    lowered = output.lower()
+    lowered, structural = _rejection_diagnostic_evidence(output)
     checks = {
         "codex_linux_optional_dependency_missing": (
             "missing optional dependency @openai/codex-linux-x64",
@@ -2507,14 +2526,12 @@ def _sanitized_failure_signals(output: str) -> list[str]:
             "not logged in",
             "unauthorized",
             "authentication_error",
-            "401",
             "this api key has expired",
             "this api key is invalid",
             "api key is invalid",
             "create a new api key",
         ),
         "provider_rate_limited": (
-            "rate_limit_event",
             "rate limit",
             "rate-limit",
             "usage limit exceeded",
@@ -2522,7 +2539,12 @@ def _sanitized_failure_signals(output: str) -> list[str]:
         ),
     }
     return sorted(
-        signal for signal, markers in checks.items() if any(marker in lowered for marker in markers)
+        structural
+        | {
+            signal
+            for signal, markers in checks.items()
+            if any(marker in lowered for marker in markers)
+        }
     )
 
 

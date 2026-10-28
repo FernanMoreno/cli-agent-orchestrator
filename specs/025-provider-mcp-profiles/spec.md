@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Structured rejection diagnostics without incidental IDs · T196
+
+FR174/SC158: Healthy informational rate_limit_event messages and opaque IDs
+containing401 shall not diagnose authentication or quota rejection. Distinguish
+allowed/allowed_warning from rejected using the native event's typed status;
+accept structured error-result HTTP401 only with exact error/type semantics,
+and preserve explicit textual HTTP401/auth/rate-limit errors from CLI stderr.
+Unknown/malformed statuses stay unproven, not inferred from an event name. Use
+one consistent rejection source for fixed failure flags and no-ACK categories.
+Do not change any success, timeout, tool, receipt, ACK, cleanup or native budget
+gate, print raw payloads, force structured model output, or rewrite past receipts.
+
 ## Claude recovery while a native wait is active · T195
 
 FR173/SC157: The existing interrupted-wait diagnostic shall also support Claude
