@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T190 R4 real99eeafff: FAILED en faseA/reconcile_required; secuencia3/completado2 y generación nueva sin recibo verificado,0llamadas/filas/eventos.87,023s/min9027MiB, limpieza propia íntegra y operador intacto. Captura privada conservada: la respuesta sobre ejecutable ausente no prueba la causa, porque el hijo MCP arrancó y selló su cierre. Sigue abierto; observar estado/catálogo nativo antes de otro turno. [Recibo](../specs/025-provider-mcp-profiles/validation-t190-native-r4.json).
+
 T191 corrige la admisión/correlación común del recorrido: ACK estructurado y generación nueva/verificada, incluso al reiniciar los contadores.230pruebas PASS/arquitectura5-0/ClaudeGO; sin cambios de permisos ni aceptación real nueva. R3 conserva su fallo; R4 preparado con observación privada antes de cleanup. [Límites](../specs/025-provider-mcp-profiles/validation-t191.md).
 
 T190 sigue abierto: cierre diagnóstico por EOF implementado y revisado, conservando el sello original.203pruebas combinadas pasan (incluidos23controles del módulo); control nativo sin modelo confirma salida/sello antes de cerrar Codex en0,358s,501pins y10958MiB, sin tocar login. R3real42a55705 falló en faseA sin llamadas/efectos y con limpieza completa; el estado completed no estaba ligado al turno nuevo. T191 corrige la admisión/correlación y observa oferta nativa antes de repetir. Las dos fases aún no están aceptadas. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t190-preparation.md).

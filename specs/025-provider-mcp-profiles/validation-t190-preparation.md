@@ -123,3 +123,32 @@ por separado la correlación causal y la oferta/diferimiento de herramientas;
 ninguna hipótesis queda demostrada por este recibo. T191 reproduce el fallo de
 validación del ACK y la clasificación de estado obsoleto. T190 sigue abierto;
 no se repite el mismo diagnóstico sin una observación nueva.
+
+## R4 · turno correlacionado, aceptación pendiente
+
+En `99eeafff`, el recorrido real con Codex0.164.0 y modelo solicitado
+gpt-6-luna falla en fase A: `reconcile_required` tras32,697s, secuencia3,
+contador completado2 y generación actual observada sin recibo verificado.
+Cero llamadas auditadas, filas y eventos; no se alcanzó el reinicio.
+Duración total87,023s, mínimo9027MiB; cleanup PASS,19identidades propias
+retiradas, PostgreSQL/contenedor/red propios cerrados, fuente y credenciales
+del operador intactas, copias eliminadas. Descriptor operativo cerrado;
+archivo ejecutado preservado. [Recibo sanitizado](validation-t190-native-r4.json).
+
+La captura privada y acotada anterior a cleanup conserva una respuesta que
+atribuye el fallo a un ejecutable ausente. Esto **no prueba esa causa**: el
+hijo MCP arrancó y produjo su sello genuino de cierre con auditoría vacía.
+Quedan por observar el estado/advertencias nativos y el catálogo efectivo del
+turno. No se amplían permisos por esa frase ni por la hipótesis de descubrimiento
+diferido. T190 sigue abierto; R3 conserva su fallo y causa no demostrada.
+
+La reconstrucción offline posterior usa el constructor productivo del comando:
+un único `cao-mcp-server`, intérprete absoluto existente/ejecutable,
+`enabled_tools=["send_message"]`, servidor requerido y arranque60s. No reproduce
+ni un segundo servidor ni un ejecutable configurado ausente. Es reconstrucción
+de la fuente, no el argv archivado del proceso R4; cero turnos/modelos/servicios.
+
+La observación privada R4 procede de `/output?mode=full`: buffer FIFO crudo,
+no pantalla renderizada ni lectura garantizada pasiva; esa ruta puede verificar
+recibos pendientes. Ocurrió después de registrar el fallo de fase. El siguiente
+control de advertencias debe capturar directamente el PTY/pane propio.

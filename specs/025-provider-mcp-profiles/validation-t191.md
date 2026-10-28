@@ -47,4 +47,5 @@ verificado del modelo. Cinco controles con HTTP local falso pasan (normal,
 catálogo inválido, patrón sensible, exceso de tamaño, cambio de generación),
 y la limpieza se ejecuta aun ante excepción/interrupción del observador.
 Cero llamadas nativas/modelo/PostgreSQL en ese preflight. Su fallo no sustituye
-ningún criterio de aceptación, y el R4 aún no se ha ejecutado.
+ningún criterio de aceptación. El R4 posterior falló con captura privada y
+limpieza completa; no acredita aceptación. [Recibo R4](validation-t190-native-r4.json).
