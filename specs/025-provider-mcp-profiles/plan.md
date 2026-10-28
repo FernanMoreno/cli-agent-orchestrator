@@ -1,5 +1,21 @@
 # Plan: provider MCP profiles
 
+## T200 · diagnose exit without replaying successful model messages
+
+T197r2 fails only normal audit closure after two verified message phases; the
+late optional observer did not capture cleanup. Inspect initialize-ready sender
+-> HTTP exit -> control send_input(no receipt attachment) -> /exit -> native
+child stdio -> FastMCP.run normal return -> completion marker. Source confirms
+these separate boundaries; generated fixture observer nodes are absent, so
+verify source directly. Derive a fresh closed controller, stop after first MCP
+scope admission before the original trigger and let normal cleanup request
+exit. Observe only own terminal metadata/socket/visible pane and MCP PID birth
+around the unchanged graceful helper, preserving its return/exception. Test
+controlled stop, passive capture, privacy and identity bindings before review
+and one serial memory-admitted zero-model diagnostic. Record first observation
+before selecting a product or harness fix; keep all accepted effects distinct
+from the failed full message gate.
+
 ## T199 · fix the reproduced first incorrect startup boundary
 
 T198 captures the same provider-init timeout with actual fixed executable,

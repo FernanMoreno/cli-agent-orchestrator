@@ -76,3 +76,29 @@ La compensación retiró el terminal antes del observador tardío: no se retuvo
 viewport. PATH, diálogo inicial y detección de estado siguen siendo hipótesis.
 T198 capturará el arranque antes de esa compensación, sin cambiar gates/plazos
 ni lanzar mensajes. T197/T011 siguen abiertos.
+
+
+## Ejecución real r2 · mensajes correctos, sello final fallido
+
+Fuente `25a5094da1392d2f3ce4d8942ec73776b795e9fa`, Claude2.1.303/modelo solicitado Sonnet4.6,
+modelo servido no atestiguado. Corregido T199, receptor y emisor arrancan.
+Dos send_message de modelo finalizan success: dos filas exactas/delivered,
+dos eventos AG-UI redactados, identidad de la primera fila y terminales
+conservados tras un reinicio. Cada fase acredita turno causal COMPLETED y
+recibo durable verificado. El MCP hijo real presenta collaboration y filtro
+[send_message] antes de ambos triggers. Esto no es auditoría del catálogo
+completo ni autoridad universal por operación/Work/ACK exacto de receptor.
+
+Aceptación completa false: observer_audit. El POST de salida recibe HTTP200,
+pero no se observa el sello normal en sus6s originales (exhausted_after_poll,
+no_seal_at_poll_return). JSONL conserva las dos llamadas success sin marker de
+finalización. HTTP200 acredita la solicitud, no salida física/EOF/retorno normal.
+No hay viewport de esa fase ni stderr MCP retenido; SIGTERM, slash-command y
+EOF son hipótesis, no causas demostradas. T200 observará el cierre sin repetir
+mensajes de modelo y conservará plazo/criterios.
+
+Controlador155,878s, mínimo9537MiB,507pins sin cambios,33identidades retiradas;
+API/tmux/observador detenidos antes del owner PG, contenedor/red exactos ausentes,
+otros contenedores y login originales intactos, staging auth retirado. Archivo
+ejecutado inmutable y descriptor recerrado. T197/T011 siguen abiertos.
+[Recibo](validation-t197-native-r2.json); r1 fallido permanece intacto.

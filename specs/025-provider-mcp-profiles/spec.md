@@ -1,5 +1,15 @@
 # Provider MCP profiles and current acceptance
 
+## Native exit versus normal MCP audit seal · T200
+
+FR178/SC162: Diagnose the first missing shutdown boundary after T197r2's two
+successful messages and API restart. An HTTP200 exit request is not physical
+CLI/MCP exit or normal audit completion. Preserve the existing6s native exit
+plus seal budget, exception/return behavior and failure receipts. Capture
+private rendered pane and exact owned MCP identity before/after that helper,
+before DELETE removes evidence. Reuse native startup with zero model triggers;
+never synthesize a seal, broaden permissions or accept forced termination.
+
 ## First-run security-notes startup screen · T199
 
 FR177/SC161: Claude2.1.303's captured first-run informational security-notes

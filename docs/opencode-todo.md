@@ -1,6 +1,8 @@
 # OpenCode v1 y v2: análisis y pendientes
 
-T199 cerrado: aviso inicial Security notes reconocido sólo en viewport completo/actual, una vez.249pruebas PASS, arquitectura5-0/ClaudeGO y receptor real HTTP200/IDLE en13,487s;507pins,15identidades/PG retirados y login intacto. Parada antes de emisor: T197 mensajes sigue abierto. [Resultado](../specs/025-provider-mcp-profiles/validation-t199.md).
+T197r2: dos send_message reales correctos,2filas/2eventos AG-UI y turnos/recibos exactos a través de1reinicio; perfil/filtro MCP atestados. Gate completo fallido: HTTP200 de exit sin sello normal en6s;33identidades/PG retirados y507pins/login intactos. T200 investiga cierre sin repetir modelo. [Resultado](../specs/025-provider-mcp-profiles/validation-t197.md).
+
+T199 cerrado: aviso inicial Security notes reconocido sólo en viewport completo/actual, una vez.249pruebas PASS, arquitectura5-0/ClaudeGO y receptor real HTTP201/IDLE en13,487s;507pins,15identidades/PG retirados y login intacto. Parada antes de emisor: T197 mensajes sigue abierto. [Resultado](../specs/025-provider-mcp-profiles/validation-t199.md).
 
 T196 corregido:12RED/4controles→144pruebas distintas PASS (125interacción/reinicio+19consumidorOpenCode), arquitectura5-0/ClaudeGO. Metadata nativa para rechazos, sin401porID ni rate_limit_event informativo; timeout/aceptación/recibos previos intactos. Sin nuevo modelo ni cambio productivo. [Resultado](../specs/025-provider-mcp-profiles/validation-t196.md).
 

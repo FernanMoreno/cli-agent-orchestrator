@@ -54,7 +54,7 @@ de la evidencia válida, sin repetir modelo ni atribuirlos al producto.
 
 ## Receptor real después de la corrección
 
-Fuente `cf55e21a2a656a8508bc7c3d9cb3c3abf0de9928`,507bindings. POST del receptor HTTP200,
+Fuente `cf55e21a2a656a8508bc7c3d9cb3c3abf0de9928`,507bindings. POST del receptor HTTP201,
 initialize13,487s, secuencia original de probes UNKNOWN→IDLE, controlador47,091s,
 mínimo9823MiB. Se usa el mismo binario2.1.303, propietario PG/controlador,
 presupuesto y parser; no se modifica login ni se introduce otra ruta de estado.
