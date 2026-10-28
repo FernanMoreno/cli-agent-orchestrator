@@ -1,5 +1,9 @@
 # Claude Code: análisis y pendientes
 
+Auditoría de pendientes históricos: T079/T092/T117 ya cubiertos por T101/T134/T135, cerrados sin repetir modelos ni modificar recibos fallidos. Comparaciones históricas no observadas y gates globales siguen separados. [Contraste](../specs/025-provider-mcp-profiles/validation-pending-reconciliation-20261028.md).
+
+Claude interacción actual PASS enf77e3e66:2preguntas/2respuestas/ACK con identidad/versiones/recibos exactos y reinicio/AG-UI estable. CLI37,64s, total70,898s/min10090MiB,505pins y limpieza/originales intactos. Falta reiniciar durante espera activa: CL-09/T012 siguen abiertos; no explica504 histórico ni acepta cuota/Work/global. [Resultado](../specs/025-provider-mcp-profiles/validation-claude-interaction-restart-current.md).
+
 T190 Codex real PASS en090f01d8:2send_message exitosos/2filas PostgreSQL entregadas/2eventos AG-UI, reinicio API e identidad preservada, paquete completo43assets y ejecutable real observado antes de cadafase.100,586s/min9314MiB,25identidades propias retiradas/limpieza y credenciales intactas. Cierre MCP por EOF diagnóstico; no acepta cierre automático, ACK exacto, Work ni gates globales. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t190-native-r5.md).
 
 T193 compartido: corregido el DELETE reintentado que podía matar una ventana sustituta tras cleanup diferido. Guarda PostgreSQL exacta/indexada antes de crear, migración corev3 aditiva;421pruebas distintas PASS/arquitectura5-0/ClaudeGO, hermanos y tombstones preservados. Sin nueva aceptación nativa; T143 amplio/T013 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t193.md).

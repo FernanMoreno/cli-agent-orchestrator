@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+2026-10-28 · auditoría de recibos/código: T079/T092/T117 cerrados en su alcance por aceptaciones posteriores T101/T134/T135. No se reejecutan ni se renombran recibos fallidos; diagnósticos históricos sin frontera causal conservan sus límites. [Contraste](validation-pending-reconciliation-20261028.md).
+
 - [x] T194 [US4] [FR172/SC156; T190] Reproduce incomplete Codex package snapshots, require independently pinned package/host/resource closure before credential staging, preserve complete runtime layout and validate model-free host handshake before a fresh actual message journey. No Code Mode disabling, permission widening, global reinstall or automatic historical-cause claim.
 
 T194 validado:267pruebas distintas PASS/arquitectura5-0/ClaudeGO; lector antes de auth/PG, snapshot43assets y handshake nativo hello/abrir/cerrar/EOF/salida0/grupo retirado PASS sin modelo/red/auth (10848MiB). T190 validado después por R5; copia antigua solo-binario era defecto del lanzador, sin causa histórica completa acreditada. [Preparación](validation-t194-preparation.md).
@@ -391,7 +393,7 @@ T077 actual,2026-10-22: generación v1 PASS en8057; primera ejecución administr
 - [ ] T078 [US4] [FR060/SC044] Diagnose the current v1 verified/completed versus missing exact Unicode LAST boundary: content-free shape observations of existing LAST reads and bounded owned viewport/extractor samples, unchanged prompt/model/deadline/criteria, pure privacy controls, independent review, then one justified current-source real diagnostic. Preserve failed T077 attempts and distinguish provider noncompliance, rendering and extraction without inferring cause from markers.
 
 
-- [ ] T079 [US4] [FR061/SC045] Correct the native-v2 acceptance receiver profile contradiction between exactly ACK and required machine receipt. Preserve strict public ACK, active standalone receipt, tools/grants, model,75s/6144MiB, two-message/restart/durable/cleanup gates; reproduce the T077 saved receiver against actual parser, review the closed profile-only delta, then execute a fresh serial run and record source-bound outcome separately from historical failures.
+- [x] T079 [US4] [FR061/SC045] Correct the native-v2 acceptance receiver profile contradiction between exactly ACK and required machine receipt. Preserve strict public ACK, active standalone receipt, tools/grants, model,75s/6144MiB, two-message/restart/durable/cleanup gates; reproduce the T077 saved receiver against actual parser, review the closed profile-only delta, then execute a fresh serial run and record source-bound outcome separately from historical failures.
 
 
 T078 resultado actual: recorrido nativo v1 completo PASS en8057,2 mensajes/AG-UI/reinicio/Unicode/catálogos/llamadas/limpieza;28 controles de privacidad y revisión independiente. El fallo T077 R2 no reapareció y su causa sigue sin determinarse; T078 conserva ese diagnóstico pendiente y no autoriza repeticiones sin información nueva. [Resultado](validation-t078.md).
@@ -441,7 +443,7 @@ T089 actual: generation PASS; sender Unicode PASS, conditional sender probe untr
 
 T090 actual: native receiver public TEXT exactly ACK3chars, API20chars/3lines, ownreceipt/privateparent bound; native/APIinequality observed in17.2ms total, all cleanup/operator/source checks PASS. The managed run remains FAILED; T090 comparison complete, T091 corrects a source-reproduced post-native extractor defect. [Evidence](validation-t090.md).
 
-- [ ] T092 [US4] [FR073/SC057] Reanchor the reviewed strong native-v1 generation/managed acceptance to the integrated T091 source and exact diagnostic artifact, verify unchanged gates/507pins/nativebinary/owned PostgreSQL, execute generation then one serial two-message/ACK/AG-UI/restart/cleanup acceptance and preserve its source-bound result.
+- [x] T092 [US4] [FR073/SC057] Reanchor the reviewed strong native-v1 generation/managed acceptance to the integrated T091 source and exact diagnostic artifact, verify unchanged gates/507pins/nativebinary/owned PostgreSQL, execute generation then one serial two-message/ACK/AG-UI/restart/cleanup acceptance and preserve its source-bound result.
 
 - [x] T093 [US4] [FR073/SC057] Correct the T091 leading-only regression reproduced after T092 on native tool/text-part layouts; preserve all public rows and strict active-receipt/expanded-channel guards, add interleaving regressions, review and revalidate. Bounded correction verified by208 tests and T094 sender recovery/native–API equality; full message acceptance still failed, recorded separately.
 
@@ -527,7 +529,7 @@ T115 offline correction: canonical execute deny for restricted profiles and allo
 
 - [x] T116 [US4] [FR095/SC079] Add the source-closed generic_message v2 case to the existing journey with exact2/0 tool surfaces and no human capability, retaining full8 defaults/shared gates; test every configuration/offer/capability/receipt/case mismatch boundary, independently review and integrate main, then freshly bind distinct serialized current-source native cases.
 
-- [ ] T117 [US4] [FR096/SC080] Preserve R6's unverified-receipt failure, correct the demonstrated receiver profile/delivery-contract ambiguity using canonical ACK-body plus metadata wording, distinguish uncompleted-turn versus observed nonexact-ACK failures, test/review unchanged strict gates and freshly bind one serial native case without claiming historical model cause.
+- [x] T117 [US4] [FR096/SC080] Preserve R6's unverified-receipt failure, correct the demonstrated receiver profile/delivery-contract ambiguity using canonical ACK-body plus metadata wording, distinguish uncompleted-turn versus observed nonexact-ACK failures, test/review unchanged strict gates and freshly bind one serial native case without claiming historical model cause.
 
 T117 final offline correction:136 configured pytest/212 offline native unittests passed; canonical profile alignment plus status/sequence-uncompleted, output-unobserved and nonexact-ACK labels preserve all strict success gates. Independent reviews corrected the unread-body misclassification and confirmed the final source. R6 remains FAILED with receipt unverified despite a pure parser ACK candidate; historical model/rendering cause is not proved. [T117](validation-t117.md), [replay](validation-t117-r6-replay.json).
 
