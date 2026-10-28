@@ -482,9 +482,13 @@ def _invalid_interaction_response(
     return _tool_failure("invalid_response", detail)
 
 
-# Create MCP server
+# Create MCP server. The physical-EOF guard is dormant unless explicitly selected.
+from cli_agent_orchestrator.mcp_server.physical_eof import guard_from_environment  # noqa: E402
+
+_physical_stdio_guard = guard_from_environment(os.environ)
 mcp = FastMCP(
     "cao-mcp-server",
+    lifespan=_physical_stdio_guard.lifespan if _physical_stdio_guard is not None else None,
     instructions="""
     # CLI Agent Orchestrator MCP Server
 
@@ -4139,7 +4143,10 @@ def main():
         mcp.add_middleware(StartupReadinessMiddleware(Path(ready_file), ready_token))
     _install_tool_profile_middleware_if_requested(mcp)
     _install_interaction_pull_flow_middleware_if_requested(mcp)
-    mcp.run()
+    if _physical_stdio_guard is None:
+        mcp.run()
+    else:
+        _physical_stdio_guard.run(mcp.run)
 
 
 def _install_tool_profile_middleware_if_requested(server_instance: FastMCP) -> bool:

@@ -1,5 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T207 [US4] [FR185/SC169; T197] Implement dormant physical-EOF stdio/signal guard using real framing/flush/6s state; test/inspect/review actual SDK controls and direct zero-turn native shutdown. No logicalEOF, new persistent worker, marker fabrication or default activation before evidence; fullT197 remains separate. Dormant implementation50PASS343.37s/type/style/architecture5-0/ClaudeGO; direct native preflight still pending.
+
+
 - [x] T206 [US4] [FR184/SC168; T204] Implement/test/review explicit quiescent diagnostic MCP EOF before CLI input close; retain default/signals/6s and fail-closed late/pending controls. Integrate, accept a source-bound zero-turn preflight, then attempt the existing synthetic native client-denial case with exact scope/cleanup. No automaticT197/global inference. Implemented7af13f34/96PASS/architecture5-0/ClaudeGO; nativezero-turn PASS42.510s/min10150MiB,sharedclose1491.912ms. Then nativeclientdenialPASS38.008s/min9961MiB,2HTTPrequests/errorfollowup,0MCPcalls,sharedclose1330.143ms.530pins,1proxy/no signal,ownedgroupsretired/operatorsnotcopied. Controlled modeonly.
 
 

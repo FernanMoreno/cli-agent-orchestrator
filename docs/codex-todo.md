@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T207: guarda MCP de EOF físico implementada de forma opt-in; revisión independiente GO. Se corrigió además un bloqueo reproducido del ejecutor tras cancelar un hilo. La regresión final pasó50pruebas; tipos/formato/arquitectura5-0 pasan. Sigue pendiente la prueba nativa directa; no se activó por defecto ni se cerró T197. [Estado y límites](../specs/025-provider-mcp-profiles/validation-t207.md).
+
 T206 yT204 aceptados en su alcance: EOF controlado real1491,912ms y después denegación nativaClaude (catálogo3/ofertaHTTP2/errorcorrelacionado/0MCPcalls), cierre1330,143ms. Fuente7af13f34/530pins,96pruebas PASS; ambos grupos retirados/sinlogin/API/PG. Backend local sintético; modoEOF explícito, automáticoT197 yCL07 global siguen abiertos. [T206](../specs/025-provider-mcp-profiles/validation-t206.md) · [T204](../specs/025-provider-mcp-profiles/validation-t204.md).
 
 T205 diagnóstico cerrado: proxy recibeSIGINT2 durante salida nativa, lanzaKeyboardInterrupt y su limpieza solicitaSIGTERM; waitstatus real del MCP -15 tras ese SIGTERM del proxy, sin EOF/marcador normal.83pruebas PASS, caso40,542s/mínimo10621MiB, grupo retirado/0turnos/sinlogin/API/PG. Preflight sigue FAILED; T204/CL07/automáticoT197 abiertos. EOF controlado es propuesta todavía. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t205.md).

@@ -1,5 +1,29 @@
 # Provider MCP profiles and current acceptance
 
+## Physical EOF and native stop signals · T207
+
+FR185/SC169: Add a dormant opt-in stdio guard for the real bundled MCP server.
+Use public FastMCP lifespan to defer SIGINT/SIGTERM only under one6s deadline
+while waiting for actual kernel stdin EOF; never manufacture EOF or a normal
+marker. Observe the binary buffers used by the installed SDK, validate complete
+JSONRPC frames, track both request directions until real output flush, and
+fail normal return on partial/invalid/unsettled/unknown-notification/IO/deadline
+state. Preserve stdout bytes, restore streams/handlers/descriptor flags, and
+use existing IO workers (no permanent process/thread). Unsupported runtime fails
+closed under opt-in; absent opt-in preserves behavior. Validate actual SDK
+controls and one zero-turn native direct-MCP stop before enabling any client
+default. Bound the complete `mcp.run()` lifetime, including SDK event-loop and
+default-executor shutdown, with the same first-stop/EOF deadline. A cancelled
+thread-backed tool must not leave the process alive after that deadline or
+produce a normal seal. An owned Linux interval timer may enforce this boundary
+without a persistent watchdog thread; refuse an existing timer and restore
+prior timer/signal ownership on genuine normal return. Only pipe/socket stdio
+is admissible under opt-in. Wire accounting covers the SDK binary path; direct
+FD writes, `sys.__stdout__` and inherited child writes are outside that observer
+and cannot establish a stronger all-output guarantee. T197 remains open until
+the complete original native lane passes.
+
+
 ## Explicit diagnostic MCP EOF · T206
 
 FR184/SC168: Correct the diagnostic proxy shutdown by an explicit private nonce-bound

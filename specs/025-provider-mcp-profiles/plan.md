@@ -1,5 +1,31 @@
 # Plan: provider MCP profiles
 
+## T207 · physical transport observation before default activation
+
+Use thread-safe wire accounting and owned binary stdin/stdout buffers exposed
+through temporary sys.std*.buffer views; the SDK rewraps these into UTF8 text.
+Read actual descriptors, preserve frame bytes and make waits interruptible via
+small wake pipes using existing SDK workers. Update response completion only
+after successful flush. Lifespan installs/restores loop signal handlers, starts
+one deadline on first stop signal and verifies realEOF/settledtransport before
+FastMCP.run can return/emit its existing seal. No SDK-private monkeypatch, no
+logical EOF and no credential handling. Start dormant behind an internal env
+flag; runtime versions are checked. Stage pure IO/state tests, real SDK EOF/
+signal/busy/partial/no-EOF failures, then current direct native zero-turn test.
+A second real SDK RED reproduced a cancelled `asyncio.to_thread` call leaving
+its default-executor thread alive after settled wire EOF. The lifespan alone
+cannot cover `asyncio.Runner.close()`. Wrap the complete production `mcp.run()`
+with an owned Linux SIGALRM/ITIMER_REAL deadline started at the same first
+stop/physical EOF; reject an existing timer, restore SIGALRM/timer on genuine
+return, and fail70 without a seal on executor teardown expiry. No extra thread.
+Keep normal shutdown assertions at<=6s, plus explicit bounded failure controls.
+Reject regular-file/tty activation and mark observer exceptions unsafe. Private
+native phase observations distinguish lifespan return from server.main return
+without asserting an unobserved signal sender or cause.
+Only a demonstrated current result may justify Claude-default activation and
+the full T197 message/restart/seal acceptance; keep failures and old receipts.
+
+
 ## T206 · explicit EOF with bounded quiescence
 
 Add a strict opt-in request-file helper and bidirectional RPC observer. The stdio
