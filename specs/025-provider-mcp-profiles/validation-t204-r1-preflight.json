@@ -1,0 +1,21 @@
+{
+  "schema": "caos.t204.native-client-denial.v1",
+  "accepted": false,
+  "phase": "catalog_shutdown_preflight",
+  "source_commit": "0b1226b9f32397a73be48e6c2ed059998c5a6a10",
+  "source_bindings": 526,
+  "sandbox_probe_passed": true,
+  "operator_login_copied": false,
+  "api_postgres_used": false,
+  "real_provider_inference": false,
+  "worker_exit_status": 1,
+  "failure": "native_worker_failed_private_evidence",
+  "owned_group_retired": true,
+  "minimum_sampled_memory_mib": 10686,
+  "memory_floor_satisfied": true,
+  "sources_unchanged": true,
+  "seconds": 8.259,
+  "attempt": "r1",
+  "diagnostic_failure": "native_catalog_not_connected",
+  "synthetic_turns_requested": 0
+}
