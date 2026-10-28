@@ -66,6 +66,45 @@ def test_eof_request_refuses_unread_call_bytes_in_pipe():
         os.close(write_fd)
 
 
+def test_request_publication_never_exposes_a_partial_marker(tmp_path, monkeypatch):
+    module = shutdown_module()
+    tmp_path.chmod(0o700)
+    path = tmp_path / "audit.jsonl.eof-request"
+    original_write = os.write
+
+    def observed_write(descriptor, payload):
+        assert not path.exists(), "reader can observe an incomplete shutdown request"
+        return original_write(descriptor, payload)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module.os, "write", observed_write)
+        module._publish(path, module.REQUEST_MARKER)
+    assert path.read_bytes() == module.REQUEST_MARKER
+    assert path.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(RuntimeError):
+        module._publish(path, b"replacement")
+    assert path.read_bytes() == module.REQUEST_MARKER
+
+
+def test_publication_preserves_an_incumbent_created_during_reservation(tmp_path, monkeypatch):
+    module = shutdown_module()
+    tmp_path.chmod(0o700)
+    path = tmp_path / "request"
+    original_open = module._open_private_audit_file
+
+    def concurrent_publication(pending):
+        descriptor = original_open(pending)
+        path.write_bytes(b"incumbent")
+        path.chmod(0o600)
+        return descriptor
+
+    monkeypatch.setattr(module, "_open_private_audit_file", concurrent_publication)
+    with pytest.raises(module.ShutdownError, match="shutdown_artifact_exists"):
+        module._publish(path, module.REQUEST_MARKER)
+    assert path.read_bytes() == b"incumbent"
+    assert not path.with_name("." + path.name + ".pending").exists()
+
+
 def test_shutdown_refuses_active_dispatch_and_restores_handler(tmp_path):
     module = shutdown_module()
     audit = tmp_path / "audit.jsonl"

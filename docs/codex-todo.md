@@ -1,6 +1,6 @@
 # Codex: análisis y pendientes
 
-T190 sigue abierto: cierre diagnóstico por EOF implementado y revisado, conservando el sello original.201pruebas combinadas pasan (incluidos21controles del módulo); control nativo sin modelo confirma salida/sello antes de cerrar Codex en0,356s,501pins y10747MiB, sin tocar login. Las dos fases nativas de mensajes aún no se han ejecutado. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t190-preparation.md).
+T190 sigue abierto: cierre diagnóstico por EOF implementado y revisado, conservando el sello original.203pruebas combinadas pasan (incluidos23controles del módulo); control nativo sin modelo confirma salida/sello antes de cerrar Codex en0,358s,501pins y10958MiB, sin tocar login. Las dos fases nativas de mensajes aún no se han ejecutado. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t190-preparation.md).
 
 T189 PASS acotado: Codex0.164 app-server MCP→API autenticada→1fila PostgreSQL/1evento AG-UI exactos; reinicio sin reenvío,401sin efecto y denegación nativa del cliente.101,572s/498pins/10170MiB, limpieza y login intactos;66pruebas pasan. Los actores registrados/receptor son mock_cli: no cierra recorrido de terminal Codex, autorización por operación, Work ni CX-05/global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t189.md).
 

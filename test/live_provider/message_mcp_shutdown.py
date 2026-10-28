@@ -49,8 +49,17 @@ def _private_bytes(path: Path, limit: int) -> bytes:
 
 
 def _publish(path: Path, payload: bytes) -> None:
-    descriptor = _open_private_audit_file(path)
+    # The fixed private pending name reserves this publication. Recheck after
+    # reservation: another publisher may have completed between the first
+    # absence check and our exclusive create. Readers only see the final name.
+    if os.path.lexists(path):
+        raise ShutdownError("shutdown_artifact_exists")
+    pending = path.with_name("." + path.name + ".pending")
+    descriptor = _open_private_audit_file(pending)
+    published = False
     try:
+        if os.path.lexists(path):
+            raise ShutdownError("shutdown_artifact_exists")
         view = memoryview(payload)
         while view:
             written = os.write(descriptor, view)
@@ -58,8 +67,14 @@ def _publish(path: Path, payload: bytes) -> None:
                 raise ShutdownError("shutdown_artifact_write_failed")
             view = view[written:]
         os.fsync(descriptor)
+        os.rename(pending, path)
+        published = True
     finally:
-        os.close(descriptor)
+        try:
+            if not published:
+                pending.unlink(missing_ok=True)
+        finally:
+            os.close(descriptor)
 
 
 def _birth(pid: int) -> int:

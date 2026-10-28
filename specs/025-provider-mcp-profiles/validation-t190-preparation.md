@@ -85,3 +85,22 @@ producto. Los cinco contratos de dependencia permanecen conservados.
 
 Validación final del cambio revisado: **201 PASS en64,45s**, incluidos21controles
 del módulo; black/isort pasan. No se ha iniciado aún el recorrido con modelo.
+
+## Publicación atómica: validación previa a los turnos
+
+Un control RED adicional demostró que crear el nombre final antes de escribir
+permitía observar un marcador incompleto. Ahora el escritor reserva un nombre
+privado pendiente, vuelve a comprobar ausencia del destino, escribe/fsync y
+publica mediante rename atómico en el mismo directorio. Conserva el rechazo de
+incumbentes y limpia solo su propia reserva. No se toleran marcadores inválidos
+para evitar el fallo. **203 pruebas PASS en53,11s**, arquitectura5/0 y revisión
+final de Claude sin bloqueos.
+
+La generación completa r2 se cerró antes de ejecutarse: cero servicios,
+credenciales copiadas o turnos. Un control nativo nuevo de la corrección pasó
+con501pins y10958MiB: salida del hijo/sello en **0,358s**, antes de cerrar al
+padre, login/fuente intactos y grupos/copias propios retirados. Evidencia privada:
+`caos-codex-native-messages-20261028-r1/native-eof-r2/receipt.json`.
+La generación r3 del recorrido con modelo está preparada y sigue cerrada hasta
+fijar el commit de esta corrección. Los recibos anteriores se conservan bajo
+sus propias fuentes; no se les atribuye retrospectivamente el código nuevo.
