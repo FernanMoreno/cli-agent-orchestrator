@@ -1,6 +1,6 @@
 # Claude Code: análisis y pendientes
 
-T198 localizó el bloqueo real de Claude: aviso inicial Security notes sin manejar. T199 añade confirmación estricta del viewport actual, una vez, conservando readiness/login/permisos/plazos;249pruebas PASS, arquitectura5-0 y revisión ClaudeGO. Validación real del receptor pendiente. [Corrección](../specs/025-provider-mcp-profiles/validation-t199.md).
+T199 cerrado: aviso inicial Security notes reconocido sólo en viewport completo/actual, una vez.249pruebas PASS, arquitectura5-0/ClaudeGO y receptor real HTTP200/IDLE en13,487s;507pins,15identidades/PG retirados y login intacto. Parada antes de emisor: T197 mensajes sigue abierto. [Resultado](../specs/025-provider-mcp-profiles/validation-t199.md).
 
 T197 real falló al arrancar el receptor: HTTP500/provider_init_timeout,146572ms; no llegó al emisor ni a mensajes/MCP/reinicio. Limpieza completa,13identidades retiradas,505bindings y login originales intactos. Preparación239PASS sigue diferenciada de aceptación. T198 capturará el viewport antes de compensar; causa aún no probada. [Resultado](../specs/025-provider-mcp-profiles/validation-t197.md).
 

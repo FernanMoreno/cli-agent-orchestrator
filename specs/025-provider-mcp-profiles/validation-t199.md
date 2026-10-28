@@ -1,6 +1,6 @@
 # T199 · aviso inicial Security notes de Claude
 
-Corrección productiva acotada, aceptación real pendiente. T198 retuvo el
+Corrección productiva acotada; receptor real aceptado tras el cambio. T198 retuvo el
 viewport completo antes de compensar y reprodujo provider_init_timeout.
 El handler no reconocía la continuación informativa. El helper nuevo exige
 último banner nativo, ambas notas en orden, URL pública y pie exactos, sobre
@@ -50,3 +50,24 @@ La primera invocación del propietario usó _docker sin el ejecutable y no lleg�
 a pytest; se corrigió el lanzador antes de obtener RED. El primer stdout a .log
 no quedó retenido; sólo red-retained.txt acredita2RED/10PASS. Ambos se separan
 de la evidencia válida, sin repetir modelo ni atribuirlos al producto.
+
+
+## Receptor real después de la corrección
+
+Fuente `cf55e21a2a656a8508bc7c3d9cb3c3abf0de9928`,507bindings. POST del receptor HTTP200,
+initialize13,487s, secuencia original de probes UNKNOWN→IDLE, controlador47,091s,
+mínimo9823MiB. Se usa el mismo binario2.1.303, propietario PG/controlador,
+presupuesto y parser; no se modifica login ni se introduce otra ruta de estado.
+
+Parada intencional antes de crear emisor/enviar mensajes. Por ello el recibo
+original del recorrido completo conserva result=failed y accepted=false, con
+failure_point=none: no es aceptación de mensajes. El recibo envolvente distingue
+receiver_startup_passed=true y controlled_stop_before_sender=true sin reescribir
+el original.15identidades retiradas; API/tmux/observador detenidos, owner PG
+cerrado, contenedor/red exactos ausentes y originales preservados.507pins,
+archivo ejecutado y binario intactos; staging eliminado, original login intacto
+y descriptor recerrado. [Recibo](validation-t199-native.json).
+
+T199 cerrado en este alcance. T197 y T011 siguen abiertos hasta mensajes/turno/
+auditoría/filas/AG-UI/reinicio y sus gates globales respectivos. No se atribuye
+el504histórico ni se promete rendimiento o soporte universal de otros layouts.

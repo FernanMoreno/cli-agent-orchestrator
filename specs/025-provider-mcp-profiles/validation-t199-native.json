@@ -1,0 +1,70 @@
+{
+  "source_head": "cf55e21a2a656a8508bc7c3d9cb3c3abf0de9928",
+  "source_bindings": 507,
+  "receiver_startup_passed": true,
+  "controlled_stop_before_sender": true,
+  "message_acceptance": false,
+  "native_binary_lookup_matched": true,
+  "startup": {
+    "exception_type": "none",
+    "seconds": 13.487,
+    "observed_statuses": [
+      "unknown",
+      "idle"
+    ],
+    "viewport_saved": true
+  },
+  "receiver_post": {
+    "model_message_submitted": false,
+    "sender_started": false,
+    "status": 201
+  },
+  "controller_receipt": {
+    "schema": "caos.t198.receiver-startup.v1",
+    "native_version": "2.1.303",
+    "requested_model": "claude-sonnet-4-6",
+    "served_model_attested": false,
+    "postgres_owned": true,
+    "postgres_profile": "cao-spec021-local-postgres-v3",
+    "private_observation": {
+      "attempted": true,
+      "viewport_saved": false,
+      "catalog_not_collected": true
+    },
+    "journey": {
+      "provider": "claude_code",
+      "result": "failed",
+      "mcp_calls": [],
+      "first_row_identity_matched": false,
+      "events_redacted": false,
+      "terminals_preserved": false,
+      "row_count": 0,
+      "event_count": 0,
+      "api_replacements": 0,
+      "cleanup": "pass",
+      "failure_stage": "native_terminals",
+      "failure_point": "none",
+      "failure_kind": "none",
+      "failure_http_status": 0,
+      "last_terminal_status": "unknown",
+      "failure_elapsed_ms": 0,
+      "failure_detail": "none"
+    },
+    "borrowers_stopped": true,
+    "observer_retired": true,
+    "observed_owned_identities": 15,
+    "observed_owned_identities_retired": true,
+    "source_unchanged": true,
+    "postgres_owner_closed": true,
+    "exact_owned_container_absent": true,
+    "exact_owned_network_absent": true,
+    "original_containers_preserved": true,
+    "staged_credentials_removed": true,
+    "operator_unchanged": true,
+    "minimum_sampled_memory_mib": 9823,
+    "memory_floor_satisfied": true,
+    "seconds": 47.091,
+    "message_server_scope_attested": false,
+    "accepted": false
+  }
+}
