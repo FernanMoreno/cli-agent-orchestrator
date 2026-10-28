@@ -1,0 +1,41 @@
+{
+  "schema": "caos.t206.native-mcp-eof.v1",
+  "accepted": true,
+  "mcp_shutdown_mode": "harness_requested_mcp_eof",
+  "native_automatic_shutdown_accepted": false,
+  "phase": "requested_eof_catalog_preflight",
+  "source_commit": "7af13f34cf2d5b5bb3d84372d21b681c160e6067",
+  "source_bindings": 530,
+  "sandbox_probe_passed": true,
+  "operator_login_copied": false,
+  "api_postgres_used": false,
+  "real_provider_inference": false,
+  "worker_exit_status": 0,
+  "native_case": {
+    "mcp_shutdown_mode": "harness_requested_mcp_eof",
+    "native_automatic_shutdown_accepted": false,
+    "catalog_only": true,
+    "catalog_count": 3,
+    "final_witness": {
+      "initialize": 1,
+      "tools/list": 1,
+      "tools/call": 0,
+      "closed_cleanly": true
+    },
+    "synthetic_turns_requested": 0
+  },
+  "owned_group_retired": true,
+  "minimum_sampled_memory_mib": 10150,
+  "memory_floor_satisfied": true,
+  "sources_unchanged": true,
+  "seconds": 42.51,
+  "requested_eof_to_child_wait_ms": 1445.024,
+  "cli_input_close_to_exit_ms": 31.967,
+  "shared_shutdown_ms": 1491.912,
+  "normal_mcp_before_cli_input_close": true,
+  "proxy_launch_count": 1,
+  "proxy_signal_observed": false,
+  "executed_archive_preserved": true,
+  "operational_descriptor_reclosed": true,
+  "native_cli_version": "2.1.303 (Claude Code)"
+}

@@ -33,7 +33,7 @@ se regeneró ni incluyó el trabajo Graphify ajeno. Fronteras revisadas: producc
 config→CLI, SSE→eventos nativos, stdio correlacionado→contador/cierre; sin cambios
 de API, persistencia, eventos de producto o migraciones.
 
-T204 y CL07 permanecen abiertos hasta el control nativo específico. El siguiente
+En aquella fase T204 y CL07 seguían abiertos hasta el control nativo específico. El siguiente
 paso es catálogo/apagado nativo sin turno, dentro del namespace sin red externa,
 con HOME/config vacíos, clave dummy y máscaras de login comprobadas. No se toma
 prestado PostgreSQL ni se reejecutan casos aceptados o gates aplazados.
@@ -60,3 +60,27 @@ namespace/máscaras probados dentro del sandbox, memoria suficiente, fuentes
 intactas y grupo propio físicamente retirado. Descriptores recerrados, archivos
 ejecutados conservados. [R1](validation-t204-r1-preflight.json) ·
 [R2](validation-t204-r2-preflight.json). T204/CL07 y gates globales siguen abiertos.
+
+## Aceptación nativa del cliente, 2026-10-28
+
+Tras aceptar primero el preflight EOF T206, caso completo PASS en main7af13f34,
+530fuentes/CLI2.1.303:38,008s/mínimo9961MiB. El catálogo real servidor conserva
+las3herramientas interaction; no hay filtro enabled_tools en su entorno. El flag
+diagnóstico --disallowedTools excluye cao_ask_user: oferta HTTP real con2MCPtools
+y sin la excluida. El backend local fuerza ese tool_use; Claude emite tool_result
+correlacionado con is_error booleano true, y el segundo POSTAnthropic incluye el
+mismo error. Proxy inicializado/listado y0tools/call durante toda la ejecución.
+
+Se verificaron otra vez los cuerposHTTP privados originales, catálogo nativo
+archivado, configservidor real y eventos nativos contra el reductor. Dos
+requests sintéticas,0auxiliares, ninguna inferencia remota. MCPwait0/normalwitness
+antesCLIstdin, CLIexit0, una instancia/sin señales y1330,143ms de cierre compartido
+dentro6s. Grupo retirado, namespace/máscaras verificados, sin copiar login/API/PG.
+[Recibo](validation-t204-native-client-r1.json).
+
+T204 cerrado en este alcance: exclusión por flag explícito del cliente, backend
+Anthropic sintético y transporte nativo reales. No acredita propagación de
+allowlists por herramienta desde perfiles, todos los perfiles/operaciones ni
+recursos/prompts/deferred discovery de CL07. CL07 global y T197automático siguen
+abiertos. El cierre usa harness_requested_mcp_eof; no es apagado automático.
+Los fallos anteriores permanecen conservados.
