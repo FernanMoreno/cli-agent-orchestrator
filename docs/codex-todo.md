@@ -364,3 +364,6 @@ T164 validado: dos RED reales separados (entrada a shell retenido y liberación 
 
 
 T165 validado:2RED raíz/hijo por error real de SessionLocal→2GREEN;112 controles y4casos finales con fallo/sano y excepción atestiguada dentro de la transición. Final897PASS/3deselecciones configuradas intactas/8avisos en707.26s. El fallo best-effort al guardar estado del hijo ya no sustituye initialize ni omite la compensación T163/T164. Sin reintentos ni falsa confirmación de recibo. Fuentes y cierre PG/contenedor/red verificados, arquitectura5/0 y GOClaude. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t165.md). Siguiente: operación real de perfil coordination v2/OC2-04; sin cierre nativo/global.
+
+
+T197r5: intento actual ligado a fef8462e/544archivos **FAILED en preflight**,9,964s/min10023MiB: OAuth caducado según el guard existente; no arrancaron API/CLI/modelo ni hubo mensajes/reinicio. Login sin modificar/renovar, PostgreSQL prestado conservado, copias privadas ausentes y lanzador cerrado. T209 conserva su PASS nativo de cierre acotado; T197/T210 siguen abiertos. No repetir contra la misma credencial caducada. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t210.md#original-full-journey-attempt-r5).

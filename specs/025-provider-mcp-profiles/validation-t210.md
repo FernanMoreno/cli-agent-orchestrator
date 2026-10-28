@@ -1,8 +1,9 @@
 # T210 — owned MCP shutdown before Claude retirement
 
-Status: source implementation validated in the main checkout. T209/T210 and
-full T197 remain open pending their native gates. No default activation or
-native acceptance is claimed.
+Status: source implementation and the scoped native zero-turn control passed;
+T209 is complete in that scope. T210 and full T197 remain open. The fresh r5
+full-journey attempt stopped at expired OAuth admission before native startup.
+No default activation or full-journey acceptance is claimed.
 
 ## Reproduced cause and changed boundary
 
@@ -165,3 +166,29 @@ T209 is complete at this explicit local-stop/source/SDK/native-zero scope.
 T210 and full T197 remain open until the original messages/API-restart journey
 passes using production `/exit` pre-stop. No global/default/all-profile or
 intrinsic vendor500ms cleanup acceptance is inferred.
+
+## Original full-journey attempt r5
+
+The source-bound r5 controller on fef8462e retained the original 180s per-phase
+and shared6s cleanup criteria, production MCP module and exact two-message,
+row/event/ACK/restart predicates. Closed preflight passed, including synthetic
+default-auth-path, owner-context, actual-import and uncertain-retirement controls.
+Claude's read review found an unnecessary explicit config-directory requirement;
+the controller restored the default path without changing the operator login.
+
+The actual attempt returned FAILED at preflight after9.964s/min10023MiB.
+Read-only OAuth metadata confirmed that the selected access credential was
+expired under the existing fixture admission rule. No API, native CLI, model
+turn, MCP call, message row or restart occurred. No refresh was attempted.
+The borrowed PostgreSQL owner survived, all preexisting containers/networks
+were preserved, and the operator credential was unchanged.
+
+The original receipt also reports staged-credential cleanup false: its strict
+resolver encountered an already-removed private HOME. Preserve that false
+result; independent post-run closure verified zero private credential files,
+no borrowers and no auth-source directory. An absent, never-created owner
+registry likewise does not establish normal MCP shutdown. Operational descriptors
+were reclosed and executed archives preserved. T197/T210 remain open; do not
+repeat the authenticated run against the same expired stage or infer a product
+shutdown regression from this preflight failure. See the sanitized
+[r5 projection](validation-t197-r5.json).

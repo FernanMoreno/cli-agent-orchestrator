@@ -102,3 +102,12 @@ API/tmux/observador detenidos antes del owner PG, contenedor/red exactos ausente
 otros contenedores y login originales intactos, staging auth retirado. Archivo
 ejecutado inmutable y descriptor recerrado. T197/T011 siguen abiertos.
 [Recibo](validation-t197-native-r2.json); r1 fallido permanece intacto.
+
+
+## Latest source-bound attempt r5
+
+The fresh production-close journey on fef8462e stopped at expired OAuth admission
+before API/native/model startup. FAILED preflight, not an acceptance or a new
+shutdown failure. Original receipts remain unchanged. T197/T210 stay open.
+See [r5 projection](validation-t197-r5.json) and the
+[closure and scope](validation-t210.md#original-full-journey-attempt-r5).
