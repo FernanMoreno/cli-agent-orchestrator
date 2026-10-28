@@ -1,0 +1,84 @@
+{
+  "schema": "caos.t190.startup-only-controls.v1",
+  "attempts": [
+    {
+      "attempt": "r1",
+      "result": {
+        "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+        "exit_code": -1,
+        "f2_admitted": false,
+        "f2_capture": null,
+        "f2_sent": false,
+        "f2_warning_footer_observed": false,
+        "head": "362b6d4758dfb79e9ed40c78263c77e4b5be39d6",
+        "memory_available_mib": 10695,
+        "model_turn_requested": false,
+        "namespace_proof_verified": true,
+        "owned_process_group_retired": true,
+        "python_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+        "runtime_limit_seconds": 75.0,
+        "schema": "caos.codex-tui-startup.result.v1",
+        "source_count": 503,
+        "startup_capture": {
+          "bytes": 1065,
+          "saw_output": true,
+          "sha256": "a7ea7044148e8e34dc35079d7bdbfeaf72f29b8a47bf110a2023d768539d0f03",
+          "truncated": false
+        },
+        "user_text_sent": false,
+        "window": {
+          "columns": 220,
+          "rows": 50
+        }
+      },
+      "operator_unchanged": true,
+      "copied_credentials_removed": true,
+      "owned_group_retired": true,
+      "descriptor_reclosed": true,
+      "source_unchanged": true,
+      "observation": "loading_only_quiet_cutoff",
+      "model_offer_accepted": false
+    },
+    {
+      "attempt": "r2",
+      "result": {
+        "binary_sha256": "b93f6811d3f653f0fb83be4050d857fb9abbb111dfa2ce160563327daff7f306",
+        "exit_code": 1,
+        "f2_admitted": false,
+        "f2_capture": null,
+        "f2_sent": false,
+        "f2_warning_footer_observed": false,
+        "head": "362b6d4758dfb79e9ed40c78263c77e4b5be39d6",
+        "memory_available_mib": 10529,
+        "model_turn_requested": false,
+        "namespace_proof_verified": true,
+        "owned_process_group_retired": true,
+        "python_sha256": "441e35a78c27a717b4634c21d8c118d9f535afb675add1ed421c581bb410a27f",
+        "runtime_limit_seconds": 75.0,
+        "schema": "caos.codex-tui-startup.result.v1",
+        "source_count": 503,
+        "startup_capture": {
+          "bytes": 1236,
+          "saw_output": true,
+          "sha256": "70c55e47b975c8a997269276a110abeee61bed8b8078bcaf5d30f355cdf70ff6",
+          "truncated": false
+        },
+        "user_text_sent": false,
+        "window": {
+          "columns": 220,
+          "rows": 50
+        }
+      },
+      "operator_unchanged": true,
+      "copied_credentials_removed": true,
+      "owned_group_retired": true,
+      "descriptor_reclosed": true,
+      "source_unchanged": true,
+      "observation": "network_isolation_blocked_account_routing_before_mcp",
+      "model_offer_accepted": false
+    }
+  ],
+  "historical_cause_proven": false,
+  "message_acceptance": false,
+  "next_boundary": "owned native startup/session logs from existing connected journey"
+}

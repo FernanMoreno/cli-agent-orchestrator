@@ -152,3 +152,17 @@ La observación privada R4 procede de `/output?mode=full`: buffer FIFO crudo,
 no pantalla renderizada ni lectura garantizada pasiva; esa ruta puede verificar
 recibos pendientes. Ocurrió después de registrar el fallo de fase. El siguiente
 control de advertencias debe capturar directamente el PTY/pane propio.
+
+## Controles TUI sin turno · frontera de bootstrap
+
+Dos controles posteriores en362b6d47 preservan503pins, ventana220×50,
+75s exteriores, operador/fuente intactos y retirada propia; cero texto de usuario,
+turnos solicitados o F2. R1 captura únicamente `loading`: el silencio1,5s cerró
+la observación antes del footer. Se reprodujo y corrigió ese corte con dos
+ráfagas separadas; R2 mantiene el presupuesto original de arranque60s.
+R2 sale antes de MCP: `account/read` necesita descubrir el enrutamiento de
+la cuenta y la red aislada lo impide. No prueba ejecutable ausente, fallo MCP,
+catálogo ni causa histórica. Ambos descriptores cerrados, archivos ejecutados
+intactos y copias de credenciales eliminadas. [Recibos](validation-t190-startup-control.json).
+No repetir este control aislado: el próximo diagnóstico debe conservar registros
+nativos propios del recorrido conectado existente antes de su limpieza.
