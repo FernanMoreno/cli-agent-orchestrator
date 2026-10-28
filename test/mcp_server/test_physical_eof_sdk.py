@@ -55,11 +55,11 @@ Path(sys.argv[1]).write_text(json.dumps({
 
 
 class Peer:
-    def __init__(self, root, mode):
+    def __init__(self, root, mode, *, script_text=None, env_overrides=None):
         self.marker = root / "normal.json"
         self.busy = root / "busy"
         script = root / "server.py"
-        script.write_text(SCRIPT)
+        script.write_text(SCRIPT if script_text is None else script_text)
         script.chmod(0o600)
         repo = Path(__file__).resolve().parents[2]
         env = {
@@ -73,6 +73,11 @@ class Peer:
             "CAO_INTERNAL_MCP_TOOL_PROFILE": "interaction",
             "FASTMCP_LOG_LEVEL": "ERROR",
         }
+        for key, value in (env_overrides or {}).items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
         self.log = (root / "stderr.log").open("wb")
         self.process = subprocess.Popen(
             [sys.executable, str(script), str(self.marker), mode, str(self.busy)],

@@ -5662,15 +5662,110 @@ def send_special_key(terminal_id: str, key: str, *, same_turn: bool = False) -> 
         raise
 
 
-def exit_terminal_cli(terminal_id: str) -> None:
-    """Send the provider-specific exit command to gracefully shut down the CLI.
+def _is_claude_provider_instance(provider: Any) -> bool:
+    from cli_agent_orchestrator.providers.claude_code import ClaudeCodeProvider
 
-    Mirrors the ``POST /terminals/{id}/exit`` endpoint: resolve the provider,
-    send ``provider.exit_cli()`` — as a tmux key sequence when it is one (e.g.
-    ``C-d``), else as literal input (e.g. ``/exit``). This is the graceful CLI
-    shutdown that should precede ``delete_terminal`` (which goes straight to
-    ``kill_window``). Both the endpoint and ``run_agent_step`` call this so the
-    exit-then-delete lifecycle is implemented once.
+    return isinstance(provider, ClaudeCodeProvider)
+
+
+def _exit_wait_is_active(terminal_id: str) -> bool:
+    # A CLI command is not a safe escape hatch from an interactive picker.
+    # Sending `/exit` through a WAITING terminal can be interpreted as a menu
+    # choice (or its Enter can accept the default), changing model/authority
+    # instead of closing the process. Callers that need hard cleanup still
+    # follow this best-effort graceful step with delete_terminal(), which kills
+    # the owned window without answering the UI.
+    if status_monitor.get_status(terminal_id) not in {
+        TerminalStatus.WAITING_USER_ANSWER,
+        TerminalStatus.WAITING_QUOTA,
+    }:
+        return False
+    logger.warning(
+        "Refusing graceful CLI input for %s while an interactive or provider-owned "
+        "wait is active; delete the terminal to terminate it without changing its UI",
+        terminal_id,
+    )
+    return True
+
+
+def _send_provider_exit_command(
+    terminal_id: str,
+    provider: BaseProvider,
+    *,
+    dispatch_lock_held: bool = False,
+) -> None:
+    exit_command = provider.exit_cli()
+    # Reuse the active dispatch lock: only the sender's outer lock wrapper
+    # is skipped. Its original authority checks and transport still run.
+    if exit_command.startswith(("C-", "M-")):
+        key_sender = (
+            getattr(send_special_key, "__wrapped__", send_special_key)
+            if dispatch_lock_held
+            else send_special_key
+        )
+        key_sender(terminal_id, exit_command)
+    else:
+        # A CLI control command is not an agent task. Do not append a receipt.
+        input_sender = (
+            getattr(send_input, "__wrapped__", send_input) if dispatch_lock_held else send_input
+        )
+        input_sender(terminal_id, exit_command, attach_turn_receipt=False)
+
+
+@with_terminal_dispatch_lock
+def _exit_local_claude_cli(terminal_id: str) -> None:
+    """Run Claude pre-stop and exit command under one terminal dispatch lock."""
+    provider = provider_manager.get_provider(terminal_id)
+    if provider is None:
+        raise ValueError(f"Provider not found for terminal {terminal_id}")
+    if _exit_wait_is_active(terminal_id):
+        return
+
+    if _is_claude_provider_instance(provider):
+        try:
+            metadata = get_terminal_metadata(terminal_id)
+        except Exception:
+            metadata = None
+            logger.warning(
+                "Claude metadata was unavailable; continuing CLI exit without MCP pre-stop"
+            )
+        if metadata is not None and _is_owned_local_claude_mcp_candidate(metadata):
+            # Match send_input/send_special_key admission. A WorkBackendView is
+            # a short-lived capability for a managed Work effect; bind this
+            # exact persisted target so its backend performs the durable guard.
+            # Public callers have no such view and keep the ordinary denial.
+            from cli_agent_orchestrator.backends.work_backend import WorkBackendView
+
+            backend = get_backend()
+            if isinstance(backend, WorkBackendView):
+                backend.bind_terminal_target(
+                    terminal_id, metadata["tmux_session"], metadata["tmux_window"]
+                )
+            else:
+                # The Work ownership lookup must precede any new child signal.
+                # This terminal lock prevents a managed assignment or another
+                # turn from racing between admission, pre-stop and CLI input.
+                ensure_terminal_is_not_work_owned(terminal_id)
+            # The ownership lookup can block while the monitor publishes a
+            # provider-owned wait. Recheck at the new signal boundary too.
+            if _exit_wait_is_active(terminal_id):
+                return
+            try:
+                _prestop_owned_mcp_for_terminal(terminal_id)
+            except Exception:
+                logger.warning("Owned MCP pre-stop was unavailable; continuing Claude CLI exit")
+
+    _send_provider_exit_command(terminal_id, provider, dispatch_lock_held=True)
+
+
+def exit_terminal_cli(terminal_id: str) -> None:
+    """Send the provider-specific command used for graceful CLI shutdown.
+
+    Local Claude uses the existing per-terminal dispatch lock across MCP
+    pre-stop and the exit transport. The MCP phase has one six-second deadline;
+    this function adds no second wait for the CLI. Its caller still owns the
+    existing bounded normal-exit/seal observation. Remote and other local
+    providers keep their existing command routes.
 
     Raises:
         ValueError: if no provider is registered for ``terminal_id``.
@@ -5686,33 +5781,15 @@ def exit_terminal_cli(terminal_id: str) -> None:
     provider = provider_manager.get_provider(terminal_id)
     if provider is None:
         raise ValueError(f"Provider not found for terminal {terminal_id}")
-    # A CLI command is not a safe escape hatch from an interactive picker.
-    # Sending `/exit` through a WAITING terminal can be interpreted as a menu
-    # choice (or its Enter can accept the default), changing model/authority
-    # instead of closing the process.  Callers that need hard cleanup still
-    # follow this best-effort graceful step with delete_terminal(), which kills
-    # the owned window without answering the UI.  An operator who intends to
-    # answer a prompt must use the explicit answer path.
-    if status_monitor.get_status(terminal_id) in {
-        TerminalStatus.WAITING_USER_ANSWER,
-        TerminalStatus.WAITING_QUOTA,
-    }:
-        logger.warning(
-            "Refusing graceful CLI input for %s while an interactive or provider-owned "
-            "wait is active; delete the terminal to terminate it without changing its UI",
-            terminal_id,
-        )
+    if _is_claude_provider_instance(provider):
+        # Re-resolve after taking the lock so a concurrent provider retirement
+        # cannot reuse this provider snapshot.
+        _exit_local_claude_cli(terminal_id)
         return
-    exit_command = provider.exit_cli()
-    # Some providers use tmux key sequences (e.g., "C-d" for Ctrl+D) instead of
-    # text commands (e.g., "/exit"). Key sequences must be sent via
-    # send_special_key() to be interpreted by tmux, not as literal text.
-    if exit_command.startswith(("C-", "M-")):
-        send_special_key(terminal_id, exit_command)
-    else:
-        # A CLI control command is not an agent task. In particular, do not
-        # append a per-turn receipt instruction to a provider control command.
-        send_input(terminal_id, exit_command, attach_turn_receipt=False)
+
+    if _exit_wait_is_active(terminal_id):
+        return
+    _send_provider_exit_command(terminal_id, provider)
 
 
 @with_terminal_dispatch_lock
@@ -6546,6 +6623,54 @@ def capture_terminal_snapshot(terminal_id: str) -> Optional[Dict]:
     return metadata
 
 
+def _is_owned_local_claude_mcp_candidate(metadata: Optional[Dict]) -> bool:
+    """Whether terminal metadata authorizes the local Claude MCP lifecycle hook.
+
+    Remote terminals return before this predicate is consulted. Deferred-init
+    tombstones and KAS runtimes retain their existing exact-identity cleanup
+    path and do not authorize a new child signal.
+    """
+    return bool(
+        metadata
+        and metadata.get("provider") == ProviderType.CLAUDE_CODE.value
+        and not metadata.get("deferred_init_external_owner")
+        and not metadata.get("deferred_init_failure")
+        and not metadata.get("deferred_init_runtime_reclaimed")
+        and metadata.get("engine") != KiroEngine.KAS.value
+    )
+
+
+def _prestop_owned_mcp_for_terminal(terminal_id: str):
+    """Request the exact terminal-owned MCP stop under its original budget."""
+    from cli_agent_orchestrator.utils.mcp_owner_stop import (
+        MCP_STOP_ALLOWANCE_SECONDS,
+        prestop_owned_mcp,
+    )
+
+    return prestop_owned_mcp(
+        terminal_id,
+        time.monotonic() + MCP_STOP_ALLOWANCE_SECONDS,
+    )
+
+
+def _prestop_owned_mcp_for_terminals(terminal_ids: List[str]):
+    """Pre-stop a session's owned MCP children under one shared deadline."""
+    from cli_agent_orchestrator.utils.mcp_owner_stop import (
+        MCP_STOP_ALLOWANCE_SECONDS,
+        prestop_owned_mcp_many,
+    )
+
+    deadline = time.monotonic() + MCP_STOP_ALLOWANCE_SECONDS
+    return prestop_owned_mcp_many(terminal_ids, deadline)
+
+
+def _reconcile_owned_mcp(terminal_id: str) -> bool:
+    """Check and prune only positively retired MCP records; never signal."""
+    from cli_agent_orchestrator.utils.mcp_owner_stop import reconcile_owned_mcp
+
+    return reconcile_owned_mcp(terminal_id)
+
+
 @guard_retirement
 def dismantle_terminal_runtime(
     terminal_id: str,
@@ -6654,6 +6779,21 @@ def dismantle_terminal_runtime(
         if not runtime_complete:
             return False
 
+    # Stop this terminal's exact local Claude MCP children while their CLI
+    # writer is still alive. This is best-effort only: an unsupported, unknown,
+    # or failed pre-stop does not prove normal exit and must not suppress the
+    # established backend stop/fallback path below.
+    if (
+        metadata
+        and kill_window
+        and not tombstone
+        and _is_owned_local_claude_mcp_candidate(metadata)
+    ):
+        try:
+            _prestop_owned_mcp_for_terminal(terminal_id)
+        except Exception:
+            logger.warning("Owned MCP pre-stop was unavailable; continuing terminal teardown")
+
     # Stop pipe-pane before removing its session/window. Otherwise a normal
     # terminal delete kills the last window first, then reports a misleading
     # "session not found" while trying to detach the already-dead writer.
@@ -6684,6 +6824,21 @@ def dismantle_terminal_runtime(
                 return False
             if exact.outcome != TerminalCleanupOutcome.ABSENT:
                 return False
+
+    # The MCP child may outlive its parent CLI. After the ordinary writer or
+    # exact tombstone owner is proven stopped, reconcile its exact private
+    # records before any inbox/FIFO/status/provider/worktree/row cleanup. If
+    # metadata was unavailable, this is only a no-signal guard for any known
+    # MCP record; it does not add writer-stop evidence. Unknown or live
+    # ownership keeps downstream resources as a durable retry handle, while
+    # no-record legacy terminals return True.
+    try:
+        if not _reconcile_owned_mcp(terminal_id):
+            logger.warning("Owned MCP runtime remains unproven; retaining terminal resources")
+            return False
+    except Exception:
+        logger.warning("Owned MCP reconciliation was unavailable; retaining terminal resources")
+        return False
 
     # Herdr reconciliation can own this operation on an executor worker and
     # apply routing changes on its event loop only after successful retirement.

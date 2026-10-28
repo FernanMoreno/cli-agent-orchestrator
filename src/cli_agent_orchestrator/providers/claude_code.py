@@ -29,6 +29,7 @@ from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, Te
 from cli_agent_orchestrator.providers.base import BaseProvider
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
+from cli_agent_orchestrator.utils.mcp_owner_stop import OWNER_DIR_ENV, SIGNAL_STOP_ENV
 from cli_agent_orchestrator.utils.mcp_readiness import (
     READY_FILE_ENV,
     READY_TOKEN_ENV,
@@ -696,6 +697,13 @@ class ClaudeCodeProvider(BaseProvider):
                             str(self._cao_mcp_ready_path), profile
                         )
                         env[READY_TOKEN_ENV] = self._cao_mcp_ready_token
+                        if env.get(SIGNAL_STOP_ENV) == "1":
+                            # The API owns this registry even when the MCP's
+                            # private CAO_HOME_DIR differs from the API home.
+                            env[OWNER_DIR_ENV] = self._translate_path(
+                                str(CAO_HOME_DIR / "tmp" / f"{self.terminal_id}.mcp-owners"),
+                                profile,
+                            )
                     mcp_config[server_name]["env"] = env
                     if "CAO_TERMINAL_ID" not in env:
                         env["CAO_TERMINAL_ID"] = self.terminal_id

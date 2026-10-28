@@ -1,5 +1,56 @@
 # Provider MCP profiles and current acceptance
 
+## Owned MCP pre-stop before CLI retirement · T210
+
+FR188/SC172: Correct production owner ordering: before ordinary Claude terminal
+or session writer retirement, request graceful stop of the exact registered
+MCP children while the CLI remains alive, then retire the CLI within the same
+original six-second normal exit/seal budget. Origin is `caos_prestop`, not native
+peer EOF or proof that the vendor cleanup became graceful. Preserve direct
+500ms vendor-cleanup failures and T197's exact audit/messages/restart gates.
+
+Register immutable private records per actual MCP process only for the explicit
+local-stop mode. Bind terminal/launch token, UID, boot, PID namespace, birth and
+actual command; never overwrite an older live borrower. Group records under a
+terminal-specific private directory: no global process/directory scan or shared
+cross-terminal lock. Validate current config and kernel identity/environment,
+pin/recheck with pidfd before any signal, handle all known live identities and
+use one deadline for batch waits. Unsupported/unknown ownership is never stop
+or normal-return evidence. Prune only positively retired records; retain unknown
+and live ownership before resource/row/worktree removal. Existing safe forced
+cleanup may still proceed but cannot earn normal SDK acceptance.
+
+Use the same production helper from managed deletion and diagnostic adapters;
+recover from persisted config/records after API restart without starting another
+provider. Cover ordinary terminal and pre-kill session ordering, remote/exact
+retirement fences, healthy siblings, negative authority and real processes.
+Metadata is process-control evidence, not application business persistence.
+No proxy, syntheticEOF/seal, vendor patch, login change or global default before
+source/SDK/ownership/review and one current native zero-turn admission.
+
+## Quiescent signal-requested local resource stop · T209
+
+FR187/SC171: Correct the observed stop-before-EOF boundary with a DISTINCT
+opt-in local-resource shutdown mode, preserving strict physical-EOF mode and
+all original6s/180s/retirement/normal-SDK-seal criteria. On an actual received
+stop signal, admit only settled bidirectional wire state, no partial/unsafe
+frames and no ready input. Close the actual owned child stdin resource: atomically replace its original
+descriptor with a write-only null reservation and close the observed duplicate;
+for sockets, perform a real local read-half shutdown. Never return empty bytes to
+manufacture EOF and never set physical EOF without a real empty kernel read.
+The SDK's existing ClosedResourceError path may report the real local close;
+normal completion requires actual local closure plus quiescence and genuine
+SDK/run/process completion. Refuse busy/late/ambiguous closure; do not swallow
+operation failures or fabricate seals. Use existing IO workers/wake pipes and
+the same full-run timer. No extra permanent process/thread, proxy, TTY close or
+default activation before reviewed real-SDK and native zero-turn evidence.
+Keep explicit mode metadata and preserve the failed physical-EOF receipts.
+This mode owns one terminating server process: retain the original bounded
+timer and graceful stop handlers through ordinary interpreter/atexit cleanup,
+without an exit0 shortcut or skipping cleanup. Physical mode still restores
+its original handlers/flags. The post-readiness-check arrival race and unknown
+external aliases remain explicit limits, never an all-future-input guarantee.
+
 ## Native guard transition evidence · T208
 
 FR186/SC170: Observe the first unobserved shutdown boundary before another

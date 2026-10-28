@@ -68,6 +68,10 @@ EXPECTED_BODY = "Escribe una nota privada: café, español y 日本語. SPEC023_
 _REQUIRED_GENERIC_MESSAGE_SOURCE_BINDINGS = frozenset(
     {
         "src/cli_agent_orchestrator/mcp_server/server.py",
+        "src/cli_agent_orchestrator/mcp_server/physical_eof.py",
+        "src/cli_agent_orchestrator/utils/mcp_owner_stop.py",
+        "src/cli_agent_orchestrator/services/session_service.py",
+        "src/cli_agent_orchestrator/services/cleanup_service.py",
         "src/cli_agent_orchestrator/mcp_server/interaction_pull_flow_only.py",
         "src/cli_agent_orchestrator/mcp_server/tool_profiles.py",
         "src/cli_agent_orchestrator/utils/orchestration.py",

@@ -778,6 +778,25 @@ def delete_session(session_name: str, registry: PluginRegistry | None = None) ->
                 ) from e
 
             if session_still_alive:
+                # Ask only the locally owned Claude terminals in this captured
+                # incarnation to stop their exact MCP children before retiring
+                # the shared session writer. The service helper gives the whole
+                # batch one six-second deadline and the utility sends all
+                # admitted signals before waiting. Failure is not exit proof and
+                # must not block the established backend kill/fallback path.
+                claude_mcp_terminal_ids = [
+                    terminal_id
+                    for terminal_id, metadata in captured
+                    if terminal_service._is_owned_local_claude_mcp_candidate(metadata)
+                ]
+                if claude_mcp_terminal_ids:
+                    try:
+                        terminal_service._prestop_owned_mcp_for_terminals(claude_mcp_terminal_ids)
+                    except Exception:
+                        logger.warning(
+                            "Owned MCP pre-stop batch was unavailable; continuing session teardown"
+                        )
+
                 killed = backend.kill_session(session_name)
                 if not killed:
                     # False means "not found" OR "kill unconfirmed" (backend

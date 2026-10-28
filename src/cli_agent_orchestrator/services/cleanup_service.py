@@ -52,6 +52,7 @@ def cleanup_old_data():
         from cli_agent_orchestrator.services import terminal_service
 
         deleted_terminals = 0
+        deferred_mcp_terminals = 0
         for terminal in old_terminals:
             terminal_id = str(terminal.id)
             from cli_agent_orchestrator.services import remote_terminal_service as remote
@@ -107,6 +108,21 @@ def cleanup_old_data():
                             ):
                                 deleted_terminals += 1
                             continue
+                        if terminal_service._is_owned_local_claude_mcp_candidate(metadata):
+                            try:
+                                mcp_reconciled = (
+                                    terminal_service._reconcile_owned_mcp(terminal_id) is True
+                                )
+                            except Exception:
+                                mcp_reconciled = False
+                            if not mcp_reconciled:
+                                deferred_mcp_terminals += 1
+                                logger.warning(
+                                    "Retaining stale terminal %s while Claude MCP ownership "
+                                    "is unproven",
+                                    terminal_id,
+                                )
+                                continue
                         fifo_manager.stop_reader(terminal_id)
                         status_monitor.clear_terminal(terminal_id)
                         if provider_manager.cleanup_provider(terminal_id) is False:
@@ -123,6 +139,11 @@ def cleanup_old_data():
                 logger.warning("Failed to delete stale terminal %s: %s", terminal_id, exc)
 
         logger.info(f"Deleted {deleted_terminals} old terminals from database")
+        if deferred_mcp_terminals:
+            logger.info(
+                "Deferred cleanup for %s stale Claude terminals with unproven MCP ownership",
+                deferred_mcp_terminals,
+            )
 
         # Clean up old inbox messages
         with SessionLocal() as db:

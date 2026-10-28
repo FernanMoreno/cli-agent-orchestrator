@@ -1,5 +1,44 @@
 # Plan: provider MCP profiles
 
+## T210 · stop the borrower before its parent
+
+Claude's connected stdio cleanup has fixed100/400ms escalation before closing
+its transport. Source SDK controls demonstrate normal SDK return while Python
+finalization can still exceed that window. Keep that failed direct path and
+fix CAOS ownership order instead of weakening timing or skipping finalization.
+Add scoped immutable child records, strict pidfd pre-stop/retirement utility,
+pre-writer terminal/session hooks and post-stop ownership checks. Use a private
+per-terminal directory, persisted launch config and exact namespace/UID/birth/
+argv/environment checks; no global scan and no reconstruction/native launch
+from cleanup. Signal all validated children before waiting under one shared6s,
+and retain uncertain/live owners. Core publishes a normal-return receipt only
+after genuine guarded SDK return; the existing audit seal remains separately
+mandatory. Reuse this production path for zero-turn admission and fullT197.
+
+## T209 · genuine local input resource stop
+
+Keep the physical-EOF guard opt-in unchanged. Add a mutually exclusive
+quiescent-signal-stop selector and explicit local-input-closed state. The
+existing reader wakes on stop and output settlement; before any local close,
+prefer actual readable input/EOF, reject pending/partial/unsafe wire state,
+and close only owned pipe/socket input. Atomically reserve the original fd
+with write-only /dev/null, close the observed duplicate and locally read-shutdown
+sockets; reject shared input/output sockets. No FD reuse gap or readable fakeEOF.
+Raise the SDK-supported ClosedResourceError for that actual closed resource;
+no synthetic bytes or physical-EOF claim. Keep stdout/replies intact and the
+same first-stop full-run deadline. Test actual descriptors, late/busy refusals,
+process0/real SDK/audit closure and compatibility before one current native
+zero-turn. Keep stop handlers and the same original OS deadline through normal Python
+finalization in this terminating-process mode; do not skip atexit or force exit0.
+A real SDK RED returned normally but then died-15 at the observed second stop
+100ms later. A subsequent full process measurement0/615ms with extra150ms
+atexit proves the direct500ms path cannot be promised. Preserve that failed
+acceptance. Component positives use genuine SDK/seal/process completion within
+the ORIGINAL6s while the parent remains alive; a separate active negative test
+reproduces vendor100/400ms escalation and rejects SDK-seal-only completion.
+T210 must supply the actual production pre-parent stop before native acceptance.
+Client defaults/fullT197 remain separate until this evidence exists.
+
 ## T208 · bounded transition observer
 
 Add a diagnostic-only context manager around the actual guard instance EOF/

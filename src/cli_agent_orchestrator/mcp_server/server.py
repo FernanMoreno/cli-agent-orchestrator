@@ -4135,6 +4135,10 @@ def main():
     from pathlib import Path
 
     from cli_agent_orchestrator.mcp_server.startup_readiness import StartupReadinessMiddleware
+    from cli_agent_orchestrator.utils.mcp_owner_stop import (
+        publish_owned_mcp_normal_return,
+        register_owned_mcp,
+    )
     from cli_agent_orchestrator.utils.mcp_readiness import READY_FILE_ENV, READY_TOKEN_ENV
 
     ready_file = os.environ.get(READY_FILE_ENV)
@@ -4146,7 +4150,14 @@ def main():
     if _physical_stdio_guard is None:
         mcp.run()
     else:
+        registration = register_owned_mcp()
         _physical_stdio_guard.run(mcp.run)
+        # A signal, cancelled lifespan or forced termination cannot publish
+        # this witness: the complete guarded SDK call must return first.
+        if registration is not None and not publish_owned_mcp_normal_return(
+            registration, _physical_stdio_guard.state.snapshot()
+        ):
+            logger.warning("Owned MCP normal-return witness could not be published")
 
 
 def _install_tool_profile_middleware_if_requested(server_instance: FastMCP) -> bool:

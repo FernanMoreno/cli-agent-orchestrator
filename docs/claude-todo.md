@@ -1,6 +1,14 @@
 # Claude Code: análisis y pendientes
 
-T208: observador de EOF/señales/salida y estado del proceso implementado,24pruebas PASS y revisión GO. Conserva errores originales, privacidad y límites; pendiente un diagnóstico nativo nuevo. No cambia el guard productivo ni acepta T197. [Validación](../specs/025-provider-mcp-profiles/validation-t208.md).
+Actualización T210 (2026-10-28): cierre MCP antes del CLI integrado en el checkout
+principal, todavía sin aceptación nativa. Suite SDK/componentes108 PASS; tras
+corregir admisión Work y carreras de registro, selección final68 PASS, tipos
+y arquitectura5/0 PASS, revisión Claude GO. Regresión PostgreSQL/API final:347 PASS
+tras corregir el registro ausente en DrvFS; control adicional1 PASS y revisión GO;
+T209/T210 y T197 siguen abiertos. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t210.md).
+
+
+T208: observador de EOF/señales/salida y estado del proceso implementado,24pruebas PASS y revisión GO. Conserva errores originales, privacidad y límites; diagnóstico r2 completo: SIGINT/SIGTERM y SIGKILL confirmado a~0,5s, antes de EOF y de la limpieza del lanzador; sin operaciones pendientes ni salida70 del guard. Fuente535 intacta/procesos retirados. Emisor no observado; cierre automático sigue FALLANDO y T197 abierto. [Validación](../specs/025-provider-mcp-profiles/validation-t208.md).
 
 T207: guarda MCP de EOF físico implementada de forma opt-in; revisión independiente GO. Se corrigió además un bloqueo reproducido del ejecutor tras cancelar un hilo. La regresión final pasó50pruebas; tipos/formato/arquitectura5-0 pasan. Primera prueba nativa directa FALLÓ: Claude0 sin sello normal MCP dentro de6s;39,026s/mínimo10581MiB,533fuentes intactas y procesos retirados. EOF/señal/vencimiento no observados; T208 instrumentará esas transiciones. No se activó por defecto ni se cerró T197. [Estado y límites](../specs/025-provider-mcp-profiles/validation-t207.md).
 

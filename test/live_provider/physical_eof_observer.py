@@ -20,6 +20,7 @@ MAX_ROWS = 128
 MAX_BYTES = 128 * 1024
 EVENTS = Literal[
     "physical_eof",
+    "local_input_closed",
     "stop_signal",
     "exit_requested",
     "lifespan_entered",
@@ -40,6 +41,7 @@ UNSAFE = frozenset(
         "frame_observer_failed",
         "partial_input_frame",
         "input_io_failed",
+        "input_close_failed",
         "output_io_failed",
     }
 )
@@ -48,6 +50,7 @@ UNSAFE = frozenset(
 class GuardSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     physical_eof: StrictBool
+    local_input_closed: StrictBool = False
     pending_client: StrictInt = Field(ge=0)
     pending_server: StrictInt = Field(ge=0)
     input_tail_bytes: StrictInt = Field(ge=0)
@@ -214,6 +217,7 @@ class GuardTransitions:
         )
         self.original_eof = self.guard.state.input_eof
         self.original_stop = self.guard.state.request_stop
+        self.original_local_close = self.guard.state.mark_local_input_closed
         self.original_exit = os._exit
 
         def eof():
@@ -228,6 +232,12 @@ class GuardTransitions:
             finally:
                 self.event("stop_signal", status=signum)
 
+        def local_close():
+            try:
+                return self.original_local_close()
+            finally:
+                self.event("local_input_closed")
+
         def exiting(status):
             try:
                 self.event("exit_requested", status=status)
@@ -236,12 +246,14 @@ class GuardTransitions:
 
         self.guard.state.input_eof = eof
         self.guard.state.request_stop = stop
+        self.guard.state.mark_local_input_closed = local_close
         os._exit = exiting
         return self
 
     def __exit__(self, *_):
         self.guard.state.input_eof = self.original_eof
         self.guard.state.request_stop = self.original_stop
+        self.guard.state.mark_local_input_closed = self.original_local_close
         os._exit = self.original_exit
         fd, self.fd = self.fd, -1
         if fd >= 0:

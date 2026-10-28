@@ -1,7 +1,7 @@
 # T208 · native guard shutdown transitions
 
 Status: diagnostic implementation/offline controls reviewed; current r2 native
-run pending. Production guard behavior/defaults are unchanged. T207r1 FAILED
+diagnostic COMPLETE. The shutdown acceptance itself FAILED. Production guard behavior/defaults are unchanged. T207r1 FAILED
 and full T197 remains open.
 
 ## Boundary and observation contract
@@ -67,3 +67,25 @@ but never identifies the signal sender. Missing rows remain unobserved. After
 observer teardown, the interpreter/main tail is outside the hook; actual parent
 identity retirement still gates acceptance. Full T197/default activation stays
 separate from this zero-turn diagnosis.
+
+## Native r2 · diagnostic complete, shutdown FAILED
+
+[Structured result](validation-t208-native-r2.json): source
+`14435b42524093d1105e3dcaa54f9d95cdcc233a`,535pins unchanged,
+41.029s/min10580MiB. Zero model turns/tool calls/operator-login copies/API/PG;
+actual namespace/masks and shared time namespace passed. SIGINT callback at
++1.819ms, SIGTERM at+102.269ms, both with zero pending RPCs/tails/unflushed
+replies/output activity and no unsafe code. No physical EOF or guard exit
+request is recorded. LeaderZ is observed at+509.128ms with actual nonzero kernel
+waitstatus9, derived signal-9; identity absent at+529.597ms. Native CLI exits0.
+Parent cleanup starts only after+6.22s, excluding that cleanup as the earlier
+SIGKILL source. The signal sender itself remains unobserved.
+
+The observed abrupt kill before physical EOF prevents the normal SDK seal;
+it is not the guard's six-second exit70 path. Quiescence alone did not close
+the client's still-open input resource. Both owned group and exact MCP identity
+are positively retired; execution archive/sources are intact and operational
+controller is reclosed. Do not repeat the identical physical-EOF lane. T209
+will validate a distinct, real local-resource stop on a quiescent received stop
+signal, without returning fake EOF or weakening T207's physical-EOF predicate.
+Full T197 remains unaccepted until its original journey passes.

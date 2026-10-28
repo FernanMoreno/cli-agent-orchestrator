@@ -1,7 +1,8 @@
 """Opt-in physical stdio closure for the tested native MCP runtime.
 
-Signals request bounded shutdown; only actual pipe EOF and flushed, settled RPC
-frames permit normal return. No synthetic EOF, model data or extra IO worker.
+Signals request bounded shutdown. Normal return requires settled, flushed RPCs
+and either peer EOF or an explicitly enabled local input-resource closure.
+Local closure never claims peer EOF. No synthetic bytes or extra IO worker.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import json
 import os
 import select
 import signal
+import socket
 import stat
 import sys
 import threading
@@ -21,10 +23,16 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from importlib.metadata import version
 from typing import Any, NoReturn, TextIO, cast
 
+from anyio import ClosedResourceError
 from mcp.types import JSONRPCMessage
 
+from cli_agent_orchestrator.utils.mcp_owner_stop import (
+    MCP_STOP_ALLOWANCE_SECONDS,
+    SIGNAL_STOP_ENV,
+)
+
 ENABLE_ENV = "CAO_INTERNAL_MCP_PHYSICAL_EOF"
-SHUTDOWN_SECONDS = 6.0
+SHUTDOWN_SECONDS = MCP_STOP_ALLOWANCE_SECONDS
 SUPPORTED_RUNTIME = {"fastmcp": "3.2.0", "mcp": "1.28.1", "anyio": "4.15.1"}
 
 
@@ -54,6 +62,8 @@ class WireState:
         self.pending_server: set[str | int] = set()
         self.unflushed_replies: set[str | int] = set()
         self.physical_eof = False
+        self.local_input_closed = False
+        self.allow_signal_close = False
         self.unsafe: str | None = None
         self.deadline: float | None = None
         self.first_signal: int | None = None
@@ -79,8 +89,9 @@ class WireState:
     def request_stop(self, signum: int) -> None:
         with self.lock:
             self.signal_count += 1
-            if self.deadline is None:
+            if self.first_signal is None:
                 self.first_signal = int(signum)
+            if self.deadline is None:
                 self.deadline = time.monotonic() + SHUTDOWN_SECONDS
             self.wake()
 
@@ -184,13 +195,42 @@ class WireState:
         with self.lock:
             self.pending_client.difference_update(self.unflushed_replies)
             self.unflushed_replies.clear()
+            if self.allow_signal_close and self.signal_count:
+                self.wake()
+
+    def quiescent(self) -> bool:
+        with self.lock:
+            return not (
+                self.unsafe
+                or self.in_tail
+                or self.out_tail
+                or self.pending_client
+                or self.pending_server
+                or self.unflushed_replies
+                or self.output_busy
+            )
+
+    def mark_local_input_closed(self) -> None:
+        with self.lock:
+            if (
+                not self.allow_signal_close
+                or not self.signal_count
+                or self.physical_eof
+                or not self.quiescent()
+            ):
+                raise GuardError("unsafe_local_input_close")
+            self.local_input_closed = True
 
     def verify_normal(self) -> None:
         with self.lock:
             self.remaining()
             if self.unsafe:
                 raise GuardError(self.unsafe)
-            if not self.physical_eof:
+            if self.physical_eof and self.local_input_closed:
+                raise GuardError("ambiguous_input_close")
+            if not self.physical_eof and not (
+                self.allow_signal_close and self.local_input_closed and self.signal_count
+            ):
                 raise GuardError("physical_eof_missing")
             if (
                 self.in_tail
@@ -206,6 +246,7 @@ class WireState:
         with self.lock:
             return {
                 "physical_eof": self.physical_eof,
+                "local_input_closed": self.local_input_closed,
                 "pending_client": len(self.pending_client),
                 "pending_server": len(self.pending_server),
                 "input_tail_bytes": len(self.in_tail),
@@ -223,16 +264,21 @@ class WireState:
 class ObservedPipe(io.BufferedIOBase):
     """Own duplicates, preserve the original descriptors and interrupt IO waits."""
 
-    def __init__(self, fd: int, *, inbound: bool, state: WireState) -> None:
+    def __init__(
+        self, fd: int, *, inbound: bool, state: WireState, owner: io.IOBase | None = None
+    ) -> None:
         super().__init__()
         self.fd = self.wake_read = self.wake_write = -1
-        self.inbound, self.state = inbound, state
+        self.inbound, self.state, self.owner = inbound, state, owner
         self.was_blocking = True
-        self.have_flags = self.ready_to_io = False
+        self.have_flags = self.ready_to_io = self.input_socket = False
         try:
             mode = os.fstat(fd).st_mode
             if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
                 raise GuardError("stdio_pipe_required")
+            if inbound and state.allow_signal_close and (owner is None or owner.fileno() != fd):
+                raise GuardError("owned_input_required")
+            self.input_socket = stat.S_ISSOCK(mode)
             self.fd = os.dup(fd)
             self.was_blocking = os.get_blocking(self.fd)
             self.have_flags = True
@@ -260,8 +306,47 @@ class ObservedPipe(io.BufferedIOBase):
     def isatty(self) -> bool:
         return os.isatty(self.fd)
 
+    def _close_on_stop(self) -> bool:
+        # Only this existing SDK reader owns the select/read/close sequence.
+        # The peer can still write after the poll; stop is a local resource
+        # close, never a guarantee that future peer writes cannot be discarded.
+        with self.state.lock:
+            if (
+                not self.inbound
+                or self.closed
+                or not self.state.allow_signal_close
+                or not self.state.signal_count
+                or self.state.physical_eof
+                or self.owner is None
+                or not self.state.quiescent()
+            ):
+                return False
+            if select.select([self.fd], [], [], 0)[0]:
+                return False
+            null_fd = -1
+            try:
+                if self.input_socket:
+                    with socket.socket(fileno=os.dup(self.fd)) as endpoint:
+                        endpoint.shutdown(socket.SHUT_RD)
+                null_fd = os.open("/dev/null", os.O_WRONLY | os.O_CLOEXEC)
+                # Release the original pipe endpoint atomically. Reserve its
+                # number with a non-readable resource: no reuse race, no EOF.
+                os.dup2(null_fd, self.owner.fileno(), inheritable=False)
+                self.close()
+                self.state.mark_local_input_closed()
+                return True
+            except BaseException:
+                self.state.fail("input_close_failed")
+                self.state.begin_close()
+                raise
+            finally:
+                if null_fd >= 0:
+                    os.close(null_fd)
+
     def _ready(self) -> None:
         while True:
+            if self._close_on_stop():
+                raise ClosedResourceError
             remaining = self.state.remaining()
             reads = [self.wake_read] + ([self.fd] if self.inbound else [])
             writes = [] if self.inbound else [self.fd]
@@ -396,13 +481,15 @@ class _TextView:
 
 
 class PhysicalEofGuard:
-    def __init__(self) -> None:
+    def __init__(self, *, allow_signal_close: bool = False) -> None:
         if sys.platform != "linux" or any(version(k) != v for k, v in SUPPORTED_RUNTIME.items()):
             raise GuardError("unsupported_stdio_runtime")
         self.state = WireState()
+        self.state.allow_signal_close = allow_signal_close
         self.started = False
         self.run_active = False
         self.timer_armed = False
+        self.exit_pending = False
 
     def _arm_process_deadline(self) -> None:
         if self.run_active and not self.timer_armed:
@@ -426,20 +513,36 @@ class PhysicalEofGuard:
         if any(previous_timer):
             raise GuardError("existing_process_timer")
         previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_stops = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
 
-        def expired(_signum: int, _frame: Any) -> NoReturn:
-            os._exit(70)
+        def expired(
+            _signum: int, _frame: Any, terminate: Callable[[int], NoReturn] = os._exit
+        ) -> NoReturn:
+            terminate(70)
 
         signal.signal(signal.SIGALRM, expired)
         self.run_active = True
+        normal = False
         try:
             result = function()
             self.state.verify_normal()
+            normal = True
             return result
         finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous_handler)
+            self.exit_pending = normal and self.state.allow_signal_close
+            if not self.exit_pending:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, previous_handler)
+                for signum, handler in previous_stops.items():
+                    signal.signal(signum, handler)
+            # Local-stop mode is a single owned server PROCESS lifetime, not
+            # reusable in-process IO. Keep its original bounded timer and stop
+            # handlers through normal interpreter/atexit cleanup; no exit(0)
+            # shortcut and no reset of the first six-second deadline.
             self.run_active = False
+
+    def _closing_stop(self, signum: int, _frame: Any) -> None:
+        self.state.request_stop(signum)
 
     @contextmanager
     def streams(self) -> Iterator[None]:
@@ -447,7 +550,19 @@ class PhysicalEofGuard:
         reader = writer = None
         try:
             originals[1].flush()
-            reader = ObservedPipe(originals[0].fileno(), inbound=True, state=self.state)
+            incoming, outgoing = os.fstat(originals[0].fileno()), os.fstat(originals[1].fileno())
+            if (
+                self.state.allow_signal_close
+                and stat.S_ISSOCK(incoming.st_mode)
+                and (incoming.st_dev, incoming.st_ino) == (outgoing.st_dev, outgoing.st_ino)
+            ):
+                raise GuardError("shared_stdio_socket_unsupported")
+            reader = ObservedPipe(
+                originals[0].fileno(),
+                inbound=True,
+                state=self.state,
+                owner=cast(io.IOBase, originals[0]) if self.state.allow_signal_close else None,
+            )
             writer = ObservedPipe(originals[1].fileno(), inbound=False, state=self.state)
             sys.stdin, sys.stdout = cast(TextIO, _TextView(originals[0], reader)), cast(
                 TextIO, _TextView(originals[1], writer)
@@ -522,13 +637,22 @@ class PhysicalEofGuard:
             self.state.on_eof = None
             for signum in installed:
                 loop.remove_signal_handler(signum)
-                signal.signal(signum, previous[signum])
+                if self.state.allow_signal_close and (
+                    self.state.local_input_closed or self.state.physical_eof
+                ):
+                    signal.signal(signum, self._closing_stop)
+                else:
+                    signal.signal(signum, previous[signum])
 
 
 def guard_from_environment(environment: Mapping[str, str]) -> PhysicalEofGuard | None:
-    value = environment.get(ENABLE_ENV)
-    if value is None:
+    physical = environment.get(ENABLE_ENV)
+    local = environment.get(SIGNAL_STOP_ENV)
+    if physical is None and local is None:
         return None
+    if physical is not None and local is not None:
+        raise GuardError("guard_mode_conflict")
+    value = physical if physical is not None else local
     if value != "1":
         raise GuardError("guard_activation_invalid")
-    return PhysicalEofGuard()
+    return PhysicalEofGuard(allow_signal_close=local is not None)
