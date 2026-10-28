@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from test.live_provider.claude_mcp_catalog import decode_frame
 from test.live_provider.claude_proxy_lifecycle import LifecycleAudit
+from test.live_provider.claude_requested_eof import RequestedEof
 
 
 class McpWitness:
@@ -54,10 +55,29 @@ def main():
         raise ValueError("denial_proxy_not_enabled")
     path = Path(os.environ["CAO_SPEC025_DENIAL_WITNESS"])
     root = Path(os.environ["CAO_SPEC025_DENIAL_ROOT"]).resolve()
-    if path.parent.resolve() != root or path.exists() or path.is_symlink():
+    if path.parent.resolve() != root or path.is_symlink():
+        raise ValueError("denial_witness_path_invalid")
+    if os.environ.get("CAO_SPEC025_DENIAL_EOF_FILE"):
+        launch_fd = os.open(
+            root / "eof-proxy-launches",
+            os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW,
+            0o600,
+        )
+        try:
+            os.write(launch_fd, b"proxy_launch\n")
+        finally:
+            os.close(launch_fd)
+    if path.exists():
         raise ValueError("denial_witness_path_invalid")
     if not sys.argv[1:]:
         raise ValueError("denial_proxy_command_missing")
+    eof_path = os.environ.get("CAO_SPEC025_DENIAL_EOF_FILE")
+    eof_token = os.environ.get("CAO_SPEC025_DENIAL_EOF_TOKEN")
+    if bool(eof_path) != bool(eof_token):
+        raise ValueError("eof_configuration_incomplete")
+    eof_control = RequestedEof(eof_path, eof_token, root) if eof_path else None
+    eof_requested = False
+    cli_eof = False
     witness = McpWitness()
     _write(path, witness.counts)
 
@@ -103,8 +123,20 @@ def main():
                     if buffers[direction]:
                         raise ValueError("denial_proxy_partial_frame")
                     if direction == "request":
+                        cli_eof = True
+                        if eof_requested:
+                            event("eof_cli_closed_early")
+                            raise ValueError("eof_cli_closed_early")
                         child.stdin.close()
+                    if direction == "response" and eof_requested:
+                        if selector.select(0):
+                            event("eof_late_input")
+                            raise ValueError("eof_late_input")
+                        selector.unregister(sys.stdin.buffer)
                     continue
+                if direction == "request" and eof_requested:
+                    event("eof_late_input")
+                    raise ValueError("eof_late_input")
                 received += len(data)
                 if received > 4 * 1024 * 1024:
                     raise ValueError("denial_proxy_input_limit")
@@ -112,13 +144,39 @@ def main():
                 while b"\n" in buffers[direction]:
                     line, buffers[direction] = buffers[direction].split(b"\n", 1)
                     if line.strip():
+                        if eof_control is not None:
+                            eof_control.observe(
+                                decode_frame(line), outbound=direction == "response"
+                            )
                         witness.frame(line, outbound=direction == "response")
                         _write(path, witness.counts)
                     stream = child.stdin if direction == "request" else sys.stdout.buffer
                     stream.write(line + b"\n")
                     stream.flush()
+            if eof_control is not None and not eof_requested and eof_control.requested():
+                if cli_eof:
+                    event("eof_cli_closed_early")
+                    raise ValueError("eof_cli_closed_early")
+                if (
+                    not eof_control.quiet()
+                    or witness.pending
+                    or any(buffers.values())
+                    or witness.counts["tools/call"]
+                ):
+                    event("eof_not_quiescent")
+                    raise ValueError("eof_not_quiescent")
+                if selector.select(0):
+                    continue
+                child.stdin.close()
+                eof_requested = True
+                event("requested_eof")
+        if eof_control is not None and not eof_requested:
+            raise ValueError("eof_request_not_observed")
         status = child.wait(timeout=max(0.1, deadline - time.monotonic()))
         event("child_wait_normal", status=status)
+        if eof_control is not None and not eof_control.quiet():
+            event("eof_not_quiescent")
+            raise ValueError("eof_unsettled_rpc")
         if status == 0 and not witness.pending:
             witness.counts["closed_cleanly"] = True
             _write(path, witness.counts)

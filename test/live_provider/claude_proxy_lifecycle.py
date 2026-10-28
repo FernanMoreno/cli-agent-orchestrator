@@ -10,6 +10,12 @@ from test.live_provider.claude_mcp_catalog import decode_frame
 EVENTS = frozenset(
     {
         "proxy_started",
+        "requested_eof",
+        "eof_not_quiescent",
+        "eof_late_input",
+        "eof_cli_closed_early",
+        "worker_requested_eof",
+        "worker_mcp_closed",
         "child_spawned",
         "stdin_eof",
         "stdout_eof",

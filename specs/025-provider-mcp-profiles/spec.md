@@ -1,5 +1,16 @@
 # Provider MCP profiles and current acceptance
 
+## Explicit diagnostic MCP EOF · T206
+
+FR184/SC168: Correct the diagnostic proxy shutdown by an explicit private nonce-bound
+EOF request before closing CLI input. Admit only zero tool calls, no bidirectional
+RPCs or partial buffers and no ready input; reject late bytes after admission.
+Require real MCP stdoutEOF, actual childwait0 and normal witness before CLI stdin
+close and CLIexit0, all within the same6s. Keep default/signal behavior unchanged;
+record harness_requested_mcp_eof and native_automatic_shutdown_accepted=false.
+No production policy change, permission expansion or T197automatic acceptance.
+
+
 ## Native proxy shutdown observation · T205
 
 FR183/SC167: Diagnose T204's missing proxy close witness with an opt-in private

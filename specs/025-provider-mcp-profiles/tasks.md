@@ -1,5 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T206 [US4] [FR184/SC168; T204] Implement/test/review explicit quiescent diagnostic MCP EOF before CLI input close; retain default/signals/6s and fail-closed late/pending controls. Integrate, accept a source-bound zero-turn preflight, then attempt the existing synthetic native client-denial case with exact scope/cleanup. No automaticT197/global inference.
+
+
 - [x] T205 [US4] [FR183/SC167; T204] Implement bounded private proxy lifecycle evidence, reproduce EOF/SIGINT/SIGTERM/partial-frame failure controls without Claude, review/integrate and execute one zero-turn native catalog/shutdown diagnostic. Classify actual observation separately from shutdown correction and client-denial acceptance.83PASS/architecture5-0/ClaudeGO; native32e5755d/528pins observes SIGINT2→KeyboardInterrupt→cleanupSIGTERM→actualchildwait-15, no proxyEOF/normalmarker. WorkerCLIexit0, cutoff6s fails;40.542s/min10621MiB,groupretired/sourceprivatepreserved. Diagnostic complete; T204/CL07/automaticT197 remainOPEN.
 
 

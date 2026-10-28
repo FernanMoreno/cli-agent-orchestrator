@@ -1,5 +1,17 @@
 # Plan: provider MCP profiles
 
+## T206 · explicit EOF with bounded quiescence
+
+Add a strict opt-in request-file helper and bidirectional RPC observer. The stdio
+proxy reads/writes raw pipes without prefetch, drains current events before
+checking the private marker, refuses pending RPC/partial data/tool dispatch, and
+continues watching late CLI bytes while waiting for actual server EOF/exit0.
+Worker requests MCP EOF while native CLI is idle after catalog/result, requires
+normal lifecycle evidence before closing CLI input, and shares one6s deadline.
+Test positive/pending/late/invalid/signal cases with actual owned processes,
+review/integrate, then serial zero-turn native preflight and synthetic T204 case.
+
+
 ## T205 · observe the existing transport before changing shutdown
 
 Add optional exclusive0600 lifecycle logging to the diagnostic proxy, fixed event

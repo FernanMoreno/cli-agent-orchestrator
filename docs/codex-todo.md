@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T206 implementado: EOF diagnóstico explícito, RPC/buffers/canales quietos,0tools-call, cierre MCP real0 antes de CLIstdin y6s compartidos;96pruebas PASS/composición5/0. Nativo pendiente; automáticoT197 yT204/CL07 aún abiertos. [Preparación](../specs/025-provider-mcp-profiles/validation-t206.md).
+
 T205 diagnóstico cerrado: proxy recibeSIGINT2 durante salida nativa, lanzaKeyboardInterrupt y su limpieza solicitaSIGTERM; waitstatus real del MCP -15 tras ese SIGTERM del proxy, sin EOF/marcador normal.83pruebas PASS, caso40,542s/mínimo10621MiB, grupo retirado/0turnos/sinlogin/API/PG. Preflight sigue FAILED; T204/CL07/automáticoT197 abiertos. EOF controlado es propuesta todavía. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t205.md).
 
 T204:74pruebas PASS/composición5/0/ClaudeGO para verificadores. Preflight nativo r2 conecta3herramientas y0llamadas, pero falla cierre limpio del proxy tras salida0 de Claude;43,618s/mínimo10543MiB, grupo retirado,0turnos/login/API/PG. Import privado de r1 reproducido y corregido antes de r2. T204/CL07 siguen abiertos; falta resolver apagado antes del turno sintético. [Resultados y límites](../specs/025-provider-mcp-profiles/validation-t204.md).
