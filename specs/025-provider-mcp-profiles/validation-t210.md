@@ -1,9 +1,10 @@
 # T210 — owned MCP shutdown before Claude retirement
 
-Status: source implementation and the scoped native zero-turn control passed;
-T209 is complete in that scope. T210 and full T197 remain open. The fresh r5
-full-journey attempt stopped at expired OAuth admission before native startup.
-No default activation or full-journey acceptance is claimed.
+Status: T209 source/SDK/native-zero and T197/T210's original native journey
+passed in the explicit production owned-signal-stop mode. R6 native PASS plus
+independent closure supersedes r5's failed OAuth admission without rewriting
+its receipt. Default/global acceptance remains open. See
+[r6 evidence and limits](validation-t197-native-r6.md).
 
 ## Reproduced cause and changed boundary
 
@@ -192,3 +193,14 @@ were reclosed and executed archives preserved. T197/T210 remain open; do not
 repeat the authenticated run against the same expired stage or infer a product
 shutdown regression from this preflight failure. See the sanitized
 [r5 projection](validation-t197-r5.json).
+
+## Subsequent original journey r6
+
+On source b22b85fa, the current operator profile passed admission and r6 returned
+native journey/cleanup PASS:2messages/rows/events,1restart, stable identity,
+normalSDKseal within6s and41identities retired. The original parentFALSE from
+strict-resolve after workspace removal is preserved; a separate read-only,
+source-bound closure checker proves the same physical removal condition and
+all other original criteria. Claude review GO. T197/T210 close only for this
+explicit production collaboration/owned-stop mode; no default, vendor500ms,
+all-provider, Work or global inference. [Full record](validation-t197-native-r6.md).

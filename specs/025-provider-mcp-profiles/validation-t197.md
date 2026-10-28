@@ -111,3 +111,13 @@ before API/native/model startup. FAILED preflight, not an acceptance or a new
 shutdown failure. Original receipts remain unchanged. T197/T210 stay open.
 See [r5 projection](validation-t197-r5.json) and the
 [closure and scope](validation-t210.md#original-full-journey-attempt-r5).
+
+## Subsequent native acceptance r6
+
+The current operator profile allowed the original journey to run on b22b85fa:
+native result/cleanup PASS,2messages/rows/events,1restart, normalSDKseal within6s,
+41identities retired. The parentFALSE from resolving the removed staging HOME
+is preserved; independent read-only closure verifies physical removal and all
+other original conditions, with Claude GO. T197/T210 close only for the explicit
+production collaboration/owned-signal-stop mode. Default/Work/global gates stay
+separate. [Evidence and limits](validation-t197-native-r6.md).
