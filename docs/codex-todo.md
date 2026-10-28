@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T202 real:2mensajes/2filas/2eventos/1reinicio y cierre EOF con sello dentro de6s correctos;35identidades/PG propios retirados. Aceptación global FALSE por contenedor preexistente ausente al final, con actividad Docker Testcontainers observada. No se rebaja preservación; T202/T197 automático siguen abiertos.268pruebas PASS y revisión GO. [Resultado y límites](../specs/025-provider-mcp-profiles/validation-t202.md).
+
 T201 cerrado: SDK real distingue EOF normal de SIGINT/SIGTERM; sólo EOF previo permite sello normal. T202 implementado en diagnóstico opt-in,268pruebas PASS/composición/ClaudeGO; pruebas nativas pendientes. T197 automático sigue abierto. [Diagnóstico](../specs/025-provider-mcp-profiles/validation-t201.md) · [T202](../specs/025-provider-mcp-profiles/validation-t202.md).
 
 T200 completado como diagnóstico: Claude registra SIGINT→SIGTERM, CLI/MCP desaparecen antes de DELETE sin sello. Código/señal real de terminación no acreditados; T197 sigue abierto. T201 aislará retorno/excepción del SDK stdio sin modelo ni cuenta. [Evidencia](../specs/025-provider-mcp-profiles/validation-t200.md).

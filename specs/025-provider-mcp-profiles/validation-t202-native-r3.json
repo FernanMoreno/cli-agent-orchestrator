@@ -1,0 +1,97 @@
+{
+  "schema": "caos.t202.explicit-eof-messages.v1",
+  "native_version": "2.1.303",
+  "requested_model": "claude-sonnet-4-6",
+  "served_model_attested": false,
+  "postgres_owned": true,
+  "postgres_profile": "cao-spec021-local-postgres-v3",
+  "private_observation": {
+    "attempted": true,
+    "viewport_saved": false,
+    "catalog_not_collected": true
+  },
+  "journey": {
+    "provider": "claude_code",
+    "result": "pass",
+    "mcp_calls": [
+      {
+        "tool": "send_message",
+        "status": "completed",
+        "outcome": "success"
+      },
+      {
+        "tool": "send_message",
+        "status": "completed",
+        "outcome": "success"
+      }
+    ],
+    "shutdown_mode": "harness_requested_eof",
+    "native_automatic_shutdown_accepted": false,
+    "claude_quiescent_eof_requested": true,
+    "claude_eof_outcome": "normal_eof_verified",
+    "first_row_identity_matched": true,
+    "events_redacted": true,
+    "terminals_preserved": true,
+    "row_count": 2,
+    "event_count": 2,
+    "api_replacements": 1,
+    "cleanup": "pass",
+    "failure_stage": "none",
+    "failure_point": "none",
+    "failure_kind": "none",
+    "failure_http_status": 0,
+    "last_terminal_status": "unknown",
+    "failure_elapsed_ms": 0,
+    "failure_detail": "none"
+  },
+  "borrowers_stopped": true,
+  "observer_retired": true,
+  "observed_owned_identities": 35,
+  "observed_owned_identities_retired": true,
+  "source_unchanged": true,
+  "postgres_owner_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "original_containers_preserved": false,
+  "staged_credentials_removed": true,
+  "operator_unchanged": true,
+  "minimum_sampled_memory_mib": 8883,
+  "memory_floor_satisfied": true,
+  "seconds": 140.557,
+  "message_server_scope_attested": true,
+  "accepted": false,
+  "source_head": "dd5589176963082bb8acb6af1d146fefe65cb0b4",
+  "source_bindings": 508,
+  "native_automatic_shutdown_accepted": false,
+  "exit_diagnostic": {
+    "budget": "within_nominal_budget",
+    "exit_request": "http_200",
+    "schema": "spec023.claude-exit-diagnostic.v2",
+    "seal_poll_result": "seal_found_poll_return_before_deadline"
+  },
+  "phase_turns": {
+    "phases": {
+      "after_restart": {
+        "causal_turn_verified": true,
+        "expected_sequence": 1,
+        "generation_changed": false,
+        "generation_reused": false,
+        "observed_completed": 1,
+        "observed_sequence": 1,
+        "receipt_verified": true,
+        "terminal_status": "completed"
+      },
+      "before_restart": {
+        "causal_turn_verified": true,
+        "expected_sequence": 4,
+        "generation_changed": false,
+        "generation_reused": false,
+        "observed_completed": 4,
+        "observed_sequence": 4,
+        "receipt_verified": true,
+        "terminal_status": "completed"
+      }
+    },
+    "schema": "caos.message-phase-turn-observations.v1"
+  }
+}
