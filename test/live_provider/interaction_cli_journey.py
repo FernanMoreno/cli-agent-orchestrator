@@ -3298,13 +3298,13 @@ def run(
     restart_during_wait: bool = False,
 ) -> dict[str, Any]:
     if restart_during_wait and (
-        provider_name != "codex"
+        provider_name not in {"codex", "claude_code"}
         or not agui_restart
         or diagnose_mcp
         or probe_create_tool
         or preserve_unclassified_mcp_error
     ):
-        raise ValueError("inflight_wait_requires_codex_agui_restart")
+        raise ValueError("inflight_wait_requires_supported_agui_restart")
     if provider_name == "opencode_cli":
         if not agui_restart or diagnose_mcp or probe_create_tool or preserve_unclassified_mcp_error:
             return {"provider": provider_name, "result": "unsupported_provider"}
@@ -4330,19 +4330,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--restart-during-wait",
         action="store_true",
-        help="Codex only: crash the owned API while its first native wait is in progress",
+        help="Codex/Claude: crash the owned API while its first native wait is in progress",
     )
     args = parser.parse_args(argv)
     diagnose_mcp = args.diagnose_mcp or args.diagnose_create_tool
     if diagnose_mcp and args.agui_restart:
         parser.error("--agui-restart cannot be combined with MCP diagnostics")
     if args.restart_during_wait and (
-        args.provider != "codex"
+        args.provider not in {"codex", "claude_code"}
         or not args.agui_restart
         or diagnose_mcp
         or args.preserve_unclassified_mcp_error
     ):
-        parser.error("--restart-during-wait requires Codex --agui-restart without diagnostics")
+        parser.error(
+            "--restart-during-wait requires Codex/Claude --agui-restart without diagnostics"
+        )
     return args
 
 

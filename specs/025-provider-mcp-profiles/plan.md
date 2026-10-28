@@ -1,5 +1,20 @@
 # Plan: provider MCP profiles
 
+## T195 · extend the existing active-wait gate to Claude
+
+Baseline Claude2.1.303 Q/A/ACK/AGUI restart passes on f77e3e66 but explicitly
+leaves inflight recovery unobserved. The actual event normalizer already maps
+Claude assistant.tool_use and user.tool_result to the same native-call states
+used by the Codex gate. Extend only explicit provider admission/CLI help, test
+both actual event forms and negative worker/group/result/deadline/duplicate
+controls, and retain all existing barriers. No second journey/controller or
+production MCP retry change. Graphify's generated fixture coverage is limited;
+read-only impact traversal is checked against run/parser/API observation source.
+After offline/composition/peer checks, integrate main and rebind the accepted
+private adapter to current source with restart_during_wait=True. Execute one
+serial native case only after admission; record success or its first unobserved
+boundary without assigning historical cause or closing all T012/global gates.
+
 ## T194 · package closure before Codex model/tool diagnostics
 
 The installed0.164 package contains bin/codex-code-mode-host but historical

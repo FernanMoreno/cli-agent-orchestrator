@@ -1,5 +1,18 @@
 # Provider MCP profiles and current acceptance
 
+## Claude recovery while a native wait is active · T195
+
+FR173/SC157: The existing interrupted-wait diagnostic shall also support Claude
+Code using its normalized native tool-use/result stream. Restart only after one
+exact native wait is in progress and the matching API worker entered that same
+group's bounded wait. Preserve no-return-before-crash, distinct old/new worker,
+exactly one native call, two server entries with decreasing remaining timeout,
+one ready result, stable AG-UI identity and exact question/version/receipt ACK.
+Keep75s/6144MiB, model, cost/tool permissions, credential isolation and cleanup.
+A plain restart PASS does not establish interrupted-wait recovery; offline parser
+controls do not establish native acceptance. Unsupported providers/invalid
+combinations remain rejected before resources.
+
 ## Complete pinned Codex runtime admission · T194
 
 FR172/SC156: A model/tool diagnostic must not admit only the Codex executable

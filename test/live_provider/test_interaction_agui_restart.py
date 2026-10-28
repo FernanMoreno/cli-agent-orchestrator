@@ -491,18 +491,20 @@ def test_worker_binding_rejects_wrong_host_or_port_before_importing_application(
         run_worker(43127)
 
 
-def test_inflight_native_mode_is_explicit_and_codex_only():
-    assert journey._parse_args(["codex"]).restart_during_wait is False
-    args = journey._parse_args(["codex", "--agui-restart", "--restart-during-wait"])
+@pytest.mark.parametrize("provider", ["codex", "claude_code"])
+def test_inflight_native_mode_is_explicit_for_supported_providers(provider):
+    assert journey._parse_args([provider]).restart_during_wait is False
+    args = journey._parse_args([provider, "--agui-restart", "--restart-during-wait"])
     assert args.restart_during_wait and args.agui_restart
     for argv in (
         ["codex", "--restart-during-wait"],
-        ["claude_code", "--agui-restart", "--restart-during-wait"],
+        ["claude_code", "--restart-during-wait"],
+        ["opencode_cli", "--agui-restart", "--restart-during-wait"],
     ):
         with pytest.raises(SystemExit):
             journey._parse_args(argv)
-    with pytest.raises(ValueError, match="inflight_wait_requires_codex"):
-        journey.run("codex", restart_during_wait=True)
+    with pytest.raises(ValueError, match="inflight_wait_requires_supported"):
+        journey.run(provider, restart_during_wait=True)
 
 
 def test_inflight_barrier_and_recovery_require_one_native_wait_and_two_worker_entries(tmp_path):
@@ -924,3 +926,81 @@ def test_agui_source_owner_matches_verified_loopback_worker_principal(
     monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
     with pytest.raises(PermissionError):
         journey._source_owner_for_journey(auth, agui_restart=True)
+
+
+def test_claude_inflight_run_enters_existing_private_preflight(monkeypatch):
+    class PrivateBoundaryReached(Exception):
+        pass
+
+    def closed_root():
+        raise PrivateBoundaryReached()
+
+    monkeypatch.setattr(journey, "_private_root", closed_root)
+    with pytest.raises(PrivateBoundaryReached):
+        journey.run("claude_code", agui_restart=True, restart_during_wait=True)
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "wrong_group",
+        "same_worker",
+        "renewed_timeout",
+        "tool_error",
+        "wrong_result_id",
+        "duplicate_call",
+    ],
+)
+def test_claude_native_wait_stream_preserves_strict_recovery(tmp_path, defect):
+    output, audit = tmp_path / "claude.jsonl", tmp_path / "observations.jsonl"
+    call = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "native-wait-1",
+                    "name": "mcp__cao-mcp-server__cao_wait_for_user_answers",
+                    "input": {"group_id": "g1", "wait_seconds": 20},
+                }
+            ]
+        },
+    }
+    output.write_text(json.dumps(call) + "\n")
+    append_observation(
+        audit, {"event": "wait_started", "group_id": "g1", "worker_pid": 1234, "wait_seconds": 20}
+    )
+    assert journey._inflight_wait_entry(output, audit, "g1", 1234)
+    append_observation(
+        audit,
+        {
+            "event": "wait_started",
+            "group_id": "wrong" if defect == "wrong_group" else "g1",
+            "worker_pid": 1234 if defect == "same_worker" else 5678,
+            "wait_seconds": 20 if defect == "renewed_timeout" else 12,
+        },
+    )
+    append_observation(
+        audit,
+        {"event": "wait_returned", "group_id": "g1", "state": "ready", "question_versions": []},
+    )
+    assert not journey._inflight_wait_entry(output, audit, "g1", 1234)
+    result = {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "unknown" if defect == "wrong_result_id" else "native-wait-1",
+                    "is_error": defect == "tool_error",
+                    "content": [{"type": "text", "text": json.dumps({"state": "ready"})}],
+                }
+            ]
+        },
+    }
+    with output.open("a") as stream:
+        stream.write(json.dumps(result) + "\n")
+        if defect == "duplicate_call":
+            stream.write(json.dumps(call).replace("native-wait-1", "native-wait-2") + "\n")
+    assert journey._inflight_wait_recovery(output, audit, "g1", 1234, 5678) is (defect is None)

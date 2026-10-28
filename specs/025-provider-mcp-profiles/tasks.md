@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T195 [US4] [FR173/SC157; T012/CL-09] Extend existing interrupted-wait admission to Claude using its native normalized tool stream; preserve the exact active-call/server-worker barrier, one-call/two-entry bounded recovery and ACK/AGUI/cleanup criteria. Validate actual event-shape positive/negative controls, review/integrate/repin and execute one current native case; no plain-restart or offline-only acceptance inference.
+
 2026-10-28 · auditoría de recibos/código: T079/T092/T117 cerrados en su alcance por aceptaciones posteriores T101/T134/T135. No se reejecutan ni se renombran recibos fallidos; diagnósticos históricos sin frontera causal conservan sus límites. [Contraste](validation-pending-reconciliation-20261028.md).
 
 - [x] T194 [US4] [FR172/SC156; T190] Reproduce incomplete Codex package snapshots, require independently pinned package/host/resource closure before credential staging, preserve complete runtime layout and validate model-free host handshake before a fresh actual message journey. No Code Mode disabling, permission widening, global reinstall or automatic historical-cause claim.

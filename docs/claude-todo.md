@@ -1,5 +1,7 @@
 # Claude Code: análisis y pendientes
 
+T195: habilitado el modo existente de reinicio durante espera activa para Claude;102pruebas PASS/arquitectura5-0/ClaudeGO. Conserva barreras, descenso estricto del plazo, ACK y límites. Falta aceptación nativa; CL-09/T012 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t195.md).
+
 Auditoría de pendientes históricos: T079/T092/T117 ya cubiertos por T101/T134/T135, cerrados sin repetir modelos ni modificar recibos fallidos. Comparaciones históricas no observadas y gates globales siguen separados. [Contraste](../specs/025-provider-mcp-profiles/validation-pending-reconciliation-20261028.md).
 
 Claude interacción actual PASS enf77e3e66:2preguntas/2respuestas/ACK con identidad/versiones/recibos exactos y reinicio/AG-UI estable. CLI37,64s, total70,898s/min10090MiB,505pins y limpieza/originales intactos. Falta reiniciar durante espera activa: CL-09/T012 siguen abiertos; no explica504 histórico ni acepta cuota/Work/global. [Resultado](../specs/025-provider-mcp-profiles/validation-claude-interaction-restart-current.md).
