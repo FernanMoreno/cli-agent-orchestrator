@@ -1,8 +1,12 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [x] T191 [US4] [FR169/SC153] Correct structured input acknowledgement/current-turn correlation, including generation reuse after API restart; retain bounded metadata-only phase observations and R3's failed outcome. Evaluate the isolated tool-offer proposal without claiming equivalence to the missing R3 catalog; leave it closed. Preserve180s/6144MiB and every original effect/audit/cleanup gate. Real acceptance remains T190.
+
+T191:230PASS/arquitectura5-0 y revisión ClaudeGO; se reprodujeron ACK ambiguos, estado obsoleto, aceptación antes del recibo y reutilización de generación tras reinicio. [Validación y límites](validation-t191.md).
+
 - [ ] T190 [US4] [FR168/SC152] Refresh interpreter/provider-source admission in the existing generic-message journey, then validate actual Codex sender/receiver model-origin messages on both sides of API restart with exact PostgreSQL/AG-UI/audit/cleanup and unchanged budgets. Separate preparation, failed diagnostics and native acceptance; Work/global gates remain independent.
 
-T190 preparación: EOF diagnóstico implementado/revisado;203pruebas combinadas PASS (23del módulo incluidas), arquitectura5-0. Control nativo0,358s confirma hijo retirado y sello antes de cerrar Codex; dos fases de mensajes del modelo pendientes. No acredita cierre automático nativo ni rebaja criterios. [Evidencia y límites](validation-t190-preparation.md).
+T190 preparación: EOF diagnóstico implementado/revisado;203pruebas combinadas PASS (23del módulo incluidas), arquitectura5-0. Control nativo0,358s confirma hijo retirado y sello antes de cerrar Codex; R3real42a55705 falló sin efectos y con limpieza completa; T191 investiga el turno causal y oferta de herramientas. Dos fases aún no aceptadas; no acredita cierre automático nativo ni rebaja criterios. [Evidencia y límites](validation-t190-preparation.md).
 
 - [x] T189 [US4] [FR167/SC151] Validate the exact structured native send_message result against one new PostgreSQL row and redacted AG-UI delivery; reject stale/duplicate effects, preserve identity through API restart without resend, and prove excluded-call no-effect plus owned cleanup. Keep offline witness preparation and native acceptance separate; no Work/global credit.
 

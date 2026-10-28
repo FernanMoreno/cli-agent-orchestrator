@@ -51,6 +51,7 @@ NATIVE_FAILURE_POINTS = frozenset(
         "topology_check",
         "inbox_check",
         "phase_wait",
+        "phase_input",
     }
 )
 NATIVE_FAILURE_KINDS = frozenset(

@@ -89,6 +89,7 @@ _REQUIRED_GENERIC_MESSAGE_SOURCE_BINDINGS = frozenset(
         "src/cli_agent_orchestrator/providers/manager.py",
         "src/cli_agent_orchestrator/providers/codex.py",
         "src/cli_agent_orchestrator/providers/claude_code.py",
+        "src/cli_agent_orchestrator/services/turn_recovery_service.py",
         "src/cli_agent_orchestrator/utils/tool_mapping.py",
         "src/cli_agent_orchestrator/utils/mcp_tool_policy.py",
         "src/cli_agent_orchestrator/utils/mcp_readiness.py",
@@ -1360,6 +1361,7 @@ def test_phase_wait_classifies_a_settled_turn_without_tool_call(
     state.sender_id = "a" * 8
     state.receiver_id = "b" * 8
     state.active_server = types.SimpleNamespace(url="http://phase.test")
+    state.expected_turn_sequence = 1
     clock = [100.0]
 
     monkeypatch.setattr(message_api_restart_live.time, "monotonic", lambda: clock[0])
@@ -1373,8 +1375,10 @@ def test_phase_wait_classifies_a_settled_turn_without_tool_call(
     monkeypatch.setattr(message_api_restart_live, "_get_rows", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         message_api_restart_live,
-        "_terminal_status",
-        lambda *args, **kwargs: "idle",
+        "_terminal_turn_observation",
+        lambda *args, **kwargs: message_api_restart_live._PhaseTurnObservation(
+            "idle", 1, 1, "c" * 32, True
+        ),
     )
 
     class _Capture:

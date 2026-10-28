@@ -1,5 +1,21 @@
 # Plan: provider MCP profiles
 
+## T191 · current-turn correlation and offered-tool observation
+
+Reproduce false/ambiguous input acknowledgements and cached completed status
+from an earlier dispatch in offline controls. Validate the returned sequence;
+poll existing terminal metadata for exact identity/provider, sequence and
+durable receipt verification. Bind one observed generation inside each phase;
+do not treat turn_completed's unseen-turn backstop as provider execution.
+Persist at most one metadata-only observation per phase at finalization, using
+the existing private writer once. Keep the real R3 failure and its cleanup.
+Evaluate a closed, source-bound native TUI probe with synthetic HTTP and no
+operator login. Its empty private model home has no proven catalog equivalence
+to R3, so retain it closed and make no actual-offer or causal claim from it.
+Instrument the existing real journey privately to retain an owned bounded
+failure viewport and selected model-cache metadata before cleanup. Do not
+change global status-monitor semantics or broaden grants.
+
 ## T190 · current native Codex generic messages
 
 Refresh the existing message_api_restart_live lane rather than constructing a

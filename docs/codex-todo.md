@@ -1,6 +1,8 @@
 # Codex: análisis y pendientes
 
-T190 sigue abierto: cierre diagnóstico por EOF implementado y revisado, conservando el sello original.203pruebas combinadas pasan (incluidos23controles del módulo); control nativo sin modelo confirma salida/sello antes de cerrar Codex en0,358s,501pins y10958MiB, sin tocar login. Las dos fases nativas de mensajes aún no se han ejecutado. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t190-preparation.md).
+T191 corrige la admisión/correlación común del recorrido: ACK estructurado y generación nueva/verificada, incluso al reiniciar los contadores.230pruebas PASS/arquitectura5-0/ClaudeGO; sin cambios de permisos ni aceptación real nueva. R3 conserva su fallo; R4 preparado con observación privada antes de cleanup. [Límites](../specs/025-provider-mcp-profiles/validation-t191.md).
+
+T190 sigue abierto: cierre diagnóstico por EOF implementado y revisado, conservando el sello original.203pruebas combinadas pasan (incluidos23controles del módulo); control nativo sin modelo confirma salida/sello antes de cerrar Codex en0,358s,501pins y10958MiB, sin tocar login. R3real42a55705 falló en faseA sin llamadas/efectos y con limpieza completa; el estado completed no estaba ligado al turno nuevo. T191 corrige la admisión/correlación y observa oferta nativa antes de repetir. Las dos fases aún no están aceptadas. [Preparación y límites](../specs/025-provider-mcp-profiles/validation-t190-preparation.md).
 
 T189 PASS acotado: Codex0.164 app-server MCP→API autenticada→1fila PostgreSQL/1evento AG-UI exactos; reinicio sin reenvío,401sin efecto y denegación nativa del cliente.101,572s/498pins/10170MiB, limpieza y login intactos;66pruebas pasan. Los actores registrados/receptor son mock_cli: no cierra recorrido de terminal Codex, autorización por operación, Work ni CX-05/global. [Evidencia](../specs/025-provider-mcp-profiles/validation-t189.md).
 

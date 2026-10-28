@@ -91,6 +91,7 @@ _SOURCE_BINDING_FILES = (
     "src/cli_agent_orchestrator/services/inbox_service.py",
     "src/cli_agent_orchestrator/services/status_monitor.py",
     "src/cli_agent_orchestrator/services/terminal_service.py",
+    "src/cli_agent_orchestrator/services/turn_recovery_service.py",
     "src/cli_agent_orchestrator/utils/orchestration.py",
     "src/cli_agent_orchestrator/utils/mcp_resolution.py",
     "src/cli_agent_orchestrator/utils/tool_mapping.py",
@@ -197,6 +198,10 @@ class RunState:
     terminals_preserved: bool = False
     audit_failed: bool = False
     shutdown_mode: str = "not_observed"
+    expected_turn_sequence: int | None = None
+    previous_turn_generation: str | None = None
+    observed_turn_generation: str | None = None
+    turn_observations: dict[str, dict[str, Any]] | None = None
     claude_auth_staging_attempted: bool = False
     api_replacements: int = 0
     stage: str = "preflight"
@@ -217,6 +222,7 @@ class RunState:
         self.deleted_ids = set()
         self.captures = []
         self.phase_rows = []
+        self.turn_observations = {}
 
 
 class AguiCapture:
@@ -479,6 +485,7 @@ def _hash_candidate_bindings(candidate_dir: Path) -> dict[str, str]:
         "message_mcp_observer.py",
         "message_mcp_shutdown.py",
         "test_message_mcp_shutdown.py",
+        "test_message_phase_binding.py",
         "sitecustomize.py",
         "claude_auth_archive.py",
     )
@@ -714,6 +721,69 @@ def _terminal_status(base_url: str, terminal_id: str, *, failure_stage: str) -> 
     return value if isinstance(value, str) else "unknown"
 
 
+@dataclass(frozen=True)
+class _PhaseTurnObservation:
+    status: str
+    sequence: int | None
+    completed: int | None
+    generation: str | None
+    verified: bool
+
+
+_UNKNOWN_PHASE_TURN = _PhaseTurnObservation("unknown", None, None, None, False)
+
+
+def _terminal_turn_observation(
+    base_url: str, terminal_id: str, *, provider: str, failure_stage: str, deadline: float
+) -> _PhaseTurnObservation:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return _UNKNOWN_PHASE_TURN
+    status, data = _api_request(
+        "GET",
+        f"{base_url}/terminals/{terminal_id}",
+        timeout=min(2.0, remaining),
+        failure_stage=failure_stage,
+    )
+    if status == 404:
+        return _PhaseTurnObservation("missing", None, None, None, False)
+    if (
+        status != 200
+        or not isinstance(data, dict)
+        or data.get("id") != terminal_id
+        or data.get("provider") != provider
+    ):
+        return _UNKNOWN_PHASE_TURN
+    sequence, completed = data.get("turn_sequence"), data.get("turn_completed")
+    if (
+        type(sequence) is not int
+        or sequence < 0
+        or type(completed) is not int
+        or not 0 <= completed <= sequence
+    ):
+        return _UNKNOWN_PHASE_TURN
+    value = data.get("status")
+    terminal_status = (
+        value if isinstance(value, str) and value in NATIVE_TERMINAL_STATUSES else "unknown"
+    )
+    turn = data.get("turn")
+    generation = turn.get("generation") if isinstance(turn, dict) else None
+    bound = (
+        isinstance(turn, dict)
+        and turn.get("terminal_id") == terminal_id
+        and turn.get("provider") == provider
+        and type(generation) is str
+        and re.fullmatch(r"[0-9a-f]{32}", generation) is not None
+    )
+    return _PhaseTurnObservation(
+        terminal_status,
+        sequence,
+        completed,
+        generation if bound else None,
+        bool(bound and turn.get("state") == "verified"),
+    )
+
+
 def _wait_ready(
     base_url: str,
     terminal_id: str,
@@ -791,16 +861,76 @@ def _start_stream(state: RunState, base_url: str, *, failure_stage: str) -> Agui
     return capture
 
 
-def _submit_trigger(base_url: str, sender_id: str, phase: str) -> None:
-    status, body = _api_request(
-        "POST",
-        f"{base_url}/terminals/{sender_id}/input",
-        params={"message": phase_trigger(phase)},
-        timeout=12.0,
-        failure_stage="phase_a" if phase == "before_restart" else "phase_b",
+def _submit_trigger(
+    base_url: str, sender_id: str, phase: str, *, state: RunState | None = None
+) -> int:
+    stage = "phase_a" if phase == "before_restart" else "phase_b"
+    started = time.monotonic()
+    if state is not None:
+        state.observed_turn_generation = None
+        try:
+            prior_status, prior = _api_request(
+                "GET",
+                f"{base_url}/terminals/{sender_id}/turn",
+                failure_stage=stage,
+                timeout=2.0,
+            )
+        except AcceptanceFailure:
+            _record_native_failure(
+                state, point="phase_input", kind="request_error", started_at=started
+            )
+            raise
+        previous_generation = prior.get("generation") if isinstance(prior, dict) else None
+        valid_prior = (
+            prior_status == 200
+            and isinstance(prior, dict)
+            and prior.get("terminal_id") == sender_id
+            and prior.get("provider") == state.provider
+            and (
+                (previous_generation is None and prior.get("state") == "none")
+                or (
+                    type(previous_generation) is str
+                    and re.fullmatch(r"[0-9a-f]{32}", previous_generation) is not None
+                )
+            )
+        )
+        if not valid_prior:
+            _record_native_failure(
+                state, point="phase_input", kind="invalid_shape", started_at=started
+            )
+            raise AcceptanceFailure(stage)
+        state.previous_turn_generation = previous_generation
+    try:
+        status, body = _api_request(
+            "POST",
+            f"{base_url}/terminals/{sender_id}/input",
+            params={"message": phase_trigger(phase)},
+            timeout=12.0,
+            failure_stage=stage,
+        )
+    except AcceptanceFailure:
+        if state is not None:
+            _record_native_failure(
+                state, point="phase_input", kind="request_error", started_at=started
+            )
+        raise
+    valid = (
+        isinstance(body, dict)
+        and body.get("success") is True
+        and type(body.get("turn_sequence")) is int
+        and body["turn_sequence"] > 0
     )
-    if status not in {200, 201, 202} or not isinstance(body, dict):
-        raise AcceptanceFailure("phase_a" if phase == "before_restart" else "phase_b")
+    if status not in {200, 201, 202} or not valid:
+        if state is not None:
+            _record_native_failure(
+                state,
+                point="phase_input",
+                kind="http_status" if status not in {200, 201, 202} else "invalid_shape",
+                started_at=started,
+                http_status=status,
+            )
+        raise AcceptanceFailure(stage)
+    return body["turn_sequence"]
 
 
 def _accumulate_event_evidence(evidence: list[bool], batch: list[bool]) -> bool:
@@ -867,6 +997,10 @@ def _await_phase(
     stage = "phase_a" if phase == "before_restart" else "phase_b"
     if state.sender_id is None or state.receiver_id is None or state.active_server is None:
         raise AcceptanceFailure(stage)
+    if type(state.expected_turn_sequence) is not int or state.expected_turn_sequence <= 0:
+        raise AcceptanceFailure(stage)
+    if phase not in {"before_restart", "after_restart"}:
+        raise AcceptanceFailure(stage)
     try:
         persisted_bodies = tuple(
             expected_persisted_message(body, state.sender_id) for body in expected_bodies
@@ -881,6 +1015,8 @@ def _await_phase(
     next_status_poll = phase_started
     settled_polls = 0
     settled_since: float | None = None
+    expected_generation: str | None = None
+    turn_verified = False
     while time.monotonic() < deadline:
         if _audit_failure_present(state):
             raise AcceptanceFailure("observer_audit")
@@ -917,25 +1053,68 @@ def _await_phase(
         # server.  The old loop waited the full 180 seconds and then emitted an
         # all-``none`` receipt, which made a provider error indistinguishable
         # from a turn that simply never called a tool.  Poll the already
-        # persisted terminal status at a bounded cadence, and retain only a
-        # fixed status code.  Once any dispatch/row/event evidence exists, the
-        # status poll is unnecessary and is skipped to avoid adding load to the
-        # normal successful path.
+        # terminal's fixed metadata at a bounded cadence. Keep polling after
+        # effects: a cached ready status or unseen-turn counter backstop is not
+        # completion of this dispatch. Require its verified durable receipt.
         now = time.monotonic()
         evidence_seen = bool(records or matching_rows or phase_events)
-        if not evidence_seen and now >= next_status_poll:
+        if now >= next_status_poll:
             try:
-                last_terminal_status = _terminal_status(
-                    base_url, state.sender_id, failure_stage=stage
+                observation = _terminal_turn_observation(
+                    base_url,
+                    state.sender_id,
+                    provider=state.provider,
+                    failure_stage=stage,
+                    deadline=deadline,
                 )
             except AcceptanceFailure:
                 # The existing row/audit requests remain authoritative.  A
                 # transient status read must not turn a healthy dispatch into
                 # a false provider failure; the final deadline records the
                 # last status that was actually observed.
-                last_terminal_status = "unknown"
+                observation = _UNKNOWN_PHASE_TURN
+            last_terminal_status = observation.status
+            matches = observation.sequence == state.expected_turn_sequence
+            generation_changed = False
+            generation_reused = bool(
+                matches
+                and observation.generation is not None
+                and observation.generation == state.previous_turn_generation
+            )
+            if matches and observation.generation is not None and not generation_reused:
+                if expected_generation is None:
+                    expected_generation = observation.generation
+                    state.observed_turn_generation = expected_generation
+                else:
+                    generation_changed = observation.generation != expected_generation
+            turn_verified = bool(
+                matches
+                and observation.verified
+                and expected_generation is not None
+                and observation.generation == expected_generation
+                and not generation_reused
+            )
+            state.turn_observations[phase] = {
+                "expected_sequence": state.expected_turn_sequence,
+                "observed_sequence": observation.sequence,
+                "observed_completed": observation.completed,
+                "terminal_status": last_terminal_status,
+                "receipt_verified": observation.verified,
+                "causal_turn_verified": turn_verified,
+                "generation_changed": generation_changed,
+                "generation_reused": generation_reused,
+            }
             state.last_terminal_status = last_terminal_status
             next_status_poll = now + _PHASE_STATUS_POLL_SECONDS
+            if generation_changed or generation_reused:
+                _record_native_failure(
+                    state,
+                    point="phase_wait",
+                    kind="mismatch",
+                    started_at=phase_started,
+                    terminal_status=last_terminal_status,
+                )
+                raise AcceptanceFailure(stage)
 
             failure_kind = _phase_failure_kind(last_terminal_status)
             if failure_kind is not None:
@@ -948,14 +1127,16 @@ def _await_phase(
                 )
                 raise AcceptanceFailure(stage)
 
-            if last_terminal_status in _PHASE_SETTLED_STATUSES:
+            if (
+                not evidence_seen
+                and turn_verified
+                and last_terminal_status in _PHASE_SETTLED_STATUSES
+            ):
                 settled_polls += 1
                 if settled_since is None:
                     settled_since = now
-                # Give a slow provider enough time to transition from its
-                # ready marker to processing.  After the grace window, a
-                # stable ready terminal with no MCP/row/AG-UI evidence is a
-                # deterministic "turn without tool" outcome.
+                # Only the verified current turn can satisfy this grace
+                # window; cached readiness from an earlier turn cannot.
                 if (
                     settled_polls >= 3
                     and settled_since is not None
@@ -978,8 +1159,8 @@ def _await_phase(
             and matching_rows[-1].get("message") == persisted_phase_body
             and matching_rows[-1].get("status") == "delivered"
             and phase_events == [True]
-            and _wait_ready(base_url, state.sender_id, timeout=1.6, failure_stage=stage)
-            in {"idle", "completed"}
+            and turn_verified
+            and last_terminal_status in _PHASE_SETTLED_STATUSES
             and _wait_ready(base_url, state.receiver_id, timeout=1.6, failure_stage=stage)
             in {"idle", "completed"}
         ):
@@ -1869,7 +2050,9 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
 
         state.stage = "phase_a"
         capture_a = _start_stream(state, server_a.url, failure_stage="phase_a")
-        _submit_trigger(server_a.url, sender_id, "before_restart")
+        state.expected_turn_sequence = _submit_trigger(
+            server_a.url, sender_id, "before_restart", state=state
+        )
         rows_a = _await_phase(
             state,
             capture=capture_a,
@@ -1967,7 +2150,9 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
 
         state.stage = "phase_b"
         capture_b = _start_stream(state, server_b.url, failure_stage="phase_b")
-        _submit_trigger(server_b.url, sender_id, "after_restart")
+        state.expected_turn_sequence = _submit_trigger(
+            server_b.url, sender_id, "after_restart", state=state
+        )
         rows_final = _await_phase(
             state,
             capture=capture_b,
@@ -2021,6 +2206,10 @@ def run_selected_message_acceptance(request: Any) -> dict[str, Any]:
     ):
         state.result = "failed"
         _record_failure_stage(state, "observer_audit")
+    _write_private_json(
+        run_root / "phase-turn-observations.json",
+        {"schema": "caos.message-phase-turn-observations.v1", "phases": state.turn_observations},
+    )
     safe = project_safe_receipt(
         {
             "provider": state.provider,

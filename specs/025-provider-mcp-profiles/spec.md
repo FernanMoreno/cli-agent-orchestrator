@@ -1,5 +1,21 @@
 # Provider MCP profiles and current acceptance
 
+## Causal phase admission and model-offer diagnosis · T191
+
+FR169/SC153: A generic-message phase must consume the production input
+acknowledgement: `success is True` and a positive integer `turn_sequence`.
+Never infer delivery from HTTP success alone or resend an uncertain input.
+Bind ready/no-tool and success observations to that dispatch and its verified
+durable turn, not cached terminal status or the unseen-turn counter backstop.
+Retain only bounded, fixed metadata for the two phases before cleanup removes
+the private workspace. Preserve180s, memory, exact audits/effects and cleanup.
+The T190 R3 no-tool failure remains failed; a reproduced harness weakness does
+not prove its historical cause. Evaluate model-request probes against their
+effective catalog before deriving a cause or changing discovery permissions.
+Keep an unmatched synthetic probe closed; it cannot attest R3's offers. A fresh
+real-account diagnostic must preserve bounded owned failure observations before
+cleanup. Catalogs are not model offers; model-offer gates remain independent.
+
 ## Native provider message journey · T190
 
 FR168/SC152: Reuse the existing generic-message restart journey with actual

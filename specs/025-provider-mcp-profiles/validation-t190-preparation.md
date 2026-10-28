@@ -104,3 +104,22 @@ padre, login/fuente intactos y grupos/copias propios retirados. Evidencia privad
 La generación r3 del recorrido con modelo está preparada y sigue cerrada hasta
 fijar el commit de esta corrección. Los recibos anteriores se conservan bajo
 sus propias fuentes; no se les atribuye retrospectivamente el código nuevo.
+
+## R3 real: fallo conservado, limpieza completa
+
+La generación r3 ejecutó la fuente42a55705 con502pins, Codex0.164 y actores
+registrados Codex. Falló en faseA: el arnés registró `no_tool_call`, estado
+terminal `completed`,29,328s de espera y0dispatch/filas/eventos. No hubo reinicio
+de API. Duración total83,864s y memoria mínima9776MiB.20identidades observadas,
+API/tmux/hijos y observador retirados; PostgreSQL propio y red exactos ausentes,
+contenedores previos preservados, copias de login retiradas y original intacto.
+El descriptor quedó cerrado y el recibo/archivo ejecutado se preservan.
+[Recibo redaccionado](validation-t190-native-r3.json).
+
+Ese `completed` no estaba correlacionado al turno aceptado por POSTinput: el
+arnés descartaba `turn_sequence`. No acredita que el modelo terminara ese turno.
+La respuesta real del modelo no se conservó antes de la limpieza. Se investigan
+por separado la correlación causal y la oferta/diferimiento de herramientas;
+ninguna hipótesis queda demostrada por este recibo. T191 reproduce el fallo de
+validación del ACK y la clasificación de estado obsoleto. T190 sigue abierto;
+no se repite el mismo diagnóstico sin una observación nueva.
