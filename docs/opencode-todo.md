@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T190 Codex real PASS en090f01d8:2send_message exitosos/2filas PostgreSQL entregadas/2eventos AG-UI, reinicio API e identidad preservada, paquete completo43assets y ejecutable real observado antes de cadafase.100,586s/min9314MiB,25identidades propias retiradas/limpieza y credenciales intactas. Cierre MCP por EOF diagnóstico; no acepta cierre automático, ACK exacto, Work ni gates globales. [Recibo y límites](../specs/025-provider-mcp-profiles/validation-t190-native-r5.md).
+
 T193 compartido: corregido el DELETE reintentado que podía matar una ventana sustituta tras cleanup diferido. Guarda PostgreSQL exacta/indexada antes de crear, migración corev3 aditiva;421pruebas distintas PASS/arquitectura5-0/ClaudeGO, hermanos y tombstones preservados. Sin nueva aceptación nativa; T143 amplio/T013 siguen abiertos. [Evidencia](../specs/025-provider-mcp-profiles/validation-t193.md).
 
 T192 compartido: recreación de sesión rechazada cuando la limpieza de una fila antigua queda pendiente; conserva propietario y permite reintento.127pruebas distintas PASS, incluidas3integraciones PostgreSQL/tmux, arquitectura5-0/ClaudeGO. No añade aceptación nativa ni cierra OC-06/T143. [Evidencia](../specs/025-provider-mcp-profiles/validation-t192.md).

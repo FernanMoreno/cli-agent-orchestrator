@@ -1,0 +1,63 @@
+{
+  "schema": "caos.t190.sanitized-native-acceptance.v1",
+  "date": "2026-10-28",
+  "source_head": "090f01d8aba2f7891db3cff807720da0377c2fdd",
+  "source_pin_count": 505,
+  "provider": "codex",
+  "native_version": "0.164.0",
+  "requested_model": "gpt-6-luna",
+  "served_model_attested": false,
+  "complete_runtime_assets": 43,
+  "actual_sender_executable_attested_before_each_phase": true,
+  "executed_archive_preserved": true,
+  "operational_descriptor_reclosed": true,
+  "postgres_owned": true,
+  "postgres_profile": "cao-spec021-local-postgres-v3",
+  "journey": {
+    "provider": "codex",
+    "result": "pass",
+    "mcp_calls": [
+      {
+        "tool": "send_message",
+        "status": "completed",
+        "outcome": "success"
+      },
+      {
+        "tool": "send_message",
+        "status": "completed",
+        "outcome": "success"
+      }
+    ],
+    "shutdown_mode": "harness_requested_eof",
+    "native_automatic_shutdown_accepted": false,
+    "first_row_identity_matched": true,
+    "events_redacted": true,
+    "terminals_preserved": true,
+    "row_count": 2,
+    "event_count": 2,
+    "api_replacements": 1,
+    "cleanup": "pass",
+    "failure_stage": "none",
+    "failure_point": "none",
+    "failure_kind": "none",
+    "failure_http_status": 0,
+    "last_terminal_status": "unknown",
+    "failure_elapsed_ms": 0,
+    "failure_detail": "none"
+  },
+  "borrowers_stopped": true,
+  "observer_retired": true,
+  "observed_owned_identities": 25,
+  "observed_owned_identities_retired": true,
+  "source_unchanged": true,
+  "postgres_owner_closed": true,
+  "exact_owned_container_absent": true,
+  "exact_owned_network_absent": true,
+  "original_containers_preserved": true,
+  "staged_credentials_removed": true,
+  "operator_unchanged": true,
+  "minimum_sampled_memory_mib": 9314,
+  "memory_floor_satisfied": true,
+  "seconds": 100.586,
+  "accepted": true
+}

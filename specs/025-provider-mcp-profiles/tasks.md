@@ -2,7 +2,7 @@
 
 - [x] T194 [US4] [FR172/SC156; T190] Reproduce incomplete Codex package snapshots, require independently pinned package/host/resource closure before credential staging, preserve complete runtime layout and validate model-free host handshake before a fresh actual message journey. No Code Mode disabling, permission widening, global reinstall or automatic historical-cause claim.
 
-T194 validado:267pruebas distintas PASS/arquitectura5-0/ClaudeGO; lector antes de auth/PG, snapshot43assets y handshake nativo hello/abrir/cerrar/EOF/salida0/grupo retirado PASS sin modelo/red/auth (10848MiB). T190 sigue abierto; copia antigua solo-binario era defecto del lanzador, sin causa histórica completa acreditada. [Preparación](validation-t194-preparation.md).
+T194 validado:267pruebas distintas PASS/arquitectura5-0/ClaudeGO; lector antes de auth/PG, snapshot43assets y handshake nativo hello/abrir/cerrar/EOF/salida0/grupo retirado PASS sin modelo/red/auth (10848MiB). T190 validado después por R5; copia antigua solo-binario era defecto del lanzador, sin causa histórica completa acreditada. [Preparación](validation-t194-preparation.md).
 
 - [x] T193 [US4] [FR171/SC155; T143] Reproduce supported same-session window-label reuse after ordinary deletion stops a pane but retains its provider/row. Prevent a retry from targeting a replacement; preserve sibling/different-label progress, old cleanup retry and bounded PostgreSQL/session authority. Verify actual backend contracts before the minimal fix; separate native/distributed gates.
 
@@ -18,9 +18,11 @@ T190 R4 en99eeafff: FAILED faseA/reconcile_required, generación nueva sin recib
 
 T191:230PASS/arquitectura5-0 y revisión ClaudeGO; se reprodujeron ACK ambiguos, estado obsoleto, aceptación antes del recibo y reutilización de generación tras reinicio. [Validación y límites](validation-t191.md).
 
-- [ ] T190 [US4] [FR168/SC152] Refresh interpreter/provider-source admission in the existing generic-message journey, then validate actual Codex sender/receiver model-origin messages on both sides of API restart with exact PostgreSQL/AG-UI/audit/cleanup and unchanged budgets. Separate preparation, failed diagnostics and native acceptance; Work/global gates remain independent.
+- [x] T190 [US4] [FR168/SC152] Refresh interpreter/provider-source admission in the existing generic-message journey, then validate actual Codex sender/receiver model-origin messages on both sides of API restart with exact PostgreSQL/AG-UI/audit/cleanup and unchanged budgets. Separate preparation, failed diagnostics and native acceptance; Work/global gates remain independent.
 
-T190 preparación: EOF diagnóstico implementado/revisado;203pruebas combinadas PASS (23del módulo incluidas), arquitectura5-0. Control nativo0,358s confirma hijo retirado y sello antes de cerrar Codex; R3real42a55705 falló sin efectos y con limpieza completa; T191 investiga el turno causal y oferta de herramientas. Dos fases aún no aceptadas; no acredita cierre automático nativo ni rebaja criterios. [Evidencia y límites](validation-t190-preparation.md).
+T190 Codex real PASS en090f01d8:2send_message exitosos/2filas PostgreSQL entregadas/2eventos AG-UI, reinicio API e identidad preservada, paquete completo43assets y ejecutable real observado antes de cadafase.100,586s/min9314MiB,25identidades propias retiradas/limpieza y credenciales intactas. Cierre MCP por EOF diagnóstico; no acepta cierre automático, ACK exacto, Work ni gates globales. [Recibo y límites](validation-t190-native-r5.md).
+
+T190 preparación histórica anterior a R5: EOF diagnóstico implementado/revisado;203pruebas combinadas PASS (23del módulo incluidas), arquitectura5-0. Control nativo0,358s confirma hijo retirado y sello antes de cerrar Codex; R3real42a55705 falló sin efectos y con limpieza completa; T191 investiga el turno causal y oferta de herramientas. Dos fases aún no aceptadas; no acredita cierre automático nativo ni rebaja criterios. [Evidencia y límites](validation-t190-preparation.md).
 
 - [x] T189 [US4] [FR167/SC151] Validate the exact structured native send_message result against one new PostgreSQL row and redacted AG-UI delivery; reject stale/duplicate effects, preserve identity through API restart without resend, and prove excluded-call no-effect plus owned cleanup. Keep offline witness preparation and native acceptance separate; no Work/global credit.
 

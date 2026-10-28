@@ -1,6 +1,6 @@
 # T194 · paquete Codex completo antes de mensajes con modelo
 
-**Admisión y handshake nativo validados. Aceptación de mensajes T190 pendiente.**
+**Admisión y handshake nativo validados. T190 validado después en R5.**
 
 El diagnóstico fijaba una copia del ejecutable Codex0.164 sin su auxiliar
 `codex-code-mode-host`. El paquete instalado sí contiene ese binario y los
@@ -60,7 +60,8 @@ re-cerrado, fuentes inalteradas. Negativo ENOENT del host del snapshot antiguo
 sin ejecutarlo: no acredita la causalidad histórica de R4. Preflight real de
 namespace/imports/firmas/pipes/plazo y revisión ClaudeGO antes de armar.
 
-T194 cerrado para admisión/capacidad del host. T190 sigue abierto: nuevo recorrido
-con paquete completo y fuente actual, dos envíos reales, PostgreSQL, AG-UI,
+T194 cerrado para admisión/capacidad del host. El siguiente recorrido T190,
+[validado después en R5](validation-t190-native-r5.md), requería paquete completo y
+fuente actual, dos envíos reales, PostgreSQL, AG-UI,
 reinicio, auditoría/sello y limpieza, sin cambiar180s/6144MiB. Este control
 sin modelo no acredita mensajes, autorización ni resultados del modelo.
