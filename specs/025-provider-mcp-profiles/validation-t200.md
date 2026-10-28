@@ -41,3 +41,38 @@ finales. Se conserva pre_exit_metadata_status como dato inicial del binding;
 no es un estado nuevo consultado después de salir. El recibo del recorrido
 seguirá sin aceptar mensajes (trigger suprimido); el informe externo distinguirá
 observación completada, sello normal dentro de6s y aceptación de mensajes.
+
+
+## Control real r1
+
+Fuente `d48420da5d7916086c27c62e7271c2f72a4609a6`,507bindings. Trigger suprimido antes de preguntas/
+mensajes:0MCPcalls/0filas/0eventos, sin reinicio. Metadata inicialIDLE; identidades
+CLI y MCP presentes/estadoS antes de exit. Tras el helper de6s y antes de DELETE,
+ambas identidades y directorios /proc ausentes, pane otra vez en shell, sin sello.
+HTTP200 de exit/no_seal_at_poll_return/exhausted_after_poll. La CLI sí salió:
+no es sólo la rama de omisión WAITING ni un MCP vivo esperando indefinidamente.
+Todavía no se distingue terminación por señal de excepción/fracaso de cierre.
+
+Controlador85,112s, mínimo9589MiB;26identidades observadas retiradas, API/tmux/
+observador detenidos antes de cerrar PG, contenedor/red exactos ausentes,
+otros contenedores y login intactos, staging retirado.507pins y archivo
+inmutables; descriptor recerrado. [Recibo](validation-t200-native-r1.json).
+El accepted=false del recorrido se conserva: la supresión intencional no acepta
+mensajes ni convierte ausencia de sello en cierre correcto.
+
+Siguiente observación r2: --debug-file verificado con el --help del binario
+instalado2.1.303, que habilita debug implícitamente. Un wrapper sólo del API añade
+la ruta de log nativo precreada0600 bajo raíz privada a cada comando original.
+MCP/observer/PYTHONPATH permanecen iguales; no se repiten mensajes. El log puede
+contener secretos: permanece privado y sólo se extraerán códigos/señales fijos
+tras revisar la procedencia. No hay strace instalado y no se reinstala nada.
+12grupos/30imports PASS incluyen el Popen real/closure y constructor de debug/
+argumentos/0600/exclusividad/id inválido. El diagnóstico r2 sigue cerrado a la
+espera de revisión; sin cambio productivo ni atribución retrospectiva de señal.
+
+
+Revisión r2 ClaudeGO. Se vincula además el inode/device/modo del log al fd
+precreado, antes de lanzar el CLI, para verificar identidad y0600 al extraer.
+El control del constructor real comprueba ese binding. Los archivos debug no
+se publican; sólo se admitirán eventos fijos/código/señal con contexto MCP
+reconocido. Un log sin evento de cierre seguirá siendo no concluyente.

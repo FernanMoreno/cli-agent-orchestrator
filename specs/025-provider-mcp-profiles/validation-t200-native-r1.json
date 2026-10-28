@@ -1,0 +1,103 @@
+{
+  "source_head": "d48420da5d7916086c27c62e7271c2f72a4609a6",
+  "source_bindings": 507,
+  "observation_completed": true,
+  "message_acceptance": false,
+  "normal_closure_observed": false,
+  "pane_returned_to_shell": true,
+  "before": {
+    "identities": {
+      "cli": {
+        "observed": true,
+        "proc_directory_exists": true,
+        "process_state": "S",
+        "same_identity_present": true
+      },
+      "mcp": {
+        "observed": true,
+        "proc_directory_exists": true,
+        "process_state": "S",
+        "same_identity_present": true
+      }
+    },
+    "normal_seal_present": false,
+    "pane_capture_status": 0,
+    "pane_display_status": 0,
+    "phase": "before",
+    "pre_exit_metadata_status": "idle"
+  },
+  "after": {
+    "identities": {
+      "cli": {
+        "observed": true,
+        "proc_directory_exists": false,
+        "same_identity_present": false
+      },
+      "mcp": {
+        "observed": true,
+        "proc_directory_exists": false,
+        "same_identity_present": false
+      }
+    },
+    "normal_seal_present": false,
+    "pane_capture_status": 0,
+    "pane_display_status": 0,
+    "phase": "after",
+    "pre_exit_metadata_status": "idle"
+  },
+  "exit_diagnostic": {
+    "budget": "exhausted_after_poll",
+    "exit_request": "http_200",
+    "schema": "spec023.claude-exit-diagnostic.v2",
+    "seal_poll_result": "no_seal_at_poll_return"
+  },
+  "controller_receipt": {
+    "schema": "caos.t200.native-exit-diagnostic.v1",
+    "native_version": "2.1.303",
+    "requested_model": "claude-sonnet-4-6",
+    "served_model_attested": false,
+    "postgres_owned": true,
+    "postgres_profile": "cao-spec021-local-postgres-v3",
+    "model_trigger_suppressed": true,
+    "private_observation": {
+      "attempted": true,
+      "viewport_saved": false,
+      "catalog_not_collected": true
+    },
+    "journey": {
+      "provider": "claude_code",
+      "result": "failed",
+      "mcp_calls": [],
+      "first_row_identity_matched": false,
+      "events_redacted": false,
+      "terminals_preserved": false,
+      "row_count": 0,
+      "event_count": 0,
+      "api_replacements": 0,
+      "cleanup": "pass",
+      "failure_stage": "phase_a",
+      "failure_point": "none",
+      "failure_kind": "none",
+      "failure_http_status": 0,
+      "last_terminal_status": "unknown",
+      "failure_elapsed_ms": 0,
+      "failure_detail": "none"
+    },
+    "borrowers_stopped": true,
+    "observer_retired": true,
+    "observed_owned_identities": 26,
+    "observed_owned_identities_retired": true,
+    "source_unchanged": true,
+    "postgres_owner_closed": true,
+    "exact_owned_container_absent": true,
+    "exact_owned_network_absent": true,
+    "original_containers_preserved": true,
+    "staged_credentials_removed": true,
+    "operator_unchanged": true,
+    "minimum_sampled_memory_mib": 9589,
+    "memory_floor_satisfied": true,
+    "seconds": 85.112,
+    "message_server_scope_attested": false,
+    "accepted": false
+  }
+}
