@@ -1,5 +1,17 @@
 # Plan: provider MCP profiles
 
+## T208 · bounded transition observer
+
+Add a diagnostic-only context manager around the actual guard instance EOF/
+stop methods and the process-local original `os._exit`. Capture only fixed
+transition names/status, monotonic time and whitelisted counter state; use
+nonblocking locks for audit/snapshot attempts so diagnostics cannot delay exit.
+Restore original hooks; retain partial evidence and mark write/limit failures.
+Record lifespan raised/returned and main phases without synthesizing closure.
+Validate actual FD EOF, signals, exception identity, exit delegation, privacy,
+bounds and strict readers; review/integrate before a fresh r2 controller. Keep
+failed r1 immutable and fullT197/default activation blocked until real evidence.
+
 ## T207 · physical transport observation before default activation
 
 Use thread-safe wire accounting and owned binary stdin/stdout buffers exposed

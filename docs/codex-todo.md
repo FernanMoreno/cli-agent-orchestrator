@@ -1,6 +1,8 @@
 # Codex: análisis y pendientes
 
-T207: guarda MCP de EOF físico implementada de forma opt-in; revisión independiente GO. Se corrigió además un bloqueo reproducido del ejecutor tras cancelar un hilo. La regresión final pasó50pruebas; tipos/formato/arquitectura5-0 pasan. Sigue pendiente la prueba nativa directa; no se activó por defecto ni se cerró T197. [Estado y límites](../specs/025-provider-mcp-profiles/validation-t207.md).
+T208: observador de EOF/señales/salida y estado del proceso implementado,24pruebas PASS y revisión GO. Conserva errores originales, privacidad y límites; pendiente un diagnóstico nativo nuevo. No cambia el guard productivo ni acepta T197. [Validación](../specs/025-provider-mcp-profiles/validation-t208.md).
+
+T207: guarda MCP de EOF físico implementada de forma opt-in; revisión independiente GO. Se corrigió además un bloqueo reproducido del ejecutor tras cancelar un hilo. La regresión final pasó50pruebas; tipos/formato/arquitectura5-0 pasan. Primera prueba nativa directa FALLÓ: Claude0 sin sello normal MCP dentro de6s;39,026s/mínimo10581MiB,533fuentes intactas y procesos retirados. EOF/señal/vencimiento no observados; T208 instrumentará esas transiciones. No se activó por defecto ni se cerró T197. [Estado y límites](../specs/025-provider-mcp-profiles/validation-t207.md).
 
 T206 yT204 aceptados en su alcance: EOF controlado real1491,912ms y después denegación nativaClaude (catálogo3/ofertaHTTP2/errorcorrelacionado/0MCPcalls), cierre1330,143ms. Fuente7af13f34/530pins,96pruebas PASS; ambos grupos retirados/sinlogin/API/PG. Backend local sintético; modoEOF explícito, automáticoT197 yCL07 global siguen abiertos. [T206](../specs/025-provider-mcp-profiles/validation-t206.md) · [T204](../specs/025-provider-mcp-profiles/validation-t204.md).
 

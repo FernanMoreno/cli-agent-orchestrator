@@ -1,5 +1,18 @@
 # Provider MCP profiles and current acceptance
 
+## Native guard transition evidence · T208
+
+FR186/SC170: Observe the first unobserved shutdown boundary before another
+behavior change: actual guard input EOF, received stop callback, requested
+process exit and lifespan/main phases. Use bounded private metadata only,
+nonblocking audit attempts, strict fixed schemas and no packet IDs/content,
+credentials, new persistent worker, proxy or manufactured EOF/seal. Preserve
+wrapped exceptions/status and exact original exit function; audit failure
+cannot establish acceptance. Exercise real pipes and failure/privacy controls,
+review/integrate, then one fresh source-bound zero-turn native diagnostic with
+original6s/180s/6144MiB criteria and positive owned retirement. No signal sender
+or exit status inference when not actually observed. T207r1 remains FAILED.
+
 ## Physical EOF and native stop signals · T207
 
 FR185/SC169: Add a dormant opt-in stdio guard for the real bundled MCP server.

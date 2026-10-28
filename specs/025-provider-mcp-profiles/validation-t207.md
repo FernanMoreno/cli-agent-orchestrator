@@ -1,7 +1,7 @@
 # T207 · physical MCP EOF guard
 
-Status: dormant implementation reviewed and final regression passed; current
-native direct-MCP preflight pending. Earlier review findings were corrected. The opt-in is dormant:
+Status: dormant implementation integrated in a36fc3c7 and final regression
+passed; first current native direct-MCP preflight FAILED. No default activation. The opt-in is dormant:
 `CAO_INTERNAL_MCP_PHYSICAL_EOF=1`. No provider default has changed, and T197
 native automatic message/restart acceptance remains open.
 
@@ -97,3 +97,20 @@ builder and guard environment, two native-control-shaped pipe observations,
 exclusive writers/strict readers and the normal observer signature. It starts
 no native CLI, service or login operation. Descriptor is closed until a commit
 and independent immutable execution archive bind its actual bytes and sources.
+
+## First direct native preflight · FAILED
+
+[Structured result](validation-t207-native-r1.json): source
+`a36fc3c7c6a2787d73aacaaaad5980d9be65b5d5`,533bindings unchanged,
+Claude2.1.303,39.026s/min10581MiB. Verified no-egress/masks, no operator login
+copy, no API/PostgreSQL or model turn. Catalog3; observed wire contains no
+`tools/call`. Claude exits0 about565ms after input close, but the original
+shared6s cutoff has no normal SDK seal or server-main outcome. Only lifespan
+entry is observed. The journal records frames, not EOF or signal transitions,
+so it does not identify a stop signal, actual shutdown EOF or guard exit70.
+Do not infer any of those from a missing outcome.
+
+Parent and exact owned MCP identity are positively retired; sources and frozen
+execution archive are preserved, and operational controller is reclosed against
+its original digest. T207native and T197 remain unaccepted. T208 adds bounded,
+content-free guard transition observations before another current-source run.
