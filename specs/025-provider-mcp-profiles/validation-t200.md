@@ -76,3 +76,28 @@ precreado, antes de lanzar el CLI, para verificar identidad y0600 al extraer.
 El control del constructor real comprueba ese binding. Los archivos debug no
 se publican; sólo se admitirán eventos fijos/código/señal con contexto MCP
 reconocido. Un log sin evento de cierre seguirá siendo no concluyente.
+
+
+## Control real r2 · señales de cierre registradas por el cliente
+
+Fuente `18f4a48b9e44abb4aca10efea95fdb78de613957`,507bindings. Registro nativo en archivo0600 con
+inode/device originales verificados, helper/API ligados por hash. Se repiten
+metadataIDLE, CLI/MCP presentes antes y ausentes antes de DELETE, sin sello.
+El cliente registra SIGINT,100ms después escalado a SIGTERM y51ms después
+salida reportada como limpia. El log no da código de salida ni estado waitpid:
+son intenciones/eventos del cliente, no prueba de que SIGTERM mató al hijo ni
+reconstrucción de la señal exacta de T197r2. El sello normal sigue fallido.
+Sólo se exportan enums/señales/offsets del log y números de línea reconocidos;
+el log crudo y su hash quedan privados. Los offsets no sustituyen el deadline
+monotónico del helper de6s.
+
+Controlador74,913s, mínimo9651MiB;0triggers/0MCPcalls/0filas/eventos/reinicios.
+No es telemetría externa del backend.25identidades observadas retiradas, API/
+tmux/observador detenidos antes de cerrar PG, contenedor/red exactos ausentes,
+originales preservados y staging auth retirado.507pins/archivo ejecutado/helper
+verificados y descriptor recerrado. [Recibo](validation-t200-native-r2.json).
+
+T200 cierra su observación acotada de salida nativa. T197 permanece abierto,
+sin aumentar6s ni convertir señales en sello normal. T201 contrastará el SDK
+stdio real con EOF/SIGINT/escalado sin Claude/modelo/auth/PG para observar la
+salida de FastMCP.run directamente antes de elegir una corrección.

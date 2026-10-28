@@ -1,5 +1,15 @@
 # Provider MCP profiles and current acceptance
 
+## SDK stdio completion under native signal sequences · T201
+
+FR179/SC163: Reproduce the first missing FastMCP.run boundary with the installed
+SDK, without Claude/account/model/API/PostgreSQL. Compare genuine stdin EOF,
+SIGINT with stdin held open and SIGINT followed by SIGTERM after100ms. Use the
+same real audit observer/normal-completion writer, write a completion marker
+only after genuine normal return and preserve exceptions. Record parent-owned
+returncode, exact sent/cleanup signals and deadline outcomes; never count
+forced cleanup or signal arrival as normal audit closure.
+
 ## Native exit versus normal MCP audit seal · T200
 
 FR178/SC162: Diagnose the first missing shutdown boundary after T197r2's two

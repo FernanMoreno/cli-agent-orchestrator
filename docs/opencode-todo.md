@@ -1,5 +1,7 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+T200 completado como diagnóstico: Claude registra SIGINT→SIGTERM, CLI/MCP desaparecen antes de DELETE sin sello. Código/señal real de terminación no acreditados; T197 sigue abierto. T201 aislará retorno/excepción del SDK stdio sin modelo ni cuenta. [Evidencia](../specs/025-provider-mcp-profiles/validation-t200.md).
+
 T197r2: dos send_message reales correctos,2filas/2eventos AG-UI y turnos/recibos exactos a través de1reinicio; perfil/filtro MCP atestados. Gate completo fallido: HTTP200 de exit sin sello normal en6s;33identidades/PG retirados y507pins/login intactos. T200 investiga cierre sin repetir modelo. [Resultado](../specs/025-provider-mcp-profiles/validation-t197.md).
 
 T199 cerrado: aviso inicial Security notes reconocido sólo en viewport completo/actual, una vez.249pruebas PASS, arquitectura5-0/ClaudeGO y receptor real HTTP201/IDLE en13,487s;507pins,15identidades/PG retirados y login intacto. Parada antes de emisor: T197 mensajes sigue abierto. [Resultado](../specs/025-provider-mcp-profiles/validation-t199.md).

@@ -1,5 +1,19 @@
 # Plan: provider MCP profiles
 
+## T201 · observe SDK return/exception directly before a shutdown change
+
+T200 observes actual CLI signal intents and child retirement but lacks the
+MCP child's wait status/exception. Use a tiny real FastMCP stdio process with
+no tools/effects and the actual observer/seal producer. Admit pinned interpreter,
+SDK versions/source bytes and helper signatures; initialize/initialized/ping
+through real JSONRPC before each stimulus. Preserve6s close observation and
+separate any later owned cleanup. Freeze private executed scripts and keep
+stdin/child ownership explicit. Generated repository graph has no third-party
+SDK implementation; inspect installed run/run_stdio sources and the canonical
+sitecustomize normal/exception branches directly. This is offline/synthetic
+transport evidence, not native/provider/model/operation acceptance. Determine
+root cause before changing production or any existing T197 criteria.
+
 ## T200 · diagnose exit without replaying successful model messages
 
 T197r2 fails only normal audit closure after two verified message phases; the

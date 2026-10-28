@@ -1,6 +1,8 @@
 # Tasks: provider MCP profiles and acceptance
 
-- [ ] T200 [US4] [FR178/SC162; T197] Diagnose HTTP200 exit without normal MCP seal using a zero-model sender-ready control and private before/after viewport + exact MCP identity observations before DELETE. Preserve6s budget/criteria/source/account/PG ownership and original failed receipts; reproduce the first incorrect boundary before fixing shutdown.
+- [ ] T201 [US4] [FR179/SC163; T197] Reproduce real SDK stdio EOF/SIGINT/SIGINT→SIGTERM outcomes with actual audit observer/normal marker and parent-owned exit status, no Claude/auth/model/API/PG. Preserve6s criteria, exceptions and failed receipts; distinguish forced cleanup and synthetic transport evidence before implementing a shutdown fix.
+
+- [x] T200 [US4] [FR178/SC162; T197] Diagnose HTTP200 exit without normal MCP seal using a zero-model sender-ready control and private before/after viewport + exact MCP identity observations before DELETE. Preserve6s budget/criteria/source/account/PG ownership and original failed receipts; reproduce the first incorrect boundary before fixing shutdown.
 
 - [x] T199 [US4] [FR177/SC161; T197] Reproduce captured first-run Security notes timeout offline, recognize only the complete current viewport and confirm once within the existing startup handler. Preserve all readiness/auth/permission/deadline gates, test stale/partial/unrelated and continuation controls, review and validate the actual receiver startup before retrying messages.
 
