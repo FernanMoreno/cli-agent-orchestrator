@@ -1,5 +1,7 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [ ] T198 [US4] [FR176/SC160; T197] Retain source-bound receiver startup evidence before compensation with a private exception-preserving API observer; test privacy/propagation/stopping, review and run one receiver-only diagnostic under existing memory/deadline/ownership gates. Diagnose before changing product behavior; keep T197 unaccepted until actual messages pass.
+
 - [ ] T197 [US4] [FR175/SC159; T011] Execute the existing real-Claude generic-message/API-restart lane with current source/native/interpreter/auth/PG ownership admission and original exact row/event/turn/audit/seal/cleanup criteria. Validate/review fresh closed adapter before staging; retain failed and accepted evidence distinctly, without Work/profile/global inference or login mutation.
 
 - [x] T196 [US4] [FR174/SC158] Reproduce and correct false auth/quota diagnostic flags from incidental401 IDs and healthy rate_limit_event status. Share typed rejection evidence with no-ACK failure classification, retain explicit real error/text compatibility and timeout/success/receipt/cleanup gates, test malformed/unknown/status/type/privacy controls, review and integrate without rewriting prior native receipts or repeating healthy model runs.

@@ -1,6 +1,6 @@
 # Claude Code: análisis y pendientes
 
-T197 preparado: entry Claude limitado a collaboration/send_message, constructor y middleware compuestos,239pruebas PASS/arquitectura5-0/ClaudeGO. Actualiza bindings y observación del perfil MCP antes de cada envío; falta el caso real, no acepta todavía mensajes ni todos los perfiles. [Preparación](../specs/025-provider-mcp-profiles/validation-t197.md).
+T197 real falló al arrancar el receptor: HTTP500/provider_init_timeout,146572ms; no llegó al emisor ni a mensajes/MCP/reinicio. Limpieza completa,13identidades retiradas,505bindings y login originales intactos. Preparación239PASS sigue diferenciada de aceptación. T198 capturará el viewport antes de compensar; causa aún no probada. [Resultado](../specs/025-provider-mcp-profiles/validation-t197.md).
 
 T196 corregido:12RED/4controles→144pruebas distintas PASS (125interacción/reinicio+19consumidorOpenCode), arquitectura5-0/ClaudeGO. Metadata nativa para rechazos, sin401porID ni rate_limit_event informativo; timeout/aceptación/recibos previos intactos. Sin nuevo modelo ni cambio productivo. [Resultado](../specs/025-provider-mcp-profiles/validation-t196.md).
 

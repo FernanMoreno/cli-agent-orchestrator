@@ -1,5 +1,19 @@
 # Plan: provider MCP profiles
 
+## T198 · observe the first missing startup boundary
+
+T197 r1 failed before receiver registration and cleanup removed its viewport.
+Read-only Graphify lookup has no source_location entries for the relevant
+provider/API fixtures; verify initialize -> backend history/status -> API
+compensation directly against source. Wrap the private API entrypoint to install
+an exception-preserving initialize observer and a shell command lookup in a
+subshell before the original command. Capture backend history before rollback,
+without extra status transitions or key presses. Validate wrapper imports,
+exception identity, private writes and receiver-only stopping offline first.
+Derive a fresh closed controller from T197, hold PG ownership until borrowers
+retire, review before activation and pin/archive actual executed bytes. Keep
+original failed evidence; no production fix until the capture proves its cause.
+
 ## T197 · reuse the current generic-message provider lane for Claude
 
 The selected-provider journey already supports claude_code and its bounded

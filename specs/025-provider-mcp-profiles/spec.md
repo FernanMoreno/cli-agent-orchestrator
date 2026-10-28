@@ -1,5 +1,15 @@
 # Provider MCP profiles and current acceptance
 
+## Claude startup evidence before compensation · T198
+
+FR176/SC160: Capture the actual receiver startup viewport and executable lookup
+before initialize unwinds into terminal compensation. Preserve provider status
+and exceptions, all original startup deadlines, permissions and account state.
+A private API-only wrapper must not propagate into MCP descendants. Use the
+existing owned PostgreSQL/native message fixture, stop after the receiver POST
+and never start a sender/model message. Keep raw UI private0600 and report only
+source-bound diagnostic findings. This is diagnosis, not message acceptance.
+
 ## Claude model-origin generic messages across API replacement · T197
 
 FR175/SC159: Exercise the existing selected-provider generic-message journey

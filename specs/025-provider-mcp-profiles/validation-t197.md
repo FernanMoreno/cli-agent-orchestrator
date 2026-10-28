@@ -1,6 +1,6 @@
 # T197 · mensajes Claude actuales con perfil/filtro explícitos
 
-**Preparación corregida y verificada; aceptación nativa pendiente.**
+**Preparación verificada; ejecución nativa fallida en el arranque del receptor.**
 
 Se reutiliza el recorrido generic-message/API-restart, sin introducir otro
 servicio ni modificar el comportamiento productivo. La preparación encontraba
@@ -56,3 +56,23 @@ El lanzamiento desactiva autoactualizaciones por proceso con
 instalación o login originales. No amplía permisos ni infiere Work, todas las
 modalidades/perfiles o gates globales. T197/T011 siguen abiertos hasta sus
 respectivos alcances reales; T032 continúa aplazada.
+
+## Ejecución real r1 · 2026-10-28
+
+Fuente `14a5903e44e1e13b9a55d55c0ba752a44a84ea0b`, Claude2.1.303,
+modelo solicitado claude-sonnet-4-6 (modelo servido no atestiguado).
+El POST del receptor terminó en HTTP500/provider_init_timeout a los146572ms;
+el controlador duró171,48s. No se creó el emisor ni hubo llamadas MCP,
+filas, eventos o sustitución de API. No se observó el filtro MCP nativo.
+Es fallo de aceptación, no un resultado positivo de mensajes ni una prueba
+contra los permisos del perfil.
+
+Mínimo muestreado9871MiB frente a6144;505bindings sin cambios;13identidades
+observadas retiradas; observador/API/tmux detenidos antes de cerrar al propietario
+PostgreSQL. Contenedor/red exactos ausentes, contenedores originales conservados,
+staging de credenciales retirado y credenciales del operador sin cambios.
+Se conservan recibo y archivo ejecutado privados; descriptor operativo recerrado.
+La compensación retiró el terminal antes del observador tardío: no se retuvo
+viewport. PATH, diálogo inicial y detección de estado siguen siendo hipótesis.
+T198 capturará el arranque antes de esa compensación, sin cambiar gates/plazos
+ni lanzar mensajes. T197/T011 siguen abiertos.
