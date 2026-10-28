@@ -1,5 +1,16 @@
 # Provider MCP profiles and current acceptance
 
+## Refused stale-row retirement during session recreation · T192
+
+FR170/SC154: New-session creation must not publish a replacement incarnation
+after retirement of an ordinary stale terminal row was refused. Preserve that
+row and its provider resources, explicitly fail creation and roll back only the
+new backend object. Retained deferred-failure tombstones remain intentionally
+permitted. Prove the actual PostgreSQL creation/purge boundary and successful
+retry after retirement; do not assume terminal-ID reuse or claim distributed
+deletion/initialization guarantees. This is a bounded T143 lifecycle correction,
+independent of native provider acceptance and T032.
+
 ## Causal phase admission and model-offer diagnosis · T191
 
 FR169/SC153: A generic-message phase must consume the production input

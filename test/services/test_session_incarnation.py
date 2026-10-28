@@ -15,6 +15,7 @@ from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, Termina
 from cli_agent_orchestrator.clients import database as db
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.flow import Flow
+from cli_agent_orchestrator.providers.manager import ProviderManager
 from cli_agent_orchestrator.services import flow_service as fs
 from cli_agent_orchestrator.services import session_service as ss
 from cli_agent_orchestrator.services import terminal_service as ts
@@ -154,6 +155,67 @@ def test_old_pending_row_does_not_define_replacement(monkeypatch):
     with session_lifecycle_lock("cao-s"):
         assert ts._resolve_existing_session_incarnation_locked("cao-s") == "inc-current"
     assert db.get_terminal_metadata("old-pending") is not None
+
+
+def test_recreation_purge_refuses_retained_ordinary_provider(monkeypatch):
+    add_terminal("old", "cao-s", "inc-old", current=True)
+    manager = ProviderManager()
+    provider = MagicMock()
+    provider.cleanup.return_value = False
+    manager._providers["old"] = provider
+    monkeypatch.setattr(ts, "provider_manager", manager)
+
+    with pytest.raises(RuntimeError, match="stale terminal cleanup"):
+        ts._purge_stale_session_rows_for_recreate("cao-s")
+
+    assert db.get_terminal_metadata("old") is not None
+    assert db.get_session_incarnation("cao-s") == "inc-old"
+    assert manager._providers["old"] is provider
+
+
+@pytest.mark.asyncio
+async def test_recreation_cleanup_deferral_rolls_back_before_publication_and_can_retry(monkeypatch):
+    add_terminal("old", "cao-s", "inc-old", current=True)
+    backend = MagicMock()
+    backend.session_exists.return_value = False
+    backend.supports_event_inbox.return_value = True
+    monkeypatch.setattr(registry, "_backend", backend)
+    ids = iter(["first001", "second01"])
+    monkeypatch.setattr(ts, "generate_terminal_id", lambda: next(ids))
+    monkeypatch.setattr(
+        ts, "load_agent_profile", lambda _: AgentProfile(name="developer", description="Developer")
+    )
+    monkeypatch.setattr(ts, "get_herdr_inbox_service", lambda: None)
+    manager = ProviderManager()
+    old_provider = MagicMock()
+    old_provider.cleanup.return_value = False
+    manager._providers["old"] = old_provider
+    create_provider = MagicMock(return_value=AsyncMock())
+    monkeypatch.setattr(manager, "create_provider", create_provider)
+    monkeypatch.setattr(ts, "provider_manager", manager)
+
+    with pytest.raises(RuntimeError, match="stale terminal cleanup"):
+        await ts.create_terminal("mock_cli", "developer", session_name="cao-s", new_session=True)
+
+    assert [row["id"] for row in db.list_terminals_by_session("cao-s")] == ["old"]
+    assert db.get_session_incarnation("cao-s") == "inc-old"
+    assert db.get_terminal_metadata("first001") is None
+    assert manager._providers["old"] is old_provider
+    create_provider.assert_not_called()
+    backend.kill_session.assert_called_once_with("cao-s")
+    backend.kill_window.assert_not_called()
+
+    old_provider.cleanup.return_value = True
+    replacement = await ts.create_terminal(
+        "mock_cli", "developer", session_name="cao-s", new_session=True
+    )
+    assert db.get_terminal_metadata("old") is None
+    assert replacement.id == "second01"
+    assert replacement.session_incarnation_id != "inc-old"
+    assert db.get_session_incarnation("cao-s") == replacement.session_incarnation_id
+    assert [row["id"] for row in db.list_terminals_by_session("cao-s")] == ["second01"]
+    assert "old" not in manager._providers
+    assert not manager._restore_locks
 
 
 def test_failed_legacy_terminal_is_backfilled_only_after_exact_proof(monkeypatch):

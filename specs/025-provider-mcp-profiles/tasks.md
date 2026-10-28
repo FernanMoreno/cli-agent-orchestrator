@@ -1,5 +1,9 @@
 # Tasks: provider MCP profiles and acceptance
 
+- [x] T192 [US4] [FR170/SC154; T143] Reproduce ignored stale-row retirement refusal during actual new-session creation with PostgreSQL, then fail before replacement publication and roll back the newly created backend only. Preserve ordinary row/provider authority, intentional tombstones and successful retry. Verify callers/composition/review; no full lifecycle/distributed/native credit.
+
+T192:2RED→23PASS enfocadas y124PASS compartidas (23incluidas), más3integraciones PostgreSQL/tmux PASS:127distintas/2avisos, arquitectura5-0/ClaudeGO. Rechazo explícito antes de publicar y reintento comprobado; T143 completo sigue separado. [Evidencia](validation-t192.md).
+
 T190 R4 en99eeafff: FAILED faseA/reconcile_required, generación nueva sin recibo verificado y0efectos; limpieza propia completa/min9027MiB. Captura privada retenida; la frase del modelo sobre ejecutable ausente no demuestra causa porque MCP sí arrancó y selló su cierre. Investigar estado/catálogo nativo antes de otro turno. [Recibo](validation-t190-native-r4.json).
 
 - [x] T191 [US4] [FR169/SC153] Correct structured input acknowledgement/current-turn correlation, including generation reuse after API restart; retain bounded metadata-only phase observations and R3's failed outcome. Evaluate the isolated tool-offer proposal without claiming equivalence to the missing R3 catalog; leave it closed. Preserve180s/6144MiB and every original effect/audit/cleanup gate. Real acceptance remains T190.

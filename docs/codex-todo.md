@@ -1,5 +1,7 @@
 # Codex: análisis y pendientes
 
+T192 compartido: corregida la recreación que ignoraba una limpieza antigua diferida.2RED→127pruebas distintas PASS, incluidas3integraciones PostgreSQL/tmux, arquitectura5-0/ClaudeGO; fila/proveedor antiguos conservados y reintento validado. Sin aceptación nativa ni cierre global de T143. [Evidencia](../specs/025-provider-mcp-profiles/validation-t192.md).
+
 T190 R4 real99eeafff: FAILED en faseA/reconcile_required; secuencia3/completado2 y generación nueva sin recibo verificado,0llamadas/filas/eventos.87,023s/min9027MiB, limpieza propia íntegra y operador intacto. Captura privada conservada: la respuesta sobre ejecutable ausente no prueba la causa, porque el hijo MCP arrancó y selló su cierre. Sigue abierto; observar estado/catálogo nativo antes de otro turno. [Recibo](../specs/025-provider-mcp-profiles/validation-t190-native-r4.json).
 
 T191 corrige la admisión/correlación común del recorrido: ACK estructurado y generación nueva/verificada, incluso al reiniciar los contadores.230pruebas PASS/arquitectura5-0/ClaudeGO; sin cambios de permisos ni aceptación real nueva. R3 conserva su fallo; R4 preparado con observación privada antes de cleanup. [Límites](../specs/025-provider-mcp-profiles/validation-t191.md).

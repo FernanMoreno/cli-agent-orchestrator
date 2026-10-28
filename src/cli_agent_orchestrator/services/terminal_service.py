@@ -3643,7 +3643,10 @@ def _purge_stale_session_rows_for_recreate(session_name: str) -> None:
                 session_name,
             )
             continue
-        delete_terminal_row(terminal_id, metadata, registry=None)
+        if not delete_terminal_row(terminal_id, metadata, registry=None):
+            # A retained ordinary row can still act on reusable session/window
+            # labels. Do not publish a replacement while its owner cannot retire.
+            raise RuntimeError("stale terminal cleanup incomplete; session recreation refused")
 
 
 def _resolve_existing_session_incarnation_locked(session_name: str) -> str:

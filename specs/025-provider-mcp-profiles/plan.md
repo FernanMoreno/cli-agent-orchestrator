@@ -1,5 +1,19 @@
 # Plan: provider MCP profiles
 
+## T192 · refuse recreation after ordinary stale-row cleanup deferral
+
+Trace the actual create-terminal session lock, stale-row purge, retirement
+fence, SQL deletion and backend-create rollback. Graphify's87e2d5f snapshot
+identifies these call edges; verify against current source, retaining foreign
+graph changes. Reproduce with migrated PostgreSQL and controlled provider/
+backend owners: an ordinary old row whose cleanup returns false must prevent
+replacement publication, retain its durable incarnation and roll back the new
+backend only. Test normal cleanup/retry and intentional tombstone retention.
+Change the first ignored refusal only after RED; no new persistence store,
+tombstone type or broad native retry. Check caller/architecture/composition,
+obtain independent review and integrate on main. Full T143 stays separate
+until its remaining lifecycle criteria have been assessed.
+
 ## T191 · current-turn correlation and offered-tool observation
 
 Reproduce false/ambiguous input acknowledgements and cached completed status
