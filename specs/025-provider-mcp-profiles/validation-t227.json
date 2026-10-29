@@ -1,0 +1,93 @@
+{
+  "schema": "caos.spec025.t227.native-mcp-offer.v1",
+  "date": "2026-10-29",
+  "status": "PASS_NATIVE_MCP_CATALOG_AND_PRIMARY_OFFER_ONLY",
+  "source_head": "ded1b0e58300d2f6af6e3804a578f35beb478004",
+  "source_sha256": {
+    "test/live_provider/native_cancel_adapters.py": "fc3de9dbab79131c238452c5d0c8a55dc7df243c96fe6ddd3e07a8a6301dec0f",
+    "test/live_provider/native_concurrent_cancel.py": "ea9f46f862fb4e83c4bbe6bcae8bd78c6a5f2f6070927ad587514839b3104b06",
+    "test/live_provider/test_claude_concurrent_cancel.py": "db62d6dd3762a9c4603b9ffda58aba63c6bab4cc05313e2540affd809590422f",
+    "test/live_provider/claude_cancel_gateway.py": "ba518d7a63f363691d5f03dbaeeef3330e2e2d356c2cc4e4c77ab80e7e93d81a",
+    "test/live_provider/test_claude_cancel_gateway.py": "4eb53ff4e74884f7f30d8a1a8d2290439531f404c16502bb86a5a5a795d30b39",
+    "test/live_provider/test_native_mcp_offer_profile.py": "e9ccc00de8d39371abc29a86bd95807ee66d052931cf1443b602d6fe6e9517cb"
+  },
+  "native_binary": {
+    "version": "Claude Code 2.1.303",
+    "sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450"
+  },
+  "source_pins": 1889,
+  "executed_source_archive_sha256": "7d682986be07864c3eaf5738875fed0e132e24d21106d2f1d47b753f99d64ff8",
+  "executed_runner_sha256": "9978f62d66571ddfe916cc2642a3809b5d6959573944b9412a59e243b5d85741",
+  "native_seconds": 99.8,
+  "profile": {
+    "client_grant": [
+      "@cao-mcp-server"
+    ],
+    "server": "cao-mcp-server",
+    "tool_profile": "collaboration",
+    "enabled_tools": [
+      "list_siblings"
+    ],
+    "positive_builtin_selection": [],
+    "permission_mode": "default"
+  },
+  "observations": {
+    "production_mcp_import_passed_in_masked_namespace": true,
+    "import_probe_seconds": 17.61455306195421,
+    "actual_config_interpreter_environment_and_cwd": true,
+    "production_client_catalog_ready_before_input": true,
+    "actual_primary_tool_names": [
+      "mcp__cao-mcp-server__list_siblings"
+    ],
+    "actual_primary_schema_sha256": "b0eba11f049d827a9295ca63c4421f84a77495d4ec5d326f6b3033a9fe93b022",
+    "builtin_tools_offered": 0,
+    "primary_requests": 1,
+    "total_requests": 2,
+    "native_final_turn_state": "verified",
+    "prefinish_fresh_output_bytes": 12810,
+    "minimum_recorded_memory_mib": 9976
+  },
+  "original_budgets": {
+    "memory_floor_mib": 6144,
+    "native_seconds": 180,
+    "progress_observation_seconds": 5
+  },
+  "cleanup": {
+    "observed_processes_retired": true,
+    "wrapper_processes_retired": true,
+    "tmux_cleanup": true,
+    "home_removed": true
+  },
+  "postgres_after": {
+    "borrower_connections": 0,
+    "private_databases": 0,
+    "same_held_container": true
+  },
+  "source_preserved": true,
+  "operational_wrapper_reclosed": true,
+  "verification": {
+    "red_protocol_controls_failed": 7,
+    "expanded_controls_passed": 87,
+    "final_probe_controls_passed": 28,
+    "final_controls_overlap_expanded": true,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0,
+    "black_isort_diff_check": "PASS",
+    "claude_read_reviews": [
+      "de9237c62d5c4ab7babbda0cad7fa8f3",
+      "459f73a5a5034bf29e66d6b5d78a1b00"
+    ],
+    "review_findings_corrected_and_rechecked": true,
+    "production_source_changed": false,
+    "obsidian_operation": "save-20261029-caos-t227-native-mcp-offer",
+    "obsidian_strict_lint_issues": 0
+  },
+  "limits": [
+    "Real pinned native CLI and production stdio MCP with synthetic loopback Anthropic HTTP; no external model inference or served-model attestation",
+    "Catalogue/discovery/primary-offer acceptance only; no list_siblings invocation or operation authorization acceptance",
+    "One collaboration profile with explicit single-tool filter; no all-profile/backend/version/global MCP acceptance",
+    "T226 bounded concurrent-final receipt remains source-bound and was not rerun",
+    "Operator login and settings preserved; no ToolSearch/built-in or MCP filter widening"
+  ],
+  "private_root": "/home/felni/.cache/caos-t227-native-mcp-offer-20261029"
+}

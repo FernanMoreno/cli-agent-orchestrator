@@ -1,5 +1,14 @@
 # Codex: análisis y pendientes
 
+**2026-10-29 · T227: oferta MCP nativa verificada con herramientas nativas desactivadas.**
+Claude2.1.303 descubre el servidor MCP de producción y ofrece exactamente
+`mcp__cao-mcp-server__list_siblings`;0 herramientas nativas, recibo final verificado.
+Caso99,80s,87 controles y28 comprobaciones finales solapadas, arquitectura5/0,
+limpieza propia/PostgreSQL0-0. No fue necesario ampliar permisos ni cambiar
+producción. Aceptación de catálogo/oferta de ese perfil; ejecución de la operación,
+otros perfiles/backends e inferencia/global siguen pendientes.
+[Resultados y límites](../specs/025-provider-mcp-profiles/validation-t227.md).
+
 **2026-10-29 · T226/T223: corregido y aceptado el recorrido nativo acotado de Claude.**
 Canal común de eventos nativos y recuperación desde la vista actual, con sesión,
 generación, recibo y confirmación PostgreSQL. Preflight59,10s y concurrente98,36s:
