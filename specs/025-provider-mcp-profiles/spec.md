@@ -1,5 +1,30 @@
 # Provider MCP profiles and current acceptance
 
+## Owned task-query evidence · T213/T214
+
+FR191/SC175: Extend the opt-in MCP diagnostic witness to get_local_cao_task
+without changing server/client grants or accepted interaction journeys. Bind the
+actual task_id argument, returned task UUID, caller/requester identity and both
+top/nested succeeded states to one completed/no-error call. The task DTO is flat
+with its own nested result field; distinguish that from a sole SDK result wrapper.
+Require strict, consistent structured/text projections and reject malformed or
+duplicate-key input. Never persist IDs, output, paths, errors or result bodies
+in observer ledgers or exported summaries; the private issuance file carries
+only the explicitly required run/task/caller metadata.
+
+The MCP child knows its caller ID at startup; task preparation can finish later.
+Use one private nonce/caller-bound metadata file issued atomically once before
+the tool call. Read it once at that call without waiting; missing/invalid data
+means unobserved evidence and does not alter actual tool execution. Retain only
+match booleans and allowlisted states with bounded pending-call state. Keep
+list_local_cao_peers behavior, event/byte budgets and defaults unchanged.
+
+T213 component checks must include the real registered FastMCP handler and
+negative privacy/correlation controls. T214 separately requires current-source
+OpenCode Go HTTP tool offer and one native query of its own completed fixture,
+with normal cleanup and original180s/6144MiB gates. A GET may reconcile a receipt;
+do not describe it as a pure read or close a provider/global gate from this case.
+
 ## Typed terminal retirement boundaries · T212
 
 FR190/SC174: Resolve the17reproduced selected-root mypy diagnostics in terminal

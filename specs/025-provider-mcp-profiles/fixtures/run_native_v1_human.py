@@ -408,24 +408,50 @@ def _bounded_count(value):
 
 def _mixed_private_observer_source(observer_source, tools):
     """Bind the copied collaboration observer to its terminal-specific ledger."""
+    import ast
+
     if (
         type(observer_source) is not str
         or type(tools) not in (list, tuple)
         or any(type(tool) is not str or not tool for tool in tools)
     ):
         raise RuntimeError("mcp_observer_source_invalid")
-    original = "    return install_protocol_observer(low_level_server, Path(raw_path), nonce)"
-    if observer_source.count(original) != 1:
-        raise RuntimeError("mcp_observer_source_mismatch")
+    try:
+        functions = [
+            node
+            for node in ast.parse(observer_source).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "install_protocol_observer_from_env"
+        ]
+        returns = (
+            [node for node in functions[0].body if isinstance(node, ast.Return)]
+            if len(functions) == 1
+            else []
+        )
+        if (
+            len(returns) != 1
+            or not isinstance(returns[0].value, ast.Call)
+            or not isinstance(returns[0].value.func, ast.Name)
+            or returns[0].value.func.id != "install_protocol_observer"
+            or len(returns[0].value.args) != 3
+            or [ast.unparse(arg) for arg in returns[0].value.args]
+            != ["low_level_server", "Path(raw_path)", "nonce"]
+        ):
+            raise ValueError("observer_return_shape_invalid")
+        original = ast.get_source_segment(observer_source, returns[0])
+        if type(original) is not str or observer_source.count(original) != 1:
+            raise ValueError("observer_return_shape_invalid")
+        returns[0].value.args[1] = ast.parse(
+            "Path(raw_path).with_name(Path(raw_path).name + '-' + terminal)", mode="eval"
+        ).body
+        adapted_return = ast.unparse(returns[0])
+    except (SyntaxError, ValueError, TypeError):
+        raise RuntimeError("mcp_observer_source_mismatch") from None
     replacement = (
-        "    terminal = selected_environment.get('CAO_TERMINAL_ID', '')\n"
+        "terminal = selected_environment.get('CAO_TERMINAL_ID', '')\n"
         "    if not re.fullmatch(r'[0-9a-f]{8}', terminal):\n"
         "        raise RuntimeError('mcp_observer_terminal_binding_invalid')\n"
-        "    return install_protocol_observer(\n"
-        "        low_level_server,\n"
-        "        Path(raw_path).with_name(Path(raw_path).name + '-' + terminal),\n"
-        "        nonce,\n"
-        "    )"
+        "    " + adapted_return
     )
     adapted = observer_source.replace(original, replacement, 1)
     return adapted + "\nINTERACTION_TOOLS = frozenset(" + repr(tuple(sorted(tools))) + ")\n"

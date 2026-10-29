@@ -1,0 +1,62 @@
+{
+  "schema": "caos.spec025.t213.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS",
+  "source_base_head": "9a9be8ecc1601018453eb2abdfe5310c5ec32f7b",
+  "source_sha256": {
+    "test/live_provider/opencode_mcp_observer.py": "d00d08dcb162ccc54ea09e1490adb371aa5b68d41e9d6c6cb95f682a04d97910",
+    "test/live_provider/test_opencode_task_witness.py": "058ea72d97c7a00ee8494d7a05c1173297e01dc7f4a4488f9c0c30b06a3ace8b",
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v1_human.py": "95e490f0d410fbb4c03f1fbdb69a3e968e4ee33568d54cb1ffc824af004c76d1"
+  },
+  "regression": {
+    "passed": 306,
+    "failed": 0,
+    "subtests_passed": 20,
+    "existing_warnings": 3,
+    "seconds": 88.73,
+    "log": "regression-r2.txt",
+    "coverage_settings_changed": false,
+    "thread_or_unraisable_warnings_are_errors": true
+  },
+  "preserved_failure_logs": [
+    "red.txt",
+    "loader-red.txt",
+    "compat-red.txt",
+    "compatible-green.txt",
+    "final-regression.txt",
+    "import-isolated.txt"
+  ],
+  "unchanged_import_child_deadline_seconds": 30,
+  "instrumented_exact_import_worker": {
+    "returncode": 0,
+    "timeout": false,
+    "seconds": 17.669039721018635
+  },
+  "instrumented_source_map_exact": true,
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "mypy": {
+    "modules": 1,
+    "errors": 0
+  },
+  "reviews": [
+    {
+      "job_id": "f74a658d4c83434d8eccfef508b2c5bc",
+      "mode": "read",
+      "verdict": "GO"
+    },
+    {
+      "job_id": "8550800ac303457985946d8dae228025",
+      "mode": "read",
+      "verdict": "GO"
+    }
+  ],
+  "native_run_performed": false,
+  "native_t214_accepted": false,
+  "cold_start_latency_accepted": false,
+  "global_gates_closed": false,
+  "server_grants_changed": false,
+  "database_schema_changed": false
+}

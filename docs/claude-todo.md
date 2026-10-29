@@ -1,5 +1,14 @@
 # Claude Code: análisis y pendientes
 
+2026-10-29 · T213: evidencia acotada de `get_local_cao_task` implementada;
+306 pruebas y20subtests PASS, tipos/arquitectura5-0/revisiónClaudeGO.
+Comprueba tarea, solicitante y estados sin registrar sus contenidos ni IDs.
+Los timeouts de importación originales se conservan; la regresión posterior
+pasa con los límites intactos. T214 (llamada nativa de esta operación) sigue
+pendiente. Preguntas/ACK/reinicio de OpenCode v2 mantienen su aceptación.
+No cambia permisos ni cierra OC2-04 global.
+[Alcance](../specs/025-provider-mcp-profiles/validation-t213.md).
+
 Estado actual (2026-10-29): T197/T210 tienen aceptación acotada del recorrido
 Claude R6 con mensajes/reinicio y parada gestionada explícita; T211 tiene
 aceptación acotada Codex R2 de cancelación FIFO tras desconexión HTTP con B

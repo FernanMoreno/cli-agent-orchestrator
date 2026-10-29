@@ -1,5 +1,29 @@
 # Plan: provider MCP profiles
 
+## T213/T214 · a bounded witness for an owned completed task
+
+T166 accepts peers plus messages, not native task queries. T186 uses a mock
+coordinator and T187 accepts the worker; neither establishes this missing call.
+Inspect the current task DTO/API authority and existing observer before changing
+code. Add a separate strict task projector rather than applying the peer-list
+result unwrapping heuristic to a task DTO containing its own result field.
+
+A fixed private binding-file path is known before MCP startup; after preparing
+the actual owned task, publish nonce/UUID/requester/succeeded once as0600 in an
+owned0700directory. The observer's actual caller ID must match. Load on first
+target call, no waiting and no raw payload persistence. Compare argument and
+response against that frozen binding, correlate exact call_id/tool/finish and
+bound/drop pending state. Do not introduce an HMAC protocol: the public ledger
+nonce cannot safely key a low-entropy requester hash, and immutable metadata is
+already the fixture's issuance pattern. Scope caller identity from protected
+MCP context, not model-supplied text.
+
+TDD the component via production FastMCP plus strict JSON/privacy/failure/replay
+controls. Existing peer-list/default-off and limits must remain unchanged.
+Then freeze/integrate/review before deriving a fresh native fixture from T166;
+reuse the verified held PostgreSQL owner and serialize intensive tests. Native
+T214 remains a distinct task and may not reuse old runner hashes/paths.
+
 ## T212 · remove inherited terminal typing ambiguity
 
 Fresh selected-root mypy reproduces17errors on593c07e4 using configured

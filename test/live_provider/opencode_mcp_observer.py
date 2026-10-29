@@ -10,7 +10,7 @@ import stat
 import threading
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from mcp import types
 
@@ -33,7 +33,14 @@ _MAX_MESSAGE_ARGUMENT_UTF8_BYTES = 32 * 1024
 _MAX_SAFE_RESULT_BYTES = 4096
 _MAX_SAFE_PEER_COUNT = 10_000
 _SAFE_RESULT_TOOL = "list_local_cao_peers"
+_SAFE_TASK_RESULT_TOOL = "get_local_cao_task"
+_SAFE_RESULT_TOOLS = frozenset({_SAFE_RESULT_TOOL, _SAFE_TASK_RESULT_TOOL})
 _SAFE_RESULT_TOOL_ENV = "CAO_OPENCODE_MCP_SAFE_RESULT_TOOL"
+_SAFE_TASK_BINDING_ENV = "CAO_OPENCODE_MCP_SAFE_TASK_BINDING_PATH"
+_TASK_UUID_RE = re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}")
+_TASK_REQUESTER_RE = re.compile(r"[a-f0-9]{8}")
+_TASK_STATES = frozenset({"succeeded", "failed", "cancelled"})
+_MAX_TASK_BINDING_BYTES = 1024
 _COMPLETE_SUFFIX = ".complete"
 _COMPLETE_PENDING_SUFFIX = ".complete.pending"
 _COMPLETE_CONTENT = b"CAO_OPEN_CODE_MCP_OBSERVER_COMPLETE\n"
@@ -120,6 +127,172 @@ def _safe_local_peer_result(payload: Any) -> tuple[bool | None, int | None]:
         return None, None
 
 
+class _TaskBinding(NamedTuple):
+    task_id: str
+    requester_terminal_id: str
+    state: str
+
+
+class _SafeTaskResult(NamedTuple):
+    success: bool | None = None
+    id_matches: bool | None = None
+    requester_matches: bool | None = None
+    state: str | None = None
+    state_matches: bool | None = None
+    result_state: str | None = None
+    result_state_matches: bool | None = None
+
+
+_SAFE_TASK_RESULT_FIELDS = frozenset(
+    {
+        "success",
+        "id_matches",
+        "requester_matches",
+        "state",
+        "state_matches",
+        "result_state",
+        "result_state_matches",
+    }
+)
+
+
+def _reject_json_constant(_value: str) -> Any:
+    raise ValueError("observer_invalid_json_constant")
+
+
+def _load_task_binding(path: Path, nonce: str, requester_id: str) -> _TaskBinding | None:
+    """Read one issued metadata file; no waiting, payloads or exception text."""
+    try:
+        if not _private_directory(path.parent):
+            return None
+        flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+        descriptor = os.open(path, flags)
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_size > _MAX_TASK_BINDING_BYTES
+            ):
+                return None
+            raw = os.read(descriptor, _MAX_TASK_BINDING_BYTES + 1)
+            after = os.fstat(descriptor)
+            if len(raw) != before.st_size or (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+            ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+                return None
+        finally:
+            os.close(descriptor)
+        document = json.loads(
+            raw.decode("utf-8", "strict"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+        if (
+            type(document) is not dict
+            or set(document) != {"nonce", "task_id", "requester_terminal_id", "state"}
+            or document.get("nonce") != nonce
+            or type(document.get("task_id")) is not str
+            or _TASK_UUID_RE.fullmatch(document["task_id"]) is None
+            or type(document.get("requester_terminal_id")) is not str
+            or document["requester_terminal_id"] != requester_id
+            or document.get("state") != "succeeded"
+        ):
+            return None
+        return _TaskBinding(document["task_id"], requester_id, "succeeded")
+    except Exception:
+        return None
+
+
+def _project_task_document(candidate: Any, binding: _TaskBinding) -> _SafeTaskResult | None:
+    if not isinstance(candidate, Mapping):
+        return None
+    # A task DTO itself contains `result` beside its identity/state fields.
+    # Only a sole outer result key is an SDK wrapper.
+    if len(candidate) == 1 and "result" in candidate:
+        candidate = candidate["result"]
+        if not isinstance(candidate, Mapping):
+            return None
+    success = candidate.get("success")
+    if type(success) is not bool:
+        return None
+    if success is False:
+        return _SafeTaskResult(success=False)
+    task_id = candidate.get("task_id")
+    requester_id = candidate.get("requester_terminal_id")
+    state = candidate.get("state")
+    nested = candidate.get("result")
+    nested_state = nested.get("state") if isinstance(nested, Mapping) else None
+    return _SafeTaskResult(
+        success=True,
+        id_matches=(
+            task_id == binding.task_id
+            if type(task_id) is str and _TASK_UUID_RE.fullmatch(task_id)
+            else None
+        ),
+        requester_matches=(
+            requester_id == binding.requester_terminal_id
+            if type(requester_id) is str and _TASK_REQUESTER_RE.fullmatch(requester_id)
+            else None
+        ),
+        state=state if type(state) is str and state in _TASK_STATES else None,
+        state_matches=state == binding.state if type(state) is str else None,
+        result_state=(
+            nested_state if type(nested_state) is str and nested_state in _TASK_STATES else None
+        ),
+        result_state_matches=(nested_state == binding.state if type(nested_state) is str else None),
+    )
+
+
+def _safe_local_task_result(payload: Any, binding: _TaskBinding | None) -> _SafeTaskResult:
+    """Project only protected fields, rejecting conflicting structured/text evidence."""
+    empty = _SafeTaskResult()
+    if binding is None:
+        return empty
+    try:
+        if not isinstance(payload, types.CallToolResult) or payload.isError is not False:
+            return empty
+        projections = []
+        for attribute in ("structuredContent", "structured_content"):
+            candidate = getattr(payload, attribute, None)
+            if candidate is not None:
+                projection = _project_task_document(candidate, binding)
+                if projection is None:
+                    return empty
+                projections.append(projection)
+        content = payload.content
+        if type(content) is not list:
+            return empty
+        if content:
+            if len(content) != 1 or not isinstance(content[0], types.TextContent):
+                return empty
+            text = content[0].text
+            if type(text) is not str or len(text) > _MAX_SAFE_RESULT_BYTES:
+                return empty
+            raw = text.encode("utf-8", "strict")
+            if len(raw) > _MAX_SAFE_RESULT_BYTES:
+                return empty
+            document = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            )
+            projection = _project_task_document(document, binding)
+            if projection is None:
+                return empty
+            projections.append(projection)
+        if not projections or any(item != projections[0] for item in projections[1:]):
+            return empty
+        return projections[0]
+    except Exception:
+        return empty
+
+
 def _empty_summary(status: str = "unobserved") -> dict[str, Any]:
     return {
         "observer_status": status,
@@ -157,14 +330,27 @@ class ProtocolObserver:
         *,
         expected_message_bodies: tuple[str, ...] = (),
         expected_safe_result_tool: str | None = None,
+        expected_task_binding_path: Path | None = None,
+        expected_task_requester_id: str | None = None,
     ) -> None:
         if not path.is_absolute() or not _NONCE_RE.fullmatch(nonce):
             raise ValueError("mcp_observer_binding_invalid")
         if expected_safe_result_tool is not None and (
             type(expected_safe_result_tool) is not str
-            or expected_safe_result_tool != _SAFE_RESULT_TOOL
+            or expected_safe_result_tool not in _SAFE_RESULT_TOOLS
         ):
             raise ValueError("mcp_observer_safe_result_tool_invalid")
+        if expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL:
+            if (
+                not isinstance(expected_task_binding_path, Path)
+                or not expected_task_binding_path.is_absolute()
+                or expected_task_binding_path.parent != path.parent
+                or type(expected_task_requester_id) is not str
+                or _TASK_REQUESTER_RE.fullmatch(expected_task_requester_id) is None
+            ):
+                raise ValueError("mcp_observer_task_binding_invalid")
+        elif expected_task_binding_path is not None or expected_task_requester_id is not None:
+            raise ValueError("mcp_observer_task_binding_invalid")
         if (
             type(expected_message_bodies) is not tuple
             or len(expected_message_bodies) not in {0, 2}
@@ -208,6 +394,11 @@ class ProtocolObserver:
         self._message_ordinal = 0
         self._expected_message_bodies = expected_message_bodies
         self._expected_safe_result_tool = expected_safe_result_tool
+        self._expected_task_binding_path = expected_task_binding_path
+        self._expected_task_requester_id = expected_task_requester_id
+        self._task_binding_loaded = False
+        self._task_binding: _TaskBinding | None = None
+        self._task_probes: dict[int, tuple[_TaskBinding | None, bool | None]] = {}
         self._written_bytes = 0
         self._closed = False
         self._write_failed = False
@@ -290,7 +481,45 @@ class ProtocolObserver:
         self._append("tool_call_started", call_id=call_id, tool=tool)
         if ordinal is not None:
             self._record_message_argument(call_id, ordinal, arguments)
+        if (
+            self._expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL
+            and tool == _SAFE_TASK_RESULT_TOOL
+        ):
+            self._record_task_argument(call_id, arguments)
         return call_id, tool
+
+    def _record_task_argument(self, call_id: int, arguments: Any) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            load_binding = not self._task_binding_loaded
+            self._task_binding_loaded = True
+            binding = self._task_binding
+        if load_binding:
+            path = self._expected_task_binding_path
+            requester_id = self._expected_task_requester_id
+            binding = (
+                _load_task_binding(path, self._nonce, requester_id)
+                if path is not None and requester_id is not None
+                else None
+            )
+            with self._lock:
+                if self._closed:
+                    return
+                self._task_binding = binding
+        matches = (
+            type(arguments) is dict
+            and len(arguments) == 1
+            and type(arguments.get("task_id")) is str
+            and arguments["task_id"] == binding.task_id
+            if binding is not None
+            else None
+        )
+        with self._lock:
+            # Evidence is capped even if callers continue after the ledger's
+            # event limit. Finish/result paths release each retained entry.
+            if not self._closed and call_id <= _MAX_EVENTS:
+                self._task_probes[call_id] = (binding, matches)
 
     def _record_message_argument(self, call_id: int, ordinal: int, arguments: Any) -> None:
         if not isinstance(arguments, Mapping) or "message" not in arguments:
@@ -347,6 +576,8 @@ class ProtocolObserver:
         error_present: bool,
         result_present: bool,
     ) -> None:
+        with self._lock:
+            self._task_probes.pop(call_id, None)
         self._append(
             "tool_call_finished",
             call_id=call_id,
@@ -358,6 +589,18 @@ class ProtocolObserver:
     def record_safe_result(self, call_id: int, payload: Any) -> None:
         if self._expected_safe_result_tool is None:
             return
+        if self._expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL:
+            with self._lock:
+                binding, matches = self._task_probes.pop(call_id, (None, None))
+            projection = _safe_local_task_result(payload, binding)
+            self._append(
+                "safe_task_result_observed",
+                call_id=call_id,
+                binding_observed=binding is not None,
+                argument_matches=matches,
+                **{key: getattr(projection, key) for key in sorted(_SAFE_TASK_RESULT_FIELDS)},
+            )
+            return
         success, peer_count = _safe_local_peer_result(payload)
         self._append(
             "safe_result_observed",
@@ -368,6 +611,8 @@ class ProtocolObserver:
 
     def close(self, *, complete: bool = True) -> None:
         with self._lock:
+            self._task_probes.clear()
+            self._task_binding = None
             if self._closed:
                 return
             if not self._limit_written and not self._write_failed:
@@ -469,6 +714,8 @@ def install_protocol_observer(
     *,
     expected_message_bodies: tuple[str, ...] = (),
     expected_safe_result_tool: str | None = None,
+    expected_task_binding_path: Path | None = None,
+    expected_task_requester_id: str | None = None,
 ) -> ProtocolObserver:
     """Wrap the real low-level request dispatchers without changing their results."""
     list_handler = server.request_handlers.get(types.ListToolsRequest)
@@ -480,6 +727,8 @@ def install_protocol_observer(
         nonce,
         expected_message_bodies=expected_message_bodies,
         expected_safe_result_tool=expected_safe_result_tool,
+        expected_task_binding_path=expected_task_binding_path,
+        expected_task_requester_id=expected_task_requester_id,
     )
 
     async def observed_list(request: Any) -> Any:
@@ -496,7 +745,10 @@ def install_protocol_observer(
         tool = None
         try:
             name = getattr(params, "name", None)
-            if observer._expected_message_bodies:
+            if observer._expected_message_bodies or (
+                observer._expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL
+                and name == _SAFE_TASK_RESULT_TOOL
+            ):
                 call_id, tool = observer.start_call(
                     name,
                     getattr(params, "arguments", None),
@@ -569,6 +821,12 @@ def install_protocol_observer_from_env(
         raw_path = selected_environment.get(OBSERVER_PATH_ENV)
         nonce = selected_environment.get(OBSERVER_NONCE_ENV)
         raw_safe_result_tool = selected_environment.get(_SAFE_RESULT_TOOL_ENV)
+        raw_task_binding_path = selected_environment.get(_SAFE_TASK_BINDING_ENV)
+        raw_task_requester_id = (
+            selected_environment.get("CAO_TERMINAL_ID")
+            if raw_safe_result_tool == _SAFE_TASK_RESULT_TOOL
+            else None
+        )
     except Exception:
         raise RuntimeError("mcp_observer_environment_invalid") from None
     if type(enabled) is not str or enabled != "1":
@@ -576,9 +834,21 @@ def install_protocol_observer_from_env(
     if type(raw_path) is not str or not raw_path or type(nonce) is not str:
         raise RuntimeError("mcp_observer_binding_incomplete")
     if raw_safe_result_tool is not None and (
-        type(raw_safe_result_tool) is not str or raw_safe_result_tool != _SAFE_RESULT_TOOL
+        type(raw_safe_result_tool) is not str or raw_safe_result_tool not in _SAFE_RESULT_TOOLS
     ):
         raise RuntimeError("mcp_observer_safe_result_tool_invalid")
+    task_binding_path = None
+    if raw_safe_result_tool == _SAFE_TASK_RESULT_TOOL:
+        if (
+            type(raw_task_binding_path) is not str
+            or not raw_task_binding_path
+            or type(raw_task_requester_id) is not str
+            or _TASK_REQUESTER_RE.fullmatch(raw_task_requester_id) is None
+        ):
+            raise RuntimeError("mcp_observer_task_binding_invalid")
+        task_binding_path = Path(raw_task_binding_path)
+    elif raw_task_binding_path is not None:
+        raise RuntimeError("mcp_observer_task_binding_invalid")
     low_level_server = getattr(server, "_mcp_server", None)
     if low_level_server is None:
         raise RuntimeError("mcp_observer_server_unavailable")
@@ -587,6 +857,8 @@ def install_protocol_observer_from_env(
         Path(raw_path),
         nonce,
         expected_safe_result_tool=raw_safe_result_tool,
+        expected_task_binding_path=task_binding_path,
+        expected_task_requester_id=raw_task_requester_id,
     )
 
 
@@ -638,7 +910,8 @@ def read_protocol_observations(
 ) -> dict[str, Any]:
     """Read only a bounded, private sidecar and return closed protocol facts."""
     if expected_safe_result_tool is not None and (
-        type(expected_safe_result_tool) is not str or expected_safe_result_tool != _SAFE_RESULT_TOOL
+        type(expected_safe_result_tool) is not str
+        or expected_safe_result_tool not in _SAFE_RESULT_TOOLS
     ):
         return _empty_summary("incomplete")
     if (
@@ -763,7 +1036,21 @@ def read_protocol_observations(
                     "success",
                     "peer_count",
                 }
-                if expected_safe_result_tool is not None
+                if expected_safe_result_tool == _SAFE_RESULT_TOOL
+                else None
+            ),
+            "safe_task_result_observed": (
+                {
+                    "version",
+                    "nonce",
+                    "sequence",
+                    "event",
+                    "call_id",
+                    "binding_observed",
+                    "argument_matches",
+                }
+                | _SAFE_TASK_RESULT_FIELDS
+                if expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL
                 else None
             ),
             "observer_stopped": {
@@ -786,6 +1073,7 @@ def read_protocol_observations(
     calls: dict[int, dict[str, Any]] = {}
     call_order: list[int] = []
     safe_result_observations: dict[int, tuple[bool | None, int | None]] = {}
+    safe_task_observations: dict[int, dict[str, Any]] = {}
     allowed_call_tools = INTERACTION_TOOLS | {"other"}
     if expected_safe_result_tool is not None:
         allowed_call_tools |= {expected_safe_result_tool}
@@ -899,7 +1187,8 @@ def read_protocol_observations(
             success = row.get("success")
             peer_count = row.get("peer_count")
             if (
-                expected_safe_result_tool is None
+                type(call_id) is not int
+                or expected_safe_result_tool is None
                 or call is None
                 or call["tool"] != expected_safe_result_tool
                 or call["status"] != "in_progress"
@@ -914,6 +1203,70 @@ def read_protocol_observations(
                 incomplete = True
                 break
             safe_result_observations[call_id] = (success, peer_count)
+        elif event == "safe_task_result_observed":
+            call_id = row.get("call_id")
+            call = calls.get(call_id) if type(call_id) is int else None
+            binding_observed = row.get("binding_observed")
+            argument_matches = row.get("argument_matches")
+            success = row.get("success")
+            boolean_fields = (
+                "id_matches",
+                "requester_matches",
+                "state_matches",
+                "result_state_matches",
+            )
+            if (
+                type(call_id) is not int
+                or expected_safe_result_tool != _SAFE_TASK_RESULT_TOOL
+                or call is None
+                or call["tool"] != _SAFE_TASK_RESULT_TOOL
+                or call["status"] != "in_progress"
+                or call_id in safe_task_observations
+                or type(binding_observed) is not bool
+                or (argument_matches is not None and type(argument_matches) is not bool)
+                or (success is not None and type(success) is not bool)
+                or any(
+                    row.get(key) is not None and type(row[key]) is not bool
+                    for key in boolean_fields
+                )
+                or any(
+                    row.get(key) is not None
+                    and (type(row[key]) is not str or row[key] not in _TASK_STATES)
+                    for key in ("state", "result_state")
+                )
+                or (
+                    binding_observed is False
+                    and (
+                        argument_matches is not None
+                        or any(row.get(key) is not None for key in _SAFE_TASK_RESULT_FIELDS)
+                    )
+                )
+                or (binding_observed is True and type(argument_matches) is not bool)
+                or (
+                    success is not True
+                    and any(
+                        row.get(key) is not None for key in _SAFE_TASK_RESULT_FIELDS - {"success"}
+                    )
+                )
+                or any(
+                    row.get(match_key) is True
+                    and row.get(state_key) != "succeeded"
+                    or row.get(state_key) is not None
+                    and row.get(match_key) is not (row[state_key] == "succeeded")
+                    for state_key, match_key in (
+                        ("state", "state_matches"),
+                        ("result_state", "result_state_matches"),
+                    )
+                )
+            ):
+                incomplete = True
+                break
+            safe_task_observations[call_id] = {
+                key: row[key]
+                for key in sorted(
+                    _SAFE_TASK_RESULT_FIELDS | {"binding_observed", "argument_matches"}
+                )
+            }
         elif event == "tool_call_finished":
             call_id = row.get("call_id")
             call = calls.get(call_id) if type(call_id) is int else None
@@ -921,7 +1274,8 @@ def read_protocol_observations(
             error_present = row.get("error_present")
             result_present = row.get("result_present")
             if (
-                call is None
+                type(call_id) is not int
+                or call is None
                 or call["status"] != "in_progress"
                 or not isinstance(status, str)
                 or status not in {"completed", "failed", "unknown"}
@@ -933,7 +1287,12 @@ def read_protocol_observations(
             if (
                 expected_safe_result_tool is not None
                 and call["tool"] == expected_safe_result_tool
-                and call_id not in safe_result_observations
+                and call_id
+                not in (
+                    safe_task_observations
+                    if expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL
+                    else safe_result_observations
+                )
             ):
                 incomplete = True
                 break
@@ -952,12 +1311,24 @@ def read_protocol_observations(
                     "result_present": result_present,
                 }
             )
-            if expected_safe_result_tool is not None and call["tool"] == expected_safe_result_tool:
+            if expected_safe_result_tool == _SAFE_RESULT_TOOL and call["tool"] == _SAFE_RESULT_TOOL:
                 success, peer_count = safe_result_observations[call_id]
                 call.update(
                     {
                         "safe_result_success": success,
                         "safe_result_peer_count": peer_count,
+                    }
+                )
+            elif (
+                expected_safe_result_tool == _SAFE_TASK_RESULT_TOOL
+                and call["tool"] == _SAFE_TASK_RESULT_TOOL
+            ):
+                call.update(
+                    {
+                        (
+                            "safe_result_success" if key == "success" else "safe_result_task_" + key
+                        ): value
+                        for key, value in safe_task_observations[call_id].items()
                     }
                 )
         elif event == "observer_stopped":
