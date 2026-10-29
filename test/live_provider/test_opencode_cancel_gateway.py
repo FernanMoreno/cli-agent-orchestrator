@@ -55,7 +55,7 @@ def test_refuse_foreign_ambiguous_or_missing_user_receipt(messages):
 
 
 def test_streamed_auxiliary_with_same_model_nonce_and_text_is_not_primary():
-    from test.live_provider.opencode_cancel_gateway import primary_request
+    from test.live_provider.opencode_cancel_gateway import PRIMARY_INSTRUCTION, primary_request
 
     text = (
         "T220 controlled native turn\n"
@@ -65,7 +65,10 @@ def test_streamed_auxiliary_with_same_model_nonce_and_text_is_not_primary():
     original = {
         "model": "glm-5.3-flash",
         "stream": True,
-        "messages": [{"role": "user", "content": text}],
+        "messages": [
+            {"role": "system", "content": PRIMARY_INSTRUCTION},
+            {"role": "user", "content": text},
+        ],
     }
     assert primary_request(original)
     for auxiliary in ["<user_message>" + text + "</user_message>", "Generate a title for: " + text]:
@@ -73,3 +76,23 @@ def test_streamed_auxiliary_with_same_model_nonce_and_text_is_not_primary():
             {**original, "messages": [{"role": "user", "content": auxiliary}]}
         )
     assert not primary_request({**original, "stream": False})
+
+
+def test_same_exact_last_user_body_without_primary_agent_instruction_is_auxiliary():
+    from test.live_provider.opencode_cancel_gateway import primary_request
+
+    text = (
+        "T220 controlled native turn\n"
+        + TOKEN
+        + "\nDo not quote or emit that receipt before the task is complete"
+    )
+    assert not primary_request(
+        {
+            "model": "glm-5.3-flash",
+            "stream": True,
+            "messages": [
+                {"role": "system", "content": "Generate a title"},
+                {"role": "user", "content": text},
+            ],
+        }
+    )

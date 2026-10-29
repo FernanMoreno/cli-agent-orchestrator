@@ -13,7 +13,7 @@ from test.e2e import test_real_provider_matrix as matrix
 from test.fixtures import owned_tmux
 from test.fixtures.cao_server import _pick_free_port, _start_cao_server
 from test.live_provider.native_cancel_turn import observe_cancel_turn
-from test.live_provider.opencode_cancel_gateway import MODEL, save, sha
+from test.live_provider.opencode_cancel_gateway import MODEL, PRIMARY_INSTRUCTION, save, sha
 
 import pytest
 
@@ -65,6 +65,9 @@ def test_native_cancel_a_while_b_continues(postgres_service):
     sessions = set()
     native_records = []
     api_process = None
+    session = None
+    state["tmux_root"] = str(socket_root)
+    save(root / "case-result.json", state)
 
     def command(*args):
         return subprocess.check_output(
@@ -192,7 +195,7 @@ def test_native_cancel_a_while_b_continues(postgres_service):
             store = home / ".aws/cli-agent-orchestrator/agent-store"
             store.mkdir(parents=True, exist_ok=True)
             (store / (name + ".md")).write_text(
-                f"---\nname: {name}\ndescription: Native concurrent cancellation control\nprovider: opencode_cli\nmodel: {MODEL}\nrole: developer\nallowedTools: []\n---\nFollow the user request.\n"
+                f"---\nname: {name}\ndescription: Native concurrent cancellation control\nprovider: opencode_cli\nmodel: {MODEL}\nrole: developer\nallowedTools: []\n---\n{PRIMARY_INSTRUCTION}: Follow the user request.\n"
             )
             response = matrix._request(
                 "POST",
@@ -325,7 +328,11 @@ def test_native_cancel_a_while_b_continues(postgres_service):
                 archived.chmod(0o600)
         save(root / "case-result.json", state)
         if server is not None:
-            server.stop()
+            try:
+                if session is not None:
+                    matrix._delete_session(server, session)
+            finally:
+                server.stop()
         from cli_agent_orchestrator.clients import tmux as tmux_client
 
         state["tmux_cleanup"] = owned_tmux.cleanup_private_tmux_root(

@@ -19,6 +19,7 @@ from pathlib import Path
 
 MODEL = "opencode-go/glm-5.3-flash"
 PORT = 43871  # Separate network namespace for every native process.
+PRIMARY_INSTRUCTION = "T220_NATIVE_PRIMARY_INSTRUCTION"
 
 
 def sha(path):
@@ -53,10 +54,16 @@ def primary_request(body):
     text = users[-1].get("content", "")
     if isinstance(text, list):
         text = "\n".join(p["text"] for p in text if p.get("type") == "text")
+    system = [
+        m.get("content", "")
+        for m in body.get("messages", [])
+        if m.get("role") in {"system", "developer"}
+    ]
     return (
         isinstance(text, str)
         and text.startswith("T220 controlled native turn")
         and "Do not quote or emit that receipt before the task is complete" in text
+        and any(PRIMARY_INSTRUCTION in str(content) for content in system)
     )
 
 
@@ -171,7 +178,7 @@ def backend(args):
         "tty": list(os.get_terminal_size(0)),
         "errors": [],
     }
-    lock = threading.Lock()
+    lock = threading.RLock()
 
     def record(**updates):
         with lock:
@@ -187,12 +194,22 @@ def backend(args):
                 length = int(self.headers["Content-Length"])
                 assert 0 < length <= 1024 * 1024
                 body = json.loads(self.rfile.read(length))
-                assert body["model"] == "glm-5.3-flash"
+                with lock:
+                    ordinal = ledger["requests"] + 1
+                    assert ordinal <= 64, "native_request_budget"
+                    save(entry / f"request-{ordinal:03d}.json", body)
+                    record(requests=ordinal)
+                assert isinstance(body["model"], str)
                 # Auxiliary title/summary requests are not a native user turn.
                 primary = primary_request(body)
-                record(requests=ledger["requests"] + 1)
                 if not primary:
-                    record(auxiliary_requests=ledger.get("auxiliary_requests", 0) + 1)
+                    with lock:
+                        models = dict(ledger.get("auxiliary_models", {}))
+                        models[body["model"]] = models.get(body["model"], 0) + 1
+                        record(
+                            auxiliary_requests=ledger.get("auxiliary_requests", 0) + 1,
+                            auxiliary_models=models,
+                        )
                     if body.get("stream") is True:
                         self.send_response(200)
                         self.send_header("Content-Type", "text/event-stream")
@@ -241,6 +258,7 @@ def backend(args):
                     self.wfile.write(payload)
                     return
                 receipt = receipt_from_request(body)
+                assert body["model"] == "glm-5.3-flash", "unexpected_primary_model"
                 assert ledger["primary_requests"] == 0, "duplicate_native_input"
                 names = sorted(t["function"]["name"] for t in body.get("tools", []))
                 assert not any("cao" in name.lower() for name in names), "unexpected_mcp_offer"
