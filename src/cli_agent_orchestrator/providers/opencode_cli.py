@@ -43,7 +43,11 @@ from cli_agent_orchestrator.constants import (
     OPENCODE_CONFIG_FILE,
 )
 from cli_agent_orchestrator.models.terminal import TerminalStatus
-from cli_agent_orchestrator.providers.base import BaseProvider, OutputExtractionError
+from cli_agent_orchestrator.providers.base import (
+    BaseProvider,
+    OutputExtractionError,
+    cancelled_turn_startup_context,
+)
 from cli_agent_orchestrator.providers.mcp_interactions import (
     is_bundled_cao_mcp_entry,
     overlay_interaction_capability_file,
@@ -633,6 +637,7 @@ class OpenCodeCliProvider(BaseProvider):
         self._v1_mcp_ready_signals: dict[Path, str] = {}
         self._launch_runtime: tuple[str, dict[str, str]] | None = None
         self._runtime_probe_complete = False
+        self._cancelled_startup_shell_baseline: str | None = None
         self._owned_v2_config_dir: Path | None = None
         self._v2_data_home: Path | None = None
         self._v2_database_path: Path | None = None
@@ -1052,6 +1057,11 @@ class OpenCodeCliProvider(BaseProvider):
         Raises:
             TimeoutError: If shell or OpenCode doesn't reach IDLE/COMPLETED in time.
         """
+        startup = cancelled_turn_startup_context(self)
+        if startup is not None:
+            pending = self.pending_turn_receipt_state()
+            if pending is None or pending["generation"] != startup.generation:
+                raise ValueError("cancellation startup generation changed")
         self._validate_native_profile()
         # ``interaction_source_configured`` may already have prepared the
         # runtime during terminal creation.  Reuse that exact executable and
@@ -1064,6 +1074,8 @@ class OpenCodeCliProvider(BaseProvider):
         except BaseException:
             self.cleanup()
             raise
+        finally:
+            self._cancelled_startup_shell_baseline = None
 
     def _validate_native_profile(self) -> None:
         """Read the selected native profile without installing or rewriting it."""
@@ -1145,6 +1157,15 @@ class OpenCodeCliProvider(BaseProvider):
         init_timeout = get_server_settings()["provider_init_timeout"]
         if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
+
+        self._cancelled_startup_shell_baseline = None
+        if (
+            cancelled_turn_startup_context(self) is not None
+            and not get_backend().supports_event_inbox()
+        ):
+            self._cancelled_startup_shell_baseline = get_backend().get_pane_current_command(
+                self.session_name, self.window_name
+            )
 
         # Recovery reuses this provider after fencing and resetting its pane.
         # Retire the old private tree only once the replacement shell is ready,
@@ -1525,11 +1546,11 @@ class OpenCodeCliProvider(BaseProvider):
         """Wait until the new TUI has proved it can accept its first input.
 
         A provider may opt into this only through ``supports_screen_detection``.
-        The viewport is sampled solely while bootstrapping a brand-new terminal,
-        before a task exists in the TUI, so an IDLE/COMPLETED marker cannot be a
-        previous-turn remnant.  Unknown, processing, and permission frames are
-        never treated as ready.  The monitor records the observed state first,
-        keeping API/UI status and prompt delivery on the same evidence.
+        The viewport is sampled while bootstrapping a new TUI. Normal startup
+        publishes through the monitor. An owned cancellation reset retains its
+        old receipt and records replacement readiness independently, publishing
+        only after recovery confirms durable cancellation. Unknown, processing,
+        permission and stale turn frames never prove replacement readiness.
         """
         from cli_agent_orchestrator.services.status_monitor import status_monitor
 
@@ -1549,11 +1570,17 @@ class OpenCodeCliProvider(BaseProvider):
                     strip_escapes=True,
                     visible_only=True,
                 )
-                observed = await asyncio.to_thread(
-                    status_monitor.observe_initial_screen_snapshot,
-                    self.terminal_id,
-                    snapshot,
-                )
+                if (
+                    cancelled_turn_startup_context(self) is not None
+                    and not get_backend().supports_event_inbox()
+                ):
+                    observed = await asyncio.to_thread(self._cancelled_startup_status, snapshot)
+                else:
+                    observed = await asyncio.to_thread(
+                        status_monitor.observe_initial_screen_snapshot,
+                        self.terminal_id,
+                        snapshot,
+                    )
             except Exception as exc:
                 logger.debug(
                     "OpenCode initial viewport probe failed for %s: %s", self.terminal_id, exc
@@ -1567,6 +1594,39 @@ class OpenCodeCliProvider(BaseProvider):
                 )
                 return True
             await asyncio.sleep(min(0.5, remaining))
+
+    def _cancelled_startup_status(self, snapshot: str) -> TerminalStatus:
+        """Observe the bound replacement without publishing or settling its task."""
+        startup = cancelled_turn_startup_context(self)
+        pending = self.pending_turn_receipt_state()
+        if startup is None or pending is None or pending["generation"] != startup.generation:
+            return TerminalStatus.UNKNOWN
+        try:
+            command = get_backend().get_pane_current_command(self.session_name, self.window_name)
+        except Exception:
+            return TerminalStatus.UNKNOWN
+        if (
+            not command
+            or not self._cancelled_startup_shell_baseline
+            or command == self._cancelled_startup_shell_baseline
+        ):
+            return TerminalStatus.UNKNOWN
+        observed = self._get_status_from_screen(snapshot.splitlines(), startup_without_task=True)
+        if observed == TerminalStatus.ERROR:
+            return observed
+        if (
+            observed != TerminalStatus.IDLE
+            or re.search(PROCESSING_FOOTER_PATTERN, snapshot)
+            or _ACTIVE_TURN_RECEIPT_LINE.search(snapshot)
+            or (self._pending_turn_receipt and self._pending_turn_receipt in snapshot)
+            or re.search(COMPLETION_MARKER_PATTERN, snapshot)
+            or re.search(V2_COMPLETION_MARKER_PATTERN, snapshot)
+            or (self._cli_major == 1 and "▣" in snapshot)
+            or (self._cli_major == 2 and re.search(r"(?m)^\s*›\s+\S", snapshot))
+        ):
+            return TerminalStatus.UNKNOWN
+        startup.readiness_observed.set()
+        return TerminalStatus.IDLE
 
     def _build_launch_command(self, *, _v1_model_provider: str | None = None) -> str:
         """Build the inline-env opencode launch command string."""
@@ -1773,7 +1833,11 @@ class OpenCodeCliProvider(BaseProvider):
         if re.search(IDLE_FOOTER_PATTERN, clean) and (
             not re.search(PROCESSING_FOOTER_PATTERN, clean) or esc_is_stale
         ):
-            return TerminalStatus.IDLE
+            return (
+                TerminalStatus.PROCESSING
+                if self.pending_turn_receipt_state()
+                else TerminalStatus.IDLE
+            )
 
         # ── 6. UNKNOWN (fallback) ─────────────────────────────────────────────
         return TerminalStatus.UNKNOWN
@@ -1783,6 +1847,12 @@ class OpenCodeCliProvider(BaseProvider):
     supports_screen_detection = True
 
     def get_status_from_screen(self, screen_lines: List[str]) -> TerminalStatus:
+        """Detect the public viewport status without bypassing a pending receipt."""
+        return self._get_status_from_screen(screen_lines)
+
+    def _get_status_from_screen(
+        self, screen_lines: List[str], *, startup_without_task: bool = False
+    ) -> TerminalStatus:
         """Detect status from a pyte-composited viewport (escape-free rows).
 
         The pyte screen represents the current terminal viewport without any
@@ -1796,6 +1866,10 @@ class OpenCodeCliProvider(BaseProvider):
         4. COMPLETED — completion marker followed by idle footer
         5. IDLE — idle footer present
         6. UNKNOWN — fallback
+
+        Only the authority-bound cancellation probe may request transport-only
+        startup detection. Ordinary callers always retain the receipt fence;
+        this detector never reads a thread's cancellation ContextVar.
         """
         completion_pattern = (
             V2_COMPLETION_MARKER_PATTERN if self._cli_major == 2 else COMPLETION_MARKER_PATTERN
@@ -1861,7 +1935,11 @@ class OpenCodeCliProvider(BaseProvider):
         if re.search(IDLE_FOOTER_PATTERN, joined) and (
             not re.search(PROCESSING_FOOTER_PATTERN, joined) or esc_is_stale
         ):
-            return TerminalStatus.IDLE
+            return (
+                TerminalStatus.PROCESSING
+                if not startup_without_task and self.pending_turn_receipt_state()
+                else TerminalStatus.IDLE
+            )
 
         # ── 6. UNKNOWN (fallback) ───────────────────────────────────────
         return TerminalStatus.UNKNOWN

@@ -1,5 +1,9 @@
 # Plan: provider MCP profiles
 
+## T219 · reproduce and separate replacement readiness from task status
+
+Trace existing cancelled_turn_initialization from recovery through real OpenCode initialize and its viewport publication. Graphify is older (87e2d5f3); verify its provider/monitor neighbors against current source. Add RED controls for publication/readiness and generation mismatch, then a scoped observation path matching the existing context contract. A second RED proves ordinary raw/screen IDLE also bypasses a pending receipt: fence both public UI detectors and allow only the private bound bootstrap to observe startup IDLE. Preserve existing native event-status resolution. Two stale Codex controls lack the current FIFO restart witness; reproduce independently and update their positive protocol fixture without weakening assertions. Preserve normal startup, private runtime cleanup, MCP startup and receipt fences; test real initialization and recovery with controlled transport, source/ownership guards and affected-provider regression before native acceptance.
+
 ## T218 · close the task-query producer/consumer witness gap
 
 R4 completed the real query, render guard, durable CAS, exact offers and normal cleanup. Its final predicate failed solely because postgres_target_identity_stable is produced only by the restart branch. Keep the original false receipt; add before/after target observations to the task controller using the existing fingerprint helper, test emitted evidence against the actual final consumer, review and repin before one new execution.

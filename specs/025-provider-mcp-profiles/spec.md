@@ -1,5 +1,9 @@
 # Provider MCP profiles and current acceptance
 
+## OpenCode cancelled-turn startup isolation · T219
+
+FR196/SC180: A replacement OpenCode FIFO/TUI transport must prove readiness within the existing cancellation-startup authority while the old receipt stays fenced. Validate provider/terminal/window/generation before launch. During this scope observe only the bound replacement viewport without publishing monitor status or clearing the task receipt; record readiness separately. Normal initial startup must retain existing publication. Refuse stale completion, active/error/dialog/shell/unknown frames and changed identity. Durable finish precedes ordinary status refresh; no task resend or relaxed deadlines. For every OpenCode UI turn, ordinary detectors must remain PROCESSING while a receipt is pending (withholding stable-IDLE fallback/inbox delivery until release), including in copied cancellation contexts and the interval before durable finish. The explicit private probe alone may inspect transport readiness. Preserve native event-status authority; broader Herdr acceptance stays separate. Component reproduction is not native multi-terminal acceptance.
+
 ## Task-query target identity witness · T218
 
 FR195/SC179: The task-query branch must emit the same required PostgreSQL target-stability witness as its final predicate consumes. Compare the current API main/auth/peer target fingerprint with the initial owned snapshot both before the query and after verified completion. Refuse mismatch or unavailable identity; never exclude the existing requirement, fabricate a historical witness or alter accepted message/restart branches.

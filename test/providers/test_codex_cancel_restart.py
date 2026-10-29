@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -39,6 +40,13 @@ async def test_cancel_initializes_actual_codex_without_releasing_the_old_receipt
     backend = Mock()
     backend.supports_event_inbox.return_value = False
     monkeypatch.setattr(recovery, "FIFO_DIR", tmp_path)
+    capture_identity = "e" * 32
+    fifo = SimpleNamespace(
+        prepare_reader_restart=Mock(return_value=capture_identity),
+        restart_reader=Mock(return_value=capture_identity),
+        activate_reader_restart=Mock(return_value=True),
+    )
+    monkeypatch.setattr(recovery, "fifo_manager", fifo)
     backend.get_history.return_value = frame
     commands = iter(["bash"])
     backend.get_pane_current_command.side_effect = lambda *_: next(commands, "codex")
@@ -99,6 +107,9 @@ async def test_cancel_initializes_actual_codex_without_releasing_the_old_receipt
     assert provider.pending_turn_receipt_state() is None
     assert provider.get_status(frame) == TerminalStatus.IDLE
     monitor.publish_receipt_reconciliation.assert_not_called()
+    fifo.prepare_reader_restart.assert_called_once_with("1234abcd")
+    fifo.restart_reader.assert_called_once_with("1234abcd", capture_identity)
+    fifo.activate_reader_restart.assert_called_once_with("1234abcd", capture_identity)
     assert all(task not in str(call) for call in backend.send_keys.call_args_list)
 
 

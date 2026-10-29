@@ -1,5 +1,16 @@
 # Claude Code: análisis y pendientes
 
+**2026-10-29 · T219: corregida la inicialización de OpenCode tras cancelar.**
+El reemplazo acredita readiness sin publicar IDLE ni liberar el recibo anterior;
+el detector público también conserva el fence hasta verificar o cancelar.
+Generación ajena rechazada antes de efectos; no se reenvía la tarea. Regresión
+381 PASS con PostgreSQL/tmux y 29 controles enfocados (solapados); arquitectura
+5/0. Fixture Codex alineada con el contrato FIFO actual, sin cambiar su producto.
+Es corrección y validación de componente: falta el recorrido nativo con dos
+terminales; T013/OC-06, perfiles/Work/global siguen abiertos. Las aceptaciones
+nativas anteriores mantienen sus fuentes originales.
+[Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t219.md).
+
 **Estado actual · 2026-10-29: T214/T216/T217/T218 cerradas en su alcance.**
 OpenCode v2 R5 pasa una consulta real `get_local_cao_task` con identidad y resultado
 vinculados, recibo durable, estabilidad PostgreSQL, oferta HTTP emisora de doce

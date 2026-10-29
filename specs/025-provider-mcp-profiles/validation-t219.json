@@ -1,0 +1,104 @@
+{
+  "schema": "caos.spec025.t219.component.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_NATIVE_CONCURRENCY_PENDING",
+  "source_base_head": "0c5dfcc410c290191cde5bfafb22d33d1575a5d6",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/opencode_cli.py": "eb36606ec202fc12258a75b9ce64b5109bbf1aa601391c65c585863d8b6b5a75",
+    "test/providers/test_opencode_cancel_restart.py": "191922f500f50ffcf886dca5fd7b23dc871feb81fb7edac13d2a9b03182c2e14",
+    "test/providers/test_codex_cancel_restart.py": "6b576fc7eed1c6399955f20189488c14368cd45d7d83de953acd45321a4bbd96"
+  },
+  "reproductions": {
+    "initial_fixture_errors": 3,
+    "isolated_initialization_red": {
+      "failed": 2,
+      "passed": 1,
+      "seconds": 31.91
+    },
+    "public_detector_red": 2,
+    "unrelated_codex_fixture_failures_reproduced_separately": 2,
+    "first_product_failure": "initialization publishes idle under pending receipt and accepts foreign generation",
+    "second_product_failure": "ordinary raw/screen idle bypasses pending receipt"
+  },
+  "verification": {
+    "initial_focused": {
+      "passed": 19,
+      "seconds": 30.38
+    },
+    "corrected_focused": {
+      "passed": 53,
+      "seconds": 39.45
+    },
+    "final_controls": {
+      "passed": 29,
+      "seconds": 34.17
+    },
+    "final_regression": {
+      "passed": 381,
+      "failed": 0,
+      "warnings": 5,
+      "seconds": 192.63
+    },
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    }
+  },
+  "preserved_intermediate_failures": {
+    "first_regression": {
+      "passed": 244,
+      "failed": 2,
+      "seconds": 129.8,
+      "cause": "Codex fixture omits owned FIFO restart contract"
+    },
+    "first_extended_regression": {
+      "passed": 377,
+      "failed": 1,
+      "seconds": 204.03,
+      "cause": "v1 control omitted required installed profile"
+    },
+    "first_liveness_controls": {
+      "passed": 28,
+      "failed": 1,
+      "seconds": 34.38,
+      "cause": "controlled CAS returned a different string from stable candidate"
+    }
+  },
+  "startup_generation_validated_before_effects": true,
+  "replacement_readiness_does_not_publish": true,
+  "public_ui_pending_receipt_stays_processing": true,
+  "private_probe_explicit_no_contextvar_in_public_detectors": true,
+  "cancel_finish_precedes_refresh": true,
+  "no_task_resend": true,
+  "context_provider_window_generation_isolation_tested": true,
+  "missing_receipt_reaches_existing_deadline": true,
+  "stable_receipt_reaches_existing_cas": true,
+  "herdr_actual_confirmed_reset_unsupported_before_initialize": true,
+  "codex_product_changed": false,
+  "native_concurrency_accepted": false,
+  "full_t013_accepted": false,
+  "work_message_accepted": false,
+  "global_acceptance_claimed": false,
+  "initialization_limit_seconds_unchanged": 120,
+  "model_limit_modified": false,
+  "postgres": {
+    "held_service_identity_verified": true,
+    "borrowers": 0,
+    "private_databases": 0,
+    "new_service_created": false
+  },
+  "source_review_job": "9d42d3d3996c473db50fcb7f1b7cd0d3",
+  "review_followups": {
+    "hard_blockers_reported": 0,
+    "requested_liveness_controls_passed": true,
+    "requested_event_reset_source_and_control_verified": true
+  },
+  "final_review_job": "6ccdafe4dba9412eabf55644dc474e16",
+  "final_review_followups_resolved": true,
+  "event_inbox_bootstrap_functional_acceptance_claimed": false,
+  "obsidian": {
+    "operation": "save-20261029-caos-t219-cancelled-readiness",
+    "strict_lint_issues": 0
+  },
+  "native_provider_cli_or_model_invoked": false
+}
