@@ -1,5 +1,14 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-10-29 · T226/T223: corregido y aceptado el recorrido nativo acotado de Claude.**
+Canal común de eventos nativos y recuperación desde la vista actual, con sesión,
+generación, recibo y confirmación PostgreSQL. Preflight59,10s y concurrente98,36s:
+A cancela en26,58s sin reenvío; B conserva proceso/FIFO/generación y verifica su
+resultado largo.376 pruebas y78 controles finales solapados, tipos0 y arquitectura5/0.
+Limpieza propia/PostgreSQL0-0. Solo Claude2.1.303 local tmux y HTTP sintético:
+MCP, otros perfiles/backends e inferencia/capacidad global siguen separados.
+[Resultados y límites](../specs/025-provider-mcp-profiles/validation-t226.md).
+
 **2026-10-29 · T225: observado el evento nativo de finalización, sin aceptar todavía la tarea.**
 En84,34s, Claude entregó1204bytes de texto final por Stop, con la misma sesión y
 el recibo correcto; la API conservó202/pending. Esto identifica la frontera de

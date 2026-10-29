@@ -1,0 +1,137 @@
+{
+  "schema": "caos.spec025.t226.native-completion.v1",
+  "date": "2026-10-29",
+  "status": "PASS_BOUNDED_NATIVE_CLAUDE_CANCEL_AND_CONCURRENT_FINAL",
+  "source_head": "1ff2746562048d723409545c74c7e23d8128012e",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/base.py": "f41603284772b0e8dbab63dccb53a5bc0e4f4d894f314fd458a599212ce8952e",
+    "src/cli_agent_orchestrator/providers/claude_code.py": "5c2f235c69d727854c7acd785886ff773b78c2e0db4bc5d4851c49ea46553401",
+    "src/cli_agent_orchestrator/providers/claude_completion_hook.py": "df84f0d994c2c9c744553cb1996d7fe7501734597a5c8c901d9741dd54480e9b",
+    "src/cli_agent_orchestrator/utils/native_completion_signal.py": "b01c9ad3b720caf91f2581441441a03ab3a9e1abdab353715023f7590494335b",
+    "src/cli_agent_orchestrator/services/terminal_service.py": "a8c2ee2b8ddd9027a821cf480298ebe22b76e867c3a1783ab9c0573bf5cded14",
+    "test/utils/test_native_completion_signal.py": "e0118dd2205a79d0c001834f6a04ae66fe14aa379535a698314cb211a8d88226",
+    "test/providers/test_claude_native_completion.py": "72ca15370050adb66b25391a75acfb01520ed08fb72bf29b77f0837db0ed8ac9",
+    "test/services/test_turn_receipt_canonicalization.py": "caf73c773f12061fabf28a1d2571042fdc3c222e5a56f1ea1bdaea87feb09ee0"
+  },
+  "native_binary": {
+    "version": "Claude Code 2.1.303",
+    "sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450"
+  },
+  "native_cases": {
+    "preflight": {
+      "passed": true,
+      "seconds": 59.1,
+      "source_pins": 1888,
+      "executed_source_archive_sha256": "e3a94dcb7297ec291ddd0d80c67214520d09eede6298a374c1b643f9cf3dcfb4",
+      "executed_runner_sha256": "9b467fdccb226bfc42e3adbe5abebcf05a76ea20131fd06173d8100f61f28f2c",
+      "final_state": "verified",
+      "native_stop_text_bytes": 104,
+      "native_stop_text_sha256": "ad050a2629f25b557d8320a6ee64957e8307154646ec24ff6d3685adf3aadc5d",
+      "native_start_and_stop_observed": true,
+      "minimum_recorded_memory_mib": 9676,
+      "cleanup": {
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "tmux_cleanup": true,
+        "home_removed": true
+      },
+      "postgres_after": {
+        "borrower_connections": 0,
+        "private_databases": 0,
+        "same_held_container": true
+      },
+      "source_preserved": true,
+      "operational_wrapper_reclosed": true
+    },
+    "concurrent": {
+      "passed": true,
+      "seconds": 98.36,
+      "source_pins": 1888,
+      "executed_source_archive_sha256": "e3a94dcb7297ec291ddd0d80c67214520d09eede6298a374c1b643f9cf3dcfb4",
+      "executed_runner_sha256": "6f68503d242b4c8fb57a7646f65e30cce2dae1b5224617d17111720dee2bd878",
+      "final_state": "verified",
+      "native_stop_text_bytes": 1224,
+      "native_stop_text_sha256": "f9c2dc4ccec8953ae3e54b970ab724fd64d50ef02c98c35b2a3a6232ffaa7008",
+      "native_start_and_stop_observed": true,
+      "minimum_recorded_memory_mib": 9349,
+      "cleanup": {
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "tmux_cleanup": true,
+        "home_removed": true
+      },
+      "postgres_after": {
+        "borrower_connections": 0,
+        "private_databases": 0,
+        "same_held_container": true
+      },
+      "source_preserved": true,
+      "operational_wrapper_reclosed": true,
+      "cancellation": {
+        "cancel_http_status": 200,
+        "cancel_seconds": 26.58,
+        "stale_generation_http_status": 409,
+        "same_generation_cancelled": true,
+        "receipt_state": "cancelled",
+        "same_child_join_verified": true,
+        "cleanup_preserved_verdict": true,
+        "parent_alive_after_child_delete": true,
+        "before_and_after_owned_witnesses_returned": true
+      },
+      "b_continuity": {
+        "b_same_generation": true,
+        "b_same_fifo": true,
+        "b_process_alive": true,
+        "b_fresh_output_bytes": 26481,
+        "a_replacement_requests": 0,
+        "a_original_retired": true
+      },
+      "b_primary_requests": 1,
+      "b_builtin_tools_offered": 0,
+      "b_progress_ticks": 58
+    }
+  },
+  "original_budgets": {
+    "memory_floor_mib": 6144,
+    "native_seconds": 180,
+    "progress_observation_seconds": 5
+  },
+  "verification": {
+    "original_last_red_failures": 2,
+    "initial_regression_passed": 348,
+    "expanded_regression_passed": 376,
+    "post_cleanup_final_controls_passed": 78,
+    "post_cleanup_controls_overlap_expanded_regression": true,
+    "type_checked_source_files": 5,
+    "type_errors": 0,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0,
+    "style": "black/isort/diff-check PASS",
+    "claude_reviews": [
+      "959d0842e1c44abcbe0e6e52fab62412",
+      "a5baff8ccbd041fb861de6e1627104e8",
+      "3be543ac49d94e5e92cdb2e006587787"
+    ],
+    "actionable_findings_corrected": true,
+    "luna_max_ecc_read_review": true,
+    "foreign_graphify_files_preserved": 12,
+    "obsidian_operation": "save-20261029-caos-t226-bound-native-completion",
+    "obsidian_strict_lint_exit": 0
+  },
+  "scope": {
+    "provider_neutral_channel_and_service": true,
+    "provider_specific_native_envelope_and_screen_grammar": "Claude adapter",
+    "authoritative_store": "PostgreSQL",
+    "local_tmux_without_container_mapping": true,
+    "model_structured_output_required": false,
+    "operator_settings_and_login_modified": false
+  },
+  "limits": [
+    "Pinned native binary with controlled loopback Anthropic HTTP, no external model inference or served-model attestation",
+    "Empty built-in grant control; native MCP-bearing profile compatibility remains separate",
+    "Other backends/container mappings and recovery across API process replacement retain legacy paths; no generic native completion acceptance inferred",
+    "Full CL-10/T013/OC-06 global capacity and provider/profile/version matrices remain open",
+    "T223 earlier failed receipts and exact executed archives remain failed; this fresh case closes its bounded concurrent cancellation/final-result scenario"
+  ],
+  "private_root": "/home/felni/.cache/caos-t226-native-completion-20261029"
+}
