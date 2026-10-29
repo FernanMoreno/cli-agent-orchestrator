@@ -1083,7 +1083,7 @@ def _derive_private_mcp_observer_source(
             expected_safe_result_tool is not None
             and (
                 type(expected_safe_result_tool) is not str
-                or expected_safe_result_tool != "list_local_cao_peers"
+                or expected_safe_result_tool not in {"list_local_cao_peers", "get_local_cao_task"}
             )
         )
     ):
@@ -1111,9 +1111,35 @@ def _derive_private_mcp_observer_source(
             or not isinstance(returns[0].value, ast.Call)
             or not isinstance(returns[0].value.func, ast.Name)
             or returns[0].value.func.id != "install_protocol_observer"
+            or len(returns[0].value.args) != 3
+            or [ast.unparse(arg) for arg in returns[0].value.args]
+            != ["low_level_server", "Path(raw_path)", "nonce"]
         ):
             raise ValueError("observer_return_shape_invalid")
         old_return = ast.get_source_segment(original, returns[0])
+        call = returns[0].value
+        call.args[1] = ast.parse(
+            "Path(raw_path).with_name(Path(raw_path).name + '-' + terminal)", mode="eval"
+        ).body
+        # Preserve the production installer's task path/requester bindings.
+        # The derived run selects its own capture mode and fixed message probe.
+        call.keywords = [
+            keyword
+            for keyword in call.keywords
+            if keyword.arg not in {"expected_safe_result_tool", "expected_message_bodies"}
+        ]
+        call.keywords.extend(
+            [
+                ast.keyword(
+                    arg="expected_safe_result_tool", value=ast.Constant(expected_safe_result_tool)
+                ),
+                ast.keyword(
+                    arg="expected_message_bodies",
+                    value=ast.Name(id="_MESSAGE_ARGUMENT_EXPECTATIONS", ctx=ast.Load()),
+                ),
+            ]
+        )
+        adapted_return = ast.unparse(returns[0])
     except (SyntaxError, ValueError):
         raise GateError("observer_source_binding_shape_changed") from None
     if (
@@ -1139,17 +1165,7 @@ def _derive_private_mcp_observer_source(
         "terminal = selected_environment.get('CAO_TERMINAL_ID', '')\n"
         "    if not re.fullmatch(r'[0-9a-f]{8}', terminal):\n"
         "        raise RuntimeError('mcp_observer_terminal_binding_invalid')\n"
-        "    return install_protocol_observer(\n"
-        "        low_level_server,\n"
-        "        Path(raw_path).with_name(Path(raw_path).name + '-' + terminal),\n"
-        "        nonce,\n"
-        "        expected_message_bodies=_MESSAGE_ARGUMENT_EXPECTATIONS,\n"
-        + (
-            "        expected_safe_result_tool=" + repr(expected_safe_result_tool) + ",\n"
-            if expected_safe_result_tool is not None
-            else ""
-        )
-        + "    )"
+        "    " + adapted_return
     )
     return adapted.replace(old_return, new_return, 1)
 

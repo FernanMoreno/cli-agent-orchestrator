@@ -23,6 +23,11 @@ controls. Existing peer-list/default-off and limits must remain unchanged.
 Then freeze/integrate/review before deriving a fresh native fixture from T166;
 reuse the verified held PostgreSQL owner and serialize intensive tests. Native
 T214 remains a distinct task and may not reuse old runner hashes/paths.
+Its observer derivation must preserve the production installer's task path and
+protected requester keywords, while explicitly selecting the safe projection.
+Execute that generated module and handler with late issuance before any native
+run. A one-call native case still needs its own prompt, offer and cleanup
+acceptance; the two-message/restart loop cannot establish that case unchanged.
 
 ## T212 · remove inherited terminal typing ambiguity
 

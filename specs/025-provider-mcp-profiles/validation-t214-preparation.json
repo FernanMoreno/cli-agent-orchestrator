@@ -1,0 +1,51 @@
+{
+  "schema": "caos.spec025.t214.preparation.v1",
+  "date": "2026-10-29",
+  "status": "ADAPTER_PREPARATION_PASS_NATIVE_PENDING",
+  "source_base_head": "69bd219e47c37a3e494518bedc8e86b253fbdf3d",
+  "source_sha256": {
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "4bf03201b3872602298334c750ee30404de88eb919709ce15e8cfd1732b63c91",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_task_query_preflight.py": "cf307845dca541288ab488c7659c8e1b8ea1f33905033ab6268458661c4c83de"
+  },
+  "red": {
+    "failed": 1,
+    "passed": 4,
+    "log": "t214-adapter-red2.txt"
+  },
+  "preserved_test_loader_failure": "t214-test-loader-failure.txt",
+  "initial_focused": {
+    "passed": 5,
+    "seconds": 41.93
+  },
+  "regression": {
+    "passed": 311,
+    "failed": 0,
+    "subtests_passed": 20,
+    "existing_warnings": 3,
+    "seconds": 88.3
+  },
+  "final_focused": {
+    "passed": 8,
+    "failed": 0,
+    "seconds": 34.8
+  },
+  "distinct_tests_passed": 314,
+  "coverage_settings_changed": false,
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "review": {
+    "job_id": "fc8a129717f942388a1bf4562992b3f0",
+    "mode": "read",
+    "verdict": "GO"
+  },
+  "native_calls": 0,
+  "native_accepted": false,
+  "server_grants_changed": false,
+  "new_native_case_implemented": false,
+  "existing_v2_baseline_repeated": false,
+  "postgres_owner_reverified": true,
+  "postgres_client_borrowers": 0,
+  "postgres_private_databases": 0
+}

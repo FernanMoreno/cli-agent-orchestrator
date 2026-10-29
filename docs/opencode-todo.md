@@ -8,6 +8,10 @@ pasa con los límites intactos. T214 (llamada nativa de esta operación) sigue
 pendiente. Preguntas/ACK/reinicio de OpenCode v2 mantienen su aceptación.
 No cambia permisos ni cierra OC2-04 global.
 [Alcance](../specs/025-provider-mcp-profiles/validation-t213.md).
+T214: corregido el adaptador generado;311pruebas de regresión y8controles
+finales PASS (314distintas), arquitectura5-0/ClaudeGO. Falta implementar y ejecutar
+el caso nativo de una llamada; preparación no equivale a aceptación.
+[Preparación](../specs/025-provider-mcp-profiles/validation-t214-preparation.md).
 
 Estado actual (2026-10-29): T197/T210 tienen aceptación acotada del recorrido
 Claude R6 con mensajes/reinicio y parada gestionada explícita; T211 tiene
