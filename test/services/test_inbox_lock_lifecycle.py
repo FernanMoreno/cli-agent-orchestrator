@@ -45,6 +45,14 @@ def test_interrupted_lock_acquisition_releases_its_lease(monkeypatch):
     error = KeyboardInterrupt()
 
     class InterruptedLock:
+        # Exercise the real acquire/release protocol, including the explicit
+        # acquisition now required by nonblocking fallback deliveries.
+        def acquire(self, *, blocking=True):
+            raise error
+
+        def release(self):
+            pytest.fail("an unacquired lock must not be released")
+
         def __enter__(self):
             raise error
 

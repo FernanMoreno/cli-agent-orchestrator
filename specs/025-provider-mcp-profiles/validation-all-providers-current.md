@@ -1,6 +1,25 @@
 # Comprobación actual por proveedor
 
-T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. T168streaming/OC2-04 global siguen abiertos. [Evidencia y límites](validation-t186.md).
+## Estado actual por proveedor · 2026-10-29
+
+Este índice concilia recibos ligados a su fuente; no repite las 141 comprobaciones
+históricas de `671c9c8f`. Los fallos y sus fuentes originales se conservan debajo.
+
+| Proveedor | Evidencia acotada vigente | Límites pendientes |
+| --- | --- | --- |
+| OpenCode | T168/T187 worker nativo PASS por observador HTTP (178→399 bytes TEXT y cancelación/retirada física), fuente `fc13a8aa`; [recibo](validation-t187-native.md). T186 native_tool es un caso separado ([recibo](validation-t186.md)). T214 lectura nativa de tarea PASS ([R5](validation-t214-native-r5.md)); T219 corrigió el componente de arranque. T220 añade A cancelada en 5,176 s mientras B conserva proceso/FIFO/generación, emite texto nuevo y verifica su recibo; fuente `d552ce47`, CLI reales y HTTP controlado ([recibo](validation-t220.md)). | T187 cierra el alcance worker T168 por su alternativa HTTP; no acredita el marcador TUI legado. T220 usa una opción explícita de visualización y no acredita Mini predeterminado ni inferencia externa. Quedan las otras matrices de perfil/operación/autenticación/backend, OC-06/global y saturación. No reabrir Work ni recorridos ya aceptados por mezclar sus alcances. |
+| Codex | T190 PASS: dos `send_message`, filas PostgreSQL/eventos AG-UI y reinicio API, fuente `090f01d8`, 505 pins ([recibo](validation-t190-native-r5.md)). T211 R2 PASS: dos CLI nativos, A cancelada y progreso FIFO de B, fuente `be5bf0a4`, 1798 pins, SSE sintético ([recibo](validation-t211.md)). | El EOF de T190 lo pide el arnés, no es cierre automático. T211 acredita cierre del socket llamante, no observación del servidor de esa desconexión. CX-09/T013 completos, otros perfiles/operaciones/Work y aceptación global permanecen separados. |
+| Claude | T197/T210 R6 PASS acotado en colaboración: dos mensajes Unicode, filas/eventos, reinicio y parada gestionada con sello normal dentro de 6 s; fuente `b22b85fa`, inventario de 544 archivos verificado contra Git. Cierre independiente aceptado; el recibo padre falso se conserva ([recibo y cierre](validation-t197-native-r6.md)). | Solo ese modo explícito: activación predeterminada, parada intrínseca de 500 ms, otros perfiles/proveedores/Work y alcance global siguen separados; no hay atestación del modelo servido. |
+
+Ningún recibo demuestra saturación o escalabilidad general. T221 investiga por
+separado el bloqueo de receptores independientes en los sondeos seriales de inbox.
+Las listas actuales de [OpenCode](../../docs/opencode-todo.md),
+[Codex](../../docs/codex-todo.md) y [Claude](../../docs/claude-todo.md) conservan
+las condiciones de cada gate.
+
+## Historial de checkpoints anteriores
+
+T186: PASS real OpenCode v2 native_tool en169fdc44; dos APIs/CLI JSON/MCP12, Unicode/replay31,129s y tarea cancelada36,761s con hijo/worker físicamente detenidos.63sondeos, Git/4retiradas/cierre normal,561pins y mínimo8644MiB. Corregido FileExistsError del observador con1RED→GREEN y112PASS/arquitectura5/0; fallos originales y cierres derivados conservados. En ese checkpoint T168 streaming seguía abierto; T187 cerró después el alcance worker mediante HTTP. OC2-04 global sigue separado. [Evidencia y límites](validation-t186.md).
 
 T185: timeout nativo Codex180s PASS en5f034ca3; HTTP504 en208,728s con arranque, verify200/pending sin reenvío, generación ajena409 y cancelación actual200 en25,875s. Cinco procesos viejos retirados, reemplazo listo/0peticiones y limpieza completa; hijo conserva reconcile/timeout/settled_at.323PASS/5avisos,26controles nuevos incluidos, arquitectura5/0,1744pins y PG cerrado. Backend sintético; todaCX08/otros proveedores/global siguen separados. [Recibo y límites](validation-t185.md).
 
@@ -22,7 +41,7 @@ Actualización T176: tres errores Codex mediante API/CLI real y HTTP sintético 
 
 2026-10-26. Fuente ejecutada: `671c9c8f01a8174ef79096c822dce9f66229c071`. [Recibo acotado](validation-all-providers-current.json). Dos auditorías READ independientes de Luna, revisadas contra fuentes y recibos por Codex; no activaron CLIs ni tocaron credenciales.
 
-## Contratos actuales
+### Contratos del checkpoint 2026-10-26
 
 141 PASS, 2 avisos, 146,57s. Se comprobaron los cinco módulos indicados en el recibo: builders de configuración, perfiles/filtros nativos, preflight y catálogo/dispatch MCP mediante FastMCP y procesos stdio Python. Se verificaron sus marcas offline_database y autostart PostgreSQL desactivado. Todos los pins de fuente del recorrido R7 y los cinco módulos de test permanecieron intactos. No se cambian permisos ni respuestas finales de modelos.
 
@@ -34,13 +53,13 @@ Esta selección cubre contratos usados por los tres proveedores; no ejecuta los 
 | Codex | CX-06 PASS9d5ba9f8/50,23s y CX-07 PASS418a9853/50,03s: una llamada MCP recupera la espera HTTP interrumpida entre dos procesos API,19→3s, ACK exacto, AG-UI3 y limpieza propia;1510pins. Codex0.164.0/gpt-6-luna solicitado. [Recibo CX-07](../022-provider-agui-restart/validation-cx07-current.json). | CX-01–04/CX-AUTH-03 catálogo/autorización nativos; CX-08 Unicode/errores/cancelación; CX-05 mensajes persistidos. send_message y cao.work.message se verifican por separado. |
 | Claude | Diagnóstico actual en35a728c1: Unicode sin herramientas, Claude Code2.1.303/Sonnet4.6 solicitado, HTTP200/21,204s, recibo/join y limpieza;1508pins/operador intactos. [Recibo y límites](validation-claude-unicode-current.md). No explica504 ni acepta los recorridos ampliados. | CL-01–04 diagnóstico Unicode/504 actual; CL-05–07/CL-AUTH-03/CL-CATALOG autorización; CL-08/09 mensajes/interacción/reinicio. Login intacto y T032 aplazada. |
 
-## Fuente y límites de las auditorías
+### Fuente y límites de esas auditorías históricas
 
 Codex: adapter codex.py, mcp_tool_policy.py, validation-t007.md/validation-t036.md, Spec022 tasks y Spec023 tasks, validation-t132-work-message.json. Claude: adapter claude_code.py, mcp_tool_policy.py, middleware del servidor, test_claude_mcp_tool_filter.py, validation-t031.md y su lista específica. T168 contiene modelo opencode-go/glm-5.3-flash; T169 es CLI de emparejamiento. Ninguno acredita Codex o Claude. Las versiones/modelos históricos son evidencia del recibo, no fijaciones actuales para nuevos lanzadores.
 
 Los tres documentos de pendientes distinguen ahora el estado específico de su proveedor del historial compartido. JSON estricto se exige a las operaciones automáticas que lo necesitan; no se fuerza JSON al modelo para ocultar variaciones de texto. Los contratos HTTP, MCP, AG-UI y CLI conservan su semántica propia.
 
-## Composición y conservación
+### Composición y conservación del checkpoint
 
 PASS de los contratos comprobados:5contratos de arquitectura conservados/0rotos. Fuente productiva y547pins de R7 intactos después de la suite; cinco módulos de test sin cambios. Ambos propietarios PG y todos los procesos/raíces de R7 quedaron cerrados antes de iniciar esta suite offline. El recibo MCP original de R7 mantiene fallo de salida de contexto; su prueba derivada solo acredita cierre físico/SQL, sin aceptación ni salida normal inventada. Credenciales del operador intactas en el recibo real; auditorías/tests no renovaron login. Graphify no se regenera: no hay cambio estructural productivo y sus archivos ajenos se preservan. Obsidian save-20261026-caos-cross-provider-gates actualizó cuatro páginas existentes mediante transacción guardada; lint estricto0.
 

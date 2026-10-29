@@ -1,0 +1,100 @@
+{
+  "schema": "caos.spec025.t221.inbox-sweep-progress.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_GLOBAL_SCALE_PENDING",
+  "source_base_head": "528a9c3d7c823049f0e758bce44ca91cf8bdbc0d",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/services/inbox_service.py": "3333fc41dc429ad4ca9d44f5e8780f6fc4519ba2a85c161011bb07ffa5a997e0",
+    "test/services/test_inbox_service.py": "51a9093e3521d7828086236d221737a6755ac813f4a82189a63ac692a28f4f7b",
+    "test/services/test_inbox_lock_lifecycle.py": "e1d03d7f0e9e50d22fb6fe3054337dfe59d30c5fe171780da634d77fbd5de0f1",
+    "test/services/test_inbox_sweep_progress.py": "3c0b4f14b92ce31a2e65a10961358a55a849fdb7d57be3b4b5d6a0c9be25dce6",
+    "test/integration/test_inbox_sweep_postgres.py": "dba0338491a7ffb7b9182b06279355324cbaa2011e21647e38b4d36e75de4cac"
+  },
+  "reproduced": {
+    "actual_service_methods": [
+      "poll_opencode_pending_messages",
+      "reconcile_orphaned_messages"
+    ],
+    "failed_controls": 2,
+    "seconds": 57.29,
+    "boundary": "serial receiver iteration prevents B query while A query is held"
+  },
+  "correction": {
+    "max_workers_and_submissions_per_sweep": 4,
+    "status_consumer_bound_unchanged": 4,
+    "two_sweep_daemons_plus_status_ceiling": 12,
+    "process_or_distributed_thread_limit_established": false,
+    "default_executor_children_used": false,
+    "individual_context_copies": true,
+    "same_receiver_lock_and_fifo_preserved": true,
+    "busy_receiver_policy": "skip without row changes; retry by existing event/poll/reconcile",
+    "outer_admitted_operation_joins_all_children": true,
+    "receiver_inventory_remains_unpaged": true,
+    "sql_schema_delivery_authority_unchanged": true
+  },
+  "verification": {
+    "initial_green": {
+      "passed": 40,
+      "seconds": 59.31
+    },
+    "expanded_controls": {
+      "passed": 74,
+      "seconds": 68.96
+    },
+    "real_postgresql_and_actual_api_daemons": {
+      "passed": 4,
+      "seconds": 53.81,
+      "discovery_read_and_delivered_updates_actual": true,
+      "send_input_controlled": true,
+      "b_dispatched_before_a_read_release": true,
+      "a_fifo_and_no_resend": true,
+      "worker_current_database_matches_owned_target": true
+    },
+    "retained_first_regression": {
+      "passed": 144,
+      "failed": 1,
+      "seconds": 132.99,
+      "failure": "InterruptedLock test fake lacked acquire after actual lock protocol change"
+    },
+    "corrected_fixture_and_interrupt_controls": {
+      "passed": 17,
+      "seconds": 32.36,
+      "same_exception_identity_and_lock_retirement_criteria_preserved": true
+    },
+    "final_regression": {
+      "passed": 147,
+      "failed": 0,
+      "warnings": 5,
+      "seconds": 129.18,
+      "files": 14,
+      "coverage_settings_preserved": true,
+      "new_cases": 14
+    },
+    "mypy": {
+      "source_files": 1,
+      "issues": 0
+    },
+    "black": "PASS",
+    "isort": "PASS",
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    },
+    "claude_read_review": "a30b022291584072b159281687f43b33",
+    "luna_max_ecc_review": "scale_remaining_scope_t221",
+    "obsidian_operation": "save-20261029-caos-t221-inbox-sweeps",
+    "obsidian_strict_lint_issues": 0,
+    "held_postgres_identity_verified": true,
+    "final_client_borrowers": 0,
+    "final_private_databases": 0,
+    "foreign_graphify_files_unchanged": 12
+  },
+  "scope_limits": [
+    "No new native/provider/model acceptance",
+    "T220 remains bound to original executed d552ce47",
+    "No distributed/shared-owner topology claim",
+    "Discovery still materializes candidate IDs; separate scalability work remains",
+    "Global T013/OC-06 saturation/capacity/latency gates remain open"
+  ],
+  "private_root": "/home/felni/.cache/caos-t221-inbox-sweeps-20261029"
+}

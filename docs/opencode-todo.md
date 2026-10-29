@@ -1,5 +1,16 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-10-29 · T221: corregido un bloqueo entre receptores en los sondeos de inbox.**
+La entrega retenida de A ya no impide llegar a B en el polling OpenCode ni en la
+reconciliación compartida. Hay cuatro trabajadores/tareas como máximo por sondeo,
+contextos PostgreSQL preservados, orden por receptor y espera de los trabajadores
+reales al cancelar o apagar. Regresión: 147 PASS; PostgreSQL y ambos daemons
+reales verifican entrega independiente, orden y ausencia de reenvíos. Tipo/estilo
+y composición 5/0, revisiones Claude y Luna Max/ECC. No es aceptación nativa nueva:
+T220 conserva su fuente original. El listado de candidatos aún no está paginado;
+capacidad/saturación y escala global siguen pendientes.
+[Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t221.md).
+
 **2026-10-29 · T220: cancelación nativa concurrente de OpenCode v2 validada.**
 A se cancela en 5,176 s; B conserva proceso/FIFO/generación, emite un marcador
 nuevo y termina con su propio recibo verificado. El reemplazo de A recibe 0

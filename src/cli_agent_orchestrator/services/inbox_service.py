@@ -4,13 +4,15 @@ Consumer: terminal.{id}.status
 """
 
 import asyncio
+import contextvars
 import logging
 import math
 import threading
 from collections import deque
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from heapq import heappop, heappush
-from itertools import count, groupby
+from itertools import count, groupby, islice
 from typing import Callable, Dict, Iterable, Iterator, Set, Tuple
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
@@ -42,6 +44,9 @@ logger = logging.getLogger(__name__)
 # Per consumer, shared-executor submissions stay bounded independently of event
 # volume. Other delivery paths retain their existing admission and lock rules.
 _STATUS_DELIVERY_CONCURRENCY = 4
+# Each of the two fallback consumers has the same finite submission ceiling.
+# Their parent default-executor workers never wait on that executor's children.
+_SWEEP_DELIVERY_CONCURRENCY = _STATUS_DELIVERY_CONCURRENCY
 
 
 class InboxServiceStoppingError(RuntimeError):
@@ -276,7 +281,7 @@ class InboxService:
                 self._notify_drainers(waiters)
 
     @contextmanager
-    def _delivery_lock(self, terminal_id: str) -> Iterator[None]:
+    def _delivery_lock(self, terminal_id: str, *, blocking: bool = True) -> Iterator[bool]:
         """Count waiting callers before acquisition; retire after the last release."""
         with self._delivery_locks_guard:
             entry = self._delivery_locks.get(terminal_id)
@@ -284,10 +289,13 @@ class InboxService:
                 entry = _DeliveryLockEntry()
                 self._delivery_locks[terminal_id] = entry
             entry.refs += 1
+        acquired = False
         try:
-            with entry.lock:
-                yield
+            acquired = entry.lock.acquire(blocking=blocking)
+            yield acquired
         finally:
+            if acquired:
+                entry.lock.release()
             with self._delivery_locks_guard:
                 entry.refs -= 1
                 if entry.refs == 0 and self._delivery_locks.get(terminal_id) is entry:
@@ -512,6 +520,55 @@ class InboxService:
         target = _managed_inbox_target(inbox_id, store_context=store_context)
         port.send_keys(target.tmux_session, target.tmux_window, target.message.message)
 
+    def _deliver_sweep_receiver(
+        self, terminal_id: str, registry: PluginRegistry | None, label: str
+    ) -> None:
+        # The submitting sweep retains its outer operation until its private
+        # executor joins every child. Inherit that admission, including after
+        # stop_accepting(), without admitting unrelated top-level work.
+        depth = getattr(self._operation_context, "depth", 0)
+        self._operation_context.depth = depth + 1
+        try:
+            with self._delivery_lock(terminal_id, blocking=False) as acquired:
+                if acquired:
+                    self._deliver_pending_locked(terminal_id, 1, registry)
+                # Busy receivers keep their durable PENDING rows. Never occupy
+                # every sweep worker waiting on another delivery's same-key lock.
+        except Exception as error:
+            logger.debug("%s failed for %s: %s", label, terminal_id, error)
+        finally:
+            self._operation_context.depth = depth
+
+    def _deliver_sweep(
+        self, receiver_ids: Iterable[str], registry: PluginRegistry | None, label: str
+    ) -> None:
+        assert getattr(self._operation_context, "depth", 0) > 0
+        receivers = iter(receiver_ids)
+        with ThreadPoolExecutor(
+            max_workers=_SWEEP_DELIVERY_CONCURRENCY, thread_name_prefix="cao-inbox-sweep"
+        ) as executor:
+
+            def submit(terminal_id: str) -> Future[None]:
+                # Context-local PostgreSQL/tenant bindings must cross this new
+                # thread boundary independently for each concurrently running key.
+                return executor.submit(
+                    contextvars.copy_context().run,
+                    self._deliver_sweep_receiver,
+                    terminal_id,
+                    registry,
+                    label,
+                )
+
+            pending = {
+                submit(terminal_id)
+                for terminal_id in islice(receivers, _SWEEP_DELIVERY_CONCURRENCY)
+            }
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    future.result()
+                pending.update(submit(terminal_id) for terminal_id in islice(receivers, len(done)))
+
     def poll_opencode_pending_messages(self, registry: PluginRegistry | None = None) -> None:
         """Poll OpenCode terminals for pending inbox messages.
 
@@ -521,11 +578,7 @@ class InboxService:
         """
         with self._track_operation():
             receiver_ids = list_pending_receiver_ids_by_provider(ProviderType.OPENCODE_CLI.value)
-            for terminal_id in receiver_ids:
-                try:
-                    self.deliver_pending(terminal_id, registry=registry)
-                except Exception as e:
-                    logger.debug(f"OpenCode inbox poll failed for {terminal_id}: {e}")
+            self._deliver_sweep(receiver_ids, registry, "OpenCode inbox poll")
 
     def reconcile_orphaned_messages(self, registry: PluginRegistry | None = None) -> None:
         """Re-attempt delivery for messages stuck in PENDING past the grace window.
@@ -542,11 +595,8 @@ class InboxService:
         messages — it only adopts ones they have already missed.
         """
         with self._track_operation():
-            for terminal_id in list_pending_receiver_ids_older_than(INBOX_RECONCILE_GRACE_SECONDS):
-                try:
-                    self.deliver_pending(terminal_id, registry=registry)
-                except Exception as e:
-                    logger.debug(f"Inbox reconciliation failed for {terminal_id}: {e}")
+            receiver_ids = list_pending_receiver_ids_older_than(INBOX_RECONCILE_GRACE_SECONDS)
+            self._deliver_sweep(receiver_ids, registry, "Inbox reconciliation")
 
 
 inbox_service = InboxService()

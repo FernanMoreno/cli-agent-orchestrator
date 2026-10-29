@@ -553,14 +553,14 @@ class TestPollOpenCodePendingMessages:
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
 
         svc = InboxService()
-        svc.deliver_pending = MagicMock()
+        svc._deliver_pending_locked = MagicMock()
         svc.poll_opencode_pending_messages()
 
         mock_list_receivers.assert_called_once_with("opencode_cli")
-        assert svc.deliver_pending.call_args_list == [
-            call("receiver-1", registry=None),
-            call("receiver-2", registry=None),
-        ]
+        assert svc._deliver_pending_locked.call_count == 2
+        svc._deliver_pending_locked.assert_has_calls(
+            [call("receiver-1", 1, None), call("receiver-2", 1, None)], any_order=True
+        )
 
     @patch("cli_agent_orchestrator.services.inbox_service.list_pending_receiver_ids_by_provider")
     def test_survives_per_receiver_failure(self, mock_list_receivers):
@@ -568,10 +568,10 @@ class TestPollOpenCodePendingMessages:
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
 
         svc = InboxService()
-        svc.deliver_pending = MagicMock(side_effect=[Exception("tmux busy"), None])
+        svc._deliver_pending_locked = MagicMock(side_effect=[Exception("tmux busy"), None])
         svc.poll_opencode_pending_messages()
 
-        assert svc.deliver_pending.call_count == 2
+        assert svc._deliver_pending_locked.call_count == 2
 
 
 class TestReconcileOrphanedMessages:
@@ -583,14 +583,14 @@ class TestReconcileOrphanedMessages:
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
 
         svc = InboxService()
-        svc.deliver_pending = MagicMock()
+        svc._deliver_pending_locked = MagicMock()
         svc.reconcile_orphaned_messages()
 
         mock_list_receivers.assert_called_once_with(INBOX_RECONCILE_GRACE_SECONDS)
-        assert svc.deliver_pending.call_args_list == [
-            call("receiver-1", registry=None),
-            call("receiver-2", registry=None),
-        ]
+        assert svc._deliver_pending_locked.call_count == 2
+        svc._deliver_pending_locked.assert_has_calls(
+            [call("receiver-1", 1, None), call("receiver-2", 1, None)], any_order=True
+        )
 
     @patch("cli_agent_orchestrator.services.inbox_service.list_pending_receiver_ids_older_than")
     def test_survives_per_receiver_failure(self, mock_list_receivers):
@@ -598,10 +598,10 @@ class TestReconcileOrphanedMessages:
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
 
         svc = InboxService()
-        svc.deliver_pending = MagicMock(side_effect=[Exception("tmux busy"), None])
+        svc._deliver_pending_locked = MagicMock(side_effect=[Exception("tmux busy"), None])
         svc.reconcile_orphaned_messages()
 
-        assert svc.deliver_pending.call_count == 2
+        assert svc._deliver_pending_locked.call_count == 2
 
 
 def _feed_status_sink(queue):
