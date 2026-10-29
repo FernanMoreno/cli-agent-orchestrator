@@ -66,7 +66,9 @@ def isolated_wrapper(root, args, *, gateway, native_path, prepare_environment, v
     if (home / ".cao-postgres").exists():
         masks += ["--tmpfs", str(home / ".cao-postgres")]
     bridge_mount = []
-    if manifest.get("profile_case") in {
+    if manifest.get("profile_case", "").startswith("mcp_discovery_variant:") or manifest.get(
+        "profile_case"
+    ) in {
         "mcp_execute_authorized",
         "mcp_execute_denied",
         "mcp_discovery_scoped",

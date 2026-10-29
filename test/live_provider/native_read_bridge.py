@@ -3,6 +3,7 @@
 import base64
 import contextlib
 import hashlib
+import http.client
 import http.server
 import json
 import os
@@ -21,13 +22,15 @@ NATIVE_SOCKET = "/tmp/cao-read-bridge.sock"
 MCP_NAME = "mcp__cao-mcp-server__list_siblings"
 
 
-def allowed_read_path(method, path, terminal_id):
+def allowed_read_path(method, path, terminal_id, *, variant=""):
+    from test.live_provider.native_discovery_cases import discovery_path
+
     return (
         method == "GET"
         and isinstance(path, str)
         and isinstance(terminal_id, str)
         and re.fullmatch(r"[0-9a-f]{8}", terminal_id) is not None
-        and path in {f"/terminals/{terminal_id}", f"/terminals/{terminal_id}/siblings"}
+        and path in {f"/terminals/{terminal_id}", discovery_path(terminal_id, variant)}
     )
 
 
@@ -44,10 +47,20 @@ DISCOVERY_EXPECTATION = ".native-discovery-expectation.json"
 
 
 def validate_discovery_expectation(value, caller):
+    variant = value.get("variant") if isinstance(value, dict) else None
+    expected_count = 1
+    keys = {"schema", "caller_id", "expected", "excluded_ids"}
+    schema = "caos.native-discovery-fixture.v1"
+    if variant is not None:
+        from test.live_provider.native_discovery_cases import discovery_case
+
+        expected_count = len(discovery_case(variant)["labels"])
+        keys.add("variant")
+        schema = "caos.native-discovery-fixture.v2"
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema", "caller_id", "expected", "excluded_ids"}
-        or value.get("schema") != "caos.native-discovery-fixture.v1"
+        or set(value) != keys
+        or value.get("schema") != schema
         or not isinstance(caller, str)
         or re.fullmatch(r"[0-9a-f]{8}", caller) is None
         or value.get("caller_id") != caller
@@ -56,9 +69,9 @@ def validate_discovery_expectation(value, caller):
     expected, excluded = value["expected"], value["excluded_ids"]
     if (
         not isinstance(expected, list)
-        or len(expected) != 1
+        or len(expected) != expected_count
         or not isinstance(excluded, list)
-        or len(excluded) != 3
+        or len(excluded) != 4 - expected_count
     ):
         raise ValueError("discovery_expectation_cardinality")
     if (
@@ -66,23 +79,25 @@ def validate_discovery_expectation(value, caller):
             not isinstance(tid, str) or re.fullmatch(r"[0-9a-f]{8}", tid) is None
             for tid in excluded
         )
-        or len(set(excluded)) != 3
+        or len(set(excluded)) != len(excluded)
         or caller not in excluded
     ):
         raise ValueError("discovery_expectation_exclusions")
-    row = expected[0]
-    if (
-        not isinstance(row, dict)
-        or set(row) != {"id", "group", "metadata"}
-        or not isinstance(row["id"], str)
-        or re.fullmatch(r"[0-9a-f]{8}", row["id"]) is None
-        or row["id"] in excluded
-        or not isinstance(row["group"], list)
-        or not 1 <= len(row["group"]) <= 16
-        or any(not isinstance(part, str) or not part for part in row["group"])
-        or not isinstance(row["metadata"], dict)
-    ):
-        raise ValueError("discovery_expectation_peer")
+    for row in expected:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"id", "group", "metadata"}
+            or not isinstance(row["id"], str)
+            or re.fullmatch(r"[0-9a-f]{8}", row["id"]) is None
+            or row["id"] in excluded
+            or not isinstance(row["group"], list)
+            or not 1 <= len(row["group"]) <= 16
+            or any(not isinstance(part, str) or not part for part in row["group"])
+            or not isinstance(row["metadata"], dict)
+        ):
+            raise ValueError("discovery_expectation_peer")
+    if len({row["id"] for row in expected}) != len(expected):
+        raise ValueError("discovery_expectation_duplicate_peer")
     return value
 
 
@@ -187,6 +202,24 @@ def native_operation_result(body, call_id, mode, *, expectation=None):
             validate_discovery_rows(result.get("siblings"), expectation)
         elif result.get("siblings") != []:
             raise ValueError("expected_empty_authorized_discovery")
+    elif mode == "invalid":
+        if (
+            result.get("success") is not False
+            or not isinstance(result.get("error"), str)
+            or re.fullmatch(
+                re.escape(
+                    f"Failed to list siblings: 422 Client Error: {http.client.responses[422]} for url: "
+                )
+                + r"http://127\.0\.0\.1:[0-9]+/terminals/[0-9a-f]{8}/siblings\?depth=0",
+                result["error"],
+            )
+            is None
+        ):
+            raise ValueError("expected_invalid_depth_rejection")
+        if expectation is not None and not result["error"].endswith(
+            f'/terminals/{expectation["caller_id"]}/siblings?depth=0'
+        ):
+            raise ValueError("invalid_depth_foreign_caller")
     elif mode == "denied":
         if (
             result.get("success") is not False
@@ -229,19 +262,24 @@ class OwnedReadBridge:
             raise ValueError("private_short_socket_path_required")
         self.api_url = api_url
         self.terminal_id = None
+        self.variant = ""
         self.rows = []
         self.response_bodies = []
         self.attempts = []
         self.thread = None
         self.server = None
 
-    def bind_caller(self, terminal_id):
+    def bind_caller(self, terminal_id, *, variant=""):
+        from test.live_provider.native_discovery_cases import discovery_path
+
+        discovery_path(terminal_id, variant)
         if not re.fullmatch(r"[0-9a-f]{8}", terminal_id) or self.terminal_id not in (
             None,
             terminal_id,
         ):
             raise ValueError("caller_binding_invalid")
         self.terminal_id = terminal_id
+        self.variant = variant
 
     def forward(self, request):
         if len(self.attempts) >= 8:
@@ -249,7 +287,9 @@ class OwnedReadBridge:
         admitted = (
             isinstance(request, dict)
             and set(request) == {"method", "path"}
-            and allowed_read_path(request["method"], request["path"], self.terminal_id)
+            and allowed_read_path(
+                request["method"], request["path"], self.terminal_id, variant=self.variant
+            )
         )
         self.attempts.append({"admitted": admitted})
         if not admitted:
@@ -352,7 +392,12 @@ def start_namespace_read_proxy(args):
 
         def do_GET(self):
             if (
-                not allowed_read_path("GET", self.path, caller)
+                not allowed_read_path(
+                    "GET",
+                    self.path,
+                    caller,
+                    variant=os.environ.get("CAO_NATIVE_DISCOVERY_VARIANT", ""),
+                )
                 or self.headers.get("Content-Length", "0") != "0"
                 or self.headers.get("Transfer-Encoding") is not None
             ):

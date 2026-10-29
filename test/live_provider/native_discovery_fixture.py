@@ -37,7 +37,7 @@ def write_mock_profile(home):
 
 
 class OwnedDiscoveryFixture:
-    def __init__(self, server, home, session, caller, group, sample):
+    def __init__(self, server, home, session, caller, group, sample, *, variant=""):
         self.server = server
         self.home = Path(home)
         self.session = session
@@ -48,6 +48,7 @@ class OwnedDiscoveryFixture:
         self.records = []
         self.expectation = None
         self.digest = None
+        self.variant = variant
 
     def request(self, method, tid, suffix="", **kwargs):
         response = matrix._request(method, self.server.url + "/terminals/" + tid + suffix, **kwargs)
@@ -95,21 +96,23 @@ class OwnedDiscoveryFixture:
         self.sample()
         assert session != self.session
         self.configure(other_session, self.group, "other-session", session)
-        self.expectation = validate_discovery_expectation(
-            {
-                "schema": "caos.native-discovery-fixture.v1",
-                "caller_id": self.caller,
-                "expected": [row],
-                "excluded_ids": [self.caller, wrong_group, other_session],
-            },
-            self.caller,
-        )
+        value = {
+            "schema": "caos.native-discovery-fixture.v1",
+            "caller_id": self.caller,
+            "expected": [row],
+            "excluded_ids": [self.caller, wrong_group, other_session],
+        }
+        if self.variant:
+            from test.live_provider.native_discovery_cases import build_discovery_expectation
+
+            value = build_discovery_expectation(self.caller, self.records, self.variant)
+        self.expectation = validate_discovery_expectation(value, self.caller)
         path = self.home / DISCOVERY_EXPECTATION
         write_expectation(path, self.expectation)
         self.digest = sha(path)
         return {
-            "expected_count": 1,
-            "decoy_count": 2,
+            "expected_count": len(self.expectation["expected"]),
+            "decoy_count": len(self.expectation["excluded_ids"]) - 1,
             "expectation_sha256": self.digest,
             "mock_records": self.records,
         }

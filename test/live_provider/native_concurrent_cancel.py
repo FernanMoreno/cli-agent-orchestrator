@@ -233,7 +233,7 @@ def run_native_cancel_case(root, postgres_service, adapter):
         b, session = matrix._create_parent(server, adapter.provider, adapter.profile_prefix + "_b")
         sample()
         if read_bridge is not None:
-            read_bridge.bind_caller(b)
+            read_bridge.bind_caller(b, variant=adapter.discovery_variant)
             group = ["t229" if adapter.scoped_discovery else "t228", b]
             updated = request("PATCH", b, "/group", json={"group": group})
             assert updated["group"] == group and updated["allowed_tools"] == list(
@@ -258,7 +258,9 @@ def run_native_cancel_case(root, postgres_service, adapter):
         if adapter.scoped_discovery:
             from test.live_provider.native_discovery_fixture import OwnedDiscoveryFixture
 
-            discovery_fixture = OwnedDiscoveryFixture(server, home, session, b, group, sample)
+            discovery_fixture = OwnedDiscoveryFixture(
+                server, home, session, b, group, sample, variant=adapter.discovery_variant
+            )
             state["scoped_discovery_fixture"] = discovery_fixture.setup()
             save(root / "case-result.json", state)
         if manifest["case_kind"] == "inspect":
@@ -344,21 +346,49 @@ def run_native_cancel_case(root, postgres_service, adapter):
                 discovery_fixture.assert_live()
                 data = ledger(entry_b)
                 assert data["discovery_expectation_sha256"] == discovery_fixture.digest
-                assert data["tool_result"]["success"] is True
+                assert discovery_fixture.expectation.get("variant", "") == adapter.discovery_variant
+                from test.live_provider.native_discovery_cases import discovery_case, discovery_path
                 from test.live_provider.native_read_bridge import validate_discovery_rows
 
-                validate_discovery_rows(
-                    data["tool_result"]["siblings"], discovery_fixture.expectation
+                case = (
+                    discovery_case(adapter.discovery_variant)
+                    if adapter.discovery_variant
+                    else {"query": {}, "status": 200}
                 )
-                assert len(read_bridge.response_bodies) == len(read_bridge.rows) == 2
-                assert read_bridge.rows[-1]["path"] == f"/terminals/{b}/siblings"
-                assert read_bridge.rows[-1]["status"] == 200
-                api_body = read_bridge.response_bodies[-1]
-                assert hashlib.sha256(api_body).hexdigest() == read_bridge.rows[-1]["body_sha256"]
-                api_rows = json.loads(api_body)
-                validate_discovery_rows(api_rows, discovery_fixture.expectation)
-                assert api_rows == data["tool_result"]["siblings"]
-                state["scoped_api_native_rows_equal"] = True
+                if adapter.discovery_variant:
+                    assert data["tool_arguments"] == case["query"]
+                expected_count = 1 if adapter.native_operation == "denied" else 2
+                assert len(read_bridge.response_bodies) == len(read_bridge.rows) == expected_count
+                if adapter.native_operation != "denied":
+                    assert read_bridge.rows[-1]["path"] == discovery_path(
+                        b, adapter.discovery_variant
+                    )
+                    assert read_bridge.rows[-1]["status"] == case["status"]
+                    api_body = read_bridge.response_bodies[-1]
+                    assert (
+                        hashlib.sha256(api_body).hexdigest() == read_bridge.rows[-1]["body_sha256"]
+                    )
+                    if adapter.native_operation == "authorized":
+                        assert data["tool_result"]["success"] is True
+                        validate_discovery_rows(
+                            data["tool_result"]["siblings"], discovery_fixture.expectation
+                        )
+                        api_rows = json.loads(api_body)
+                        validate_discovery_rows(api_rows, discovery_fixture.expectation)
+                        assert api_rows == data["tool_result"]["siblings"]
+                        state["scoped_api_native_rows_equal"] = True
+                    else:
+                        assert data["tool_result"]["success"] is False
+                        detail = json.loads(api_body)["detail"]
+                        assert any(
+                            x.get("type") == "greater_than_equal"
+                            and x.get("loc") == ["query", "depth"]
+                            for x in detail
+                        )
+                        state["scoped_api_invalid_depth_verified"] = True
+                else:
+                    assert data["tool_result"]["success"] is False
+                    state["scoped_marker_denial_verified"] = True
                 state["scoped_discovery_verified"] = True
                 discovery_fixture.cleanup()
                 state["scoped_fixture_sessions_retired"] = True
@@ -367,11 +397,20 @@ def run_native_cancel_case(root, postgres_service, adapter):
                 data = ledger(entry_b)
                 assert data["tool_requested"] is True and data["tool_result_requests"] == 1
                 assert data["operator_client_allow"] == ["mcp__cao-mcp-server__list_siblings"]
+                from test.live_provider.native_discovery_cases import discovery_case, discovery_path
+
                 expected_paths = [f"/terminals/{b}"] + (
-                    [f"/terminals/{b}/siblings"] if adapter.native_operation == "authorized" else []
+                    [discovery_path(b, adapter.discovery_variant)]
+                    if adapter.native_operation != "denied"
+                    else []
                 )
                 assert [row["path"] for row in read_bridge.rows] == expected_paths
-                assert all(row["status"] == 200 for row in read_bridge.rows)
+                expected_statuses = [200] + (
+                    [422]
+                    if adapter.native_operation == "invalid"
+                    else [200] if adapter.native_operation == "authorized" else []
+                )
+                assert [row["status"] for row in read_bridge.rows] == expected_statuses
                 assert read_bridge.attempts and all(
                     row["admitted"] is True for row in read_bridge.attempts
                 )

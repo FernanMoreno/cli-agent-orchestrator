@@ -24,6 +24,8 @@ class NativeCancelAdapter:
     expected_mcp_tools: tuple[str, ...] = ()
     native_operation: str = ""
     scoped_discovery: bool = False
+    discovery_variant: str = ""
+    mcp_profile: str = "collaboration"
 
 
 def _configure_opencode(home):
@@ -139,6 +141,44 @@ def native_profile_text(name, adapter):
 
 def claude_adapter_for_manifest(manifest):
     profile_case = manifest.get("profile_case", "")
+    if profile_case.startswith("mcp_catalog:"):
+        from cli_agent_orchestrator.utils.mcp_tool_policy import TOOL_PROFILES
+
+        assert manifest["case_kind"] == "preflight", "catalog is preflight-only"
+        profile = profile_case.split(":", 1)[1]
+        if profile not in {"interaction", "collaboration", "coordination"}:
+            raise ValueError("unknown_native_catalog_profile")
+        tools = sorted(TOOL_PROFILES[profile])
+        return replace(
+            CLAUDE_MCP_OFFER,
+            mcp_profile=profile,
+            expected_mcp_tools=tuple("mcp__cao-mcp-server__" + tool for tool in tools),
+            profile_options=(
+                "permissionMode: default\nmcpServers:\n  cao-mcp-server:\n"
+                "    command: cao-mcp-server\n    cao_tool_profile: "
+                + profile
+                + "\n    enabled_tools: "
+                + json.dumps(tools + ["delete_terminal"])
+                + "\n"
+            ),
+        )
+    if profile_case.startswith("mcp_discovery_variant:"):
+        from test.live_provider.native_discovery_cases import discovery_case
+
+        assert manifest["case_kind"] == "preflight", "scoped discovery is preflight-only"
+        variant = profile_case.split(":", 1)[1]
+        case = discovery_case(variant)
+        return replace(
+            CLAUDE_MCP_OFFER,
+            native_operation=case["mode"],
+            scoped_discovery=True,
+            discovery_variant=variant,
+            allowed_tools=(
+                ("@cao-mcp-server",)
+                if case["mode"] == "denied"
+                else ("@cao-mcp-server", "discovery")
+            ),
+        )
     if profile_case == "mcp_discovery_scoped":
         assert manifest["case_kind"] == "preflight", "scoped discovery is preflight-only"
         return replace(

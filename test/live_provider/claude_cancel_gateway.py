@@ -104,7 +104,9 @@ def stream_end():
     )
 
 
-def validate_native_launch(values, expected_mcp_tools=(), operator_mode=""):
+def validate_native_launch(
+    values, expected_mcp_tools=(), operator_mode="", *, mcp_profile="collaboration"
+):
     assert values[values.index("--model") + 1] == CLAUDE.model
     assert "--dangerously-skip-permissions" not in values
     assert (
@@ -113,7 +115,7 @@ def validate_native_launch(values, expected_mcp_tools=(), operator_mode=""):
     )
     assert "--allowed-tools" not in values
     if operator_mode:
-        assert operator_mode in {"authorized", "denied"}
+        assert operator_mode in {"authorized", "denied", "invalid"}
         assert (
             values.count("--allowedTools") == 1
             and values[values.index("--allowedTools") + 1] == "mcp__cao-mcp-server__list_siblings"
@@ -138,8 +140,11 @@ def validate_native_launch(values, expected_mcp_tools=(), operator_mode=""):
         assert server["args"] == ["-m", "cli_agent_orchestrator.mcp_server.server"]
         assert server["alwaysLoad"] is True
         env = server["env"]
-        assert env[MCP_TOOL_PROFILE_ENV] == "collaboration"
-        assert json.loads(env[MCP_TOOL_FILTER_ENV]) == ["list_siblings"]
+        assert env[MCP_TOOL_PROFILE_ENV] == mcp_profile
+        assert all(name.startswith("mcp__cao-mcp-server__") for name in expected_mcp_tools)
+        assert json.loads(env[MCP_TOOL_FILTER_ENV]) == sorted(
+            name.removeprefix("mcp__cao-mcp-server__") for name in expected_mcp_tools
+        )
         assert env[READY_FILE_ENV] and env[READY_TOKEN_ENV]
 
 
@@ -151,7 +156,12 @@ def wrapper(root, args):
         args = [*args, "--allowedTools", "mcp__cao-mcp-server__list_siblings"]
 
     def validate(values):
-        validate_native_launch(values, adapter.expected_mcp_tools, adapter.native_operation)
+        validate_native_launch(
+            values,
+            adapter.expected_mcp_tools,
+            adapter.native_operation,
+            mcp_profile=adapter.mcp_profile,
+        )
 
     def environment(env):
         if adapter.expected_mcp_tools:
@@ -169,6 +179,8 @@ def wrapper(root, args):
             CAO_NATIVE_EXPECTED_MCP_TOOLS=json.dumps(adapter.expected_mcp_tools),
             CAO_NATIVE_MCP_OPERATION=adapter.native_operation,
             CAO_NATIVE_SCOPED_DISCOVERY="1" if adapter.scoped_discovery else "0",
+            CAO_NATIVE_DISCOVERY_VARIANT=adapter.discovery_variant,
+            CAO_NATIVE_MCP_PROFILE=adapter.mcp_profile,
         )
         return env
 
@@ -239,9 +251,21 @@ def backend(args):
         network_namespace=os.readlink("/proc/self/ns/net"),
     )
     expected_tools = tuple(json.loads(os.environ.get("CAO_NATIVE_EXPECTED_MCP_TOOLS", "[]")))
-    assert expected_tools in {(), ("mcp__cao-mcp-server__list_siblings",)}
+    from cli_agent_orchestrator.utils.mcp_tool_policy import resolve_tool_profile
+
+    selected_profile = os.environ.get("CAO_NATIVE_MCP_PROFILE", "collaboration")
+    full_catalog = tuple(
+        sorted("mcp__cao-mcp-server__" + name for name in resolve_tool_profile(selected_profile))
+    )
+    assert expected_tools in {(), ("mcp__cao-mcp-server__list_siblings",), full_catalog}
     operation_mode = os.environ.get("CAO_NATIVE_MCP_OPERATION", "")
-    assert operation_mode in {"", "authorized", "denied"}
+    assert operation_mode in {"", "authorized", "denied", "invalid"}
+    if operation_mode:
+        assert expected_tools == ("mcp__cao-mcp-server__list_siblings",)
+    variant = os.environ.get("CAO_NATIVE_DISCOVERY_VARIANT", "")
+    from test.live_provider.native_discovery_cases import discovery_case
+
+    tool_arguments = discovery_case(variant)["query"] if variant else {}
     operation = {"call_id": "tool_t228_" + uuid.uuid4().hex, "receipt": None}
     lock = threading.RLock()
 
@@ -319,6 +343,7 @@ def backend(args):
                         expectation, digest = read_discovery_expectation(
                             Path.home() / DISCOVERY_EXPECTATION, config["env"]["CAO_TERMINAL_ID"]
                         )
+                        assert expectation.get("variant", "") == variant
                         record(discovery_expectation_sha256=digest)
                     operation_result = native_operation_result(
                         body,
@@ -376,6 +401,7 @@ def backend(args):
                         record(
                             tool_requested=True,
                             tool_call_id=operation["call_id"],
+                            tool_arguments=tool_arguments,
                             operator_client_allow=["mcp__cao-mcp-server__list_siblings"],
                             stream_open=False,
                         )
@@ -383,7 +409,7 @@ def backend(args):
                             tool_stream(
                                 "mcp__cao-mcp-server__list_siblings",
                                 operation["call_id"],
-                                {},
+                                tool_arguments,
                                 model=model,
                             ),
                             "text/event-stream",

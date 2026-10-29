@@ -50,6 +50,22 @@ def test_owned_mock_api_fixture_has_real_peer_and_decoys(postgres_service, tmp_p
         response = matrix._request("GET", server.url + f"/terminals/{caller}/siblings")
         assert response.status_code == 200
         validate_discovery_rows(response.json(), fixture.expectation)
+        from test.live_provider.native_discovery_cases import (
+            build_discovery_expectation,
+            discovery_case,
+        )
+
+        for variant in ("cross_session", "depth_one", "depth_clamp", "depth_zero"):
+            case = discovery_case(variant)
+            expected = build_discovery_expectation(caller, fixture.records, variant)
+            response = matrix._request(
+                "GET", server.url + f"/terminals/{caller}/siblings", params=case["query"]
+            )
+            assert response.status_code == case["status"]
+            if case["status"] == 200:
+                validate_discovery_rows(response.json(), expected)
+            else:
+                assert response.json()["detail"][0]["loc"] == ["query", "depth"]
         fixture.assert_live()
         fixture.cleanup()
     finally:
