@@ -452,6 +452,19 @@ def run_native_cancel_case(root, postgres_service, adapter):
             except BaseException as error:
                 bridge_cleanup_error = error
                 state["read_bridge_retired"] = False
+            if original_error is not None or bridge_cleanup_error is not None:
+                save(
+                    root / "failed-read-bridge.json",
+                    {
+                        "case_status": "failed",
+                        "requests": read_bridge.rows,
+                        "attempts": read_bridge.attempts,
+                    },
+                )
+                state["partial_read_bridge_evidence"] = "failed-read-bridge.json"
+            else:
+                state["read_bridge_requests"] = [dict(row) for row in read_bridge.rows]
+                state["read_bridge_attempts"] = [dict(row) for row in read_bridge.attempts]
         if server is not None:
             try:
                 if session is not None:

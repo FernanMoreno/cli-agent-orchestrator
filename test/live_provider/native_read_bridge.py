@@ -67,7 +67,20 @@ def native_operation_result(body, call_id, mode):
         content = "\n".join(x["text"] for x in content)
     if not isinstance(content, str) or len(content.encode()) > MAX_BODY:
         raise ValueError("tool_result_size")
-    result = json.loads(content, object_pairs_hook=_pairs)
+    # The pinned native client appends its context counter to the tool-result
+    # string. Decode only from the beginning; no prose/JSON substring search.
+    normalized = content.lstrip()
+    result, end = json.JSONDecoder(object_pairs_hook=_pairs).raw_decode(normalized)
+    suffix = normalized[end:].strip()
+    if (
+        suffix
+        and re.fullmatch(
+            r"<system-reminder>\n<total_tokens>[0-9]{1,12} tokens left</total_tokens>\n</system-reminder>",
+            suffix,
+        )
+        is None
+    ):
+        raise ValueError("unknown_native_tool_result_suffix")
     if not isinstance(result, dict):
         raise ValueError("tool_result_object")
     if mode == "authorized":
