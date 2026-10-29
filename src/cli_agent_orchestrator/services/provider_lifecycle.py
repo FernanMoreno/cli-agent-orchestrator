@@ -6,8 +6,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+from typing import Callable, Concatenate, ParamSpec
 
 logger = logging.getLogger(__name__)
+_RetirementParams = ParamSpec("_RetirementParams")
 
 
 @dataclass(eq=False)
@@ -112,11 +114,15 @@ def retirement_scope(terminal_id: str):
                     del _retirements[terminal_id]
 
 
-def guard_retirement(function):
+def guard_retirement(
+    function: Callable[Concatenate[str, _RetirementParams], bool],
+) -> Callable[Concatenate[str, _RetirementParams], bool]:
     """Protect direct runtime/row helpers as well as their enclosing callers."""
 
     @wraps(function)
-    def wrapped(terminal_id, *args, **kwargs):
+    def wrapped(
+        terminal_id: str, *args: _RetirementParams.args, **kwargs: _RetirementParams.kwargs
+    ) -> bool:
         with retirement_scope(terminal_id) as admitted:
             if not admitted:
                 logger.warning(

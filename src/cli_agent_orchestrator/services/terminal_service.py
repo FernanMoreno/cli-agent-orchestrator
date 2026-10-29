@@ -569,7 +569,6 @@ def _deferred_sidecar_file_lock(directory: Path, identity: tuple[int, int], stri
                 yield
             finally:
                 if outer:
-                    fd = entry.fd
                     entry.fd = None
                     # Closing the sole description releases flock, also on
                     # process death. Nested users never reopen or unlock it.
@@ -2158,12 +2157,15 @@ async def create_terminal(
 
     def release_created_init_marks() -> None:
         nonlocal initial_mark_added, external_mark_added
+        created_terminal_id = terminal_id
+        if created_terminal_id is None:
+            return
         with _active_deferred_init_external_owner_lock:
             if initial_mark_added:
-                _initial_task_pending_ids.discard(terminal_id)
+                _initial_task_pending_ids.discard(created_terminal_id)
                 initial_mark_added = False
             if external_mark_added:
-                _active_deferred_init_external_owner_ids.discard(terminal_id)
+                _active_deferred_init_external_owner_ids.discard(created_terminal_id)
                 external_mark_added = False
 
     try:
@@ -2180,6 +2182,7 @@ async def create_terminal(
         if profile is not None and not isinstance(profile, AgentProfile):
             profile = None
 
+        resolved_engine: Optional[KiroEngine]
         if provider == ProviderType.KIRO_CLI.value:
             resolved_engine = resolve_kiro_engine(
                 explicit=engine,
@@ -2659,7 +2662,7 @@ async def create_terminal(
         # So shield the worker, and on cancellation hand its outcome to a
         # compensator that rolls back whatever it built (under the lifecycle
         # lock) before letting the cancellation continue.
-        create_outcome = WorkerOutcome()
+        create_outcome: WorkerOutcome[Tuple[str, bool, bool]] = WorkerOutcome()
 
         def create_with_outcome():
             try:
@@ -3165,7 +3168,7 @@ async def create_terminal(
         # A label-stop result is not proof that a failed initializer's runtime
         # is gone. Preserve its discoverable row and checkout until this attempt
         # still owns both the binding and positively confirmed retirement.
-        def finish_failed_create() -> None:
+        def finish_failed_create(terminal_id: str, session_name: str) -> None:
             fields = (
                 "id",
                 "tmux_session",
@@ -3265,7 +3268,8 @@ async def create_terminal(
                     retain_uncertain_startup(startup_owner)
                 logger.exception("Failed create %s retirement deferred", terminal_id)
 
-        await _await_provider_operation(finish_failed_create)
+        if terminal_id is not None and session_name is not None:
+            await _await_provider_operation(finish_failed_create, terminal_id, session_name)
 
         raise
     finally:

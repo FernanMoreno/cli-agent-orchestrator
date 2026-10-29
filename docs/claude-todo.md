@@ -1,11 +1,26 @@
 # Claude Code: análisis y pendientes
 
-Actualización T209/T210 (2026-10-28): cierre MCP antes del CLI integrado en
+Estado actual (2026-10-29): T197/T210 tienen aceptación acotada del recorrido
+Claude R6 con mensajes/reinicio y parada gestionada explícita; T211 tiene
+aceptación acotada Codex R2 de cancelación FIFO tras desconexión HTTP con B
+activo y limpieza normal. Default/500ms, CX09/T013 completos, otras operaciones
+y aceptación global conservan sus gates propios.
+[R6](../specs/025-provider-mcp-profiles/validation-t197-native-r6.md) ·
+[T211](../specs/025-provider-mcp-profiles/validation-t211.md).
+
+T212: corregidos17diagnósticos heredados; mypy0 en5módulos y68pruebas PASS.
+El control8s usa dependencias byte-idénticas en Linux y código CAOS original;
+los fallos de importación en frío se conservan. No es tipado global ni nueva
+aceptación nativa. [T212](../specs/025-provider-mcp-profiles/validation-t212.md).
+
+Los bloques fechados siguientes conservan la evolución y los fallos históricos.
+
+Antecedente T209/T210 (2026-10-28): cierre MCP antes del CLI integrado en
 main6d443125. Regresión PostgreSQL/API/SDK347 PASS y rutas finales29 PASS;
 control nativo sin modelo PASS: cierre494ms dentro de6s, catálogo3/calls0,
 sello normal/CLI0/MCPretirado y15contenedores/19redes preservados. T209 cerrado
-en ese alcance explícito; T210/T197 siguen pendientes del recorrido real de
-mensajes y reinicio. No activación global. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t210.md).
+en ese alcance explícito; en esa fecha T210/T197 seguían pendientes del recorrido
+real de mensajes y reinicio, aceptado después sólo en el modo R6 indicado arriba. No activación global. [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t210.md).
 
 
 T208: observador de EOF/señales/salida y estado del proceso implementado,24pruebas PASS y revisión GO. Conserva errores originales, privacidad y límites; diagnóstico r2 completo: SIGINT/SIGTERM y SIGKILL confirmado a~0,5s, antes de EOF y de la limpieza del lanzador; sin operaciones pendientes ni salida70 del guard. Fuente535 intacta/procesos retirados. Emisor no observado; cierre automático sigue FALLANDO y T197 abierto. [Validación](../specs/025-provider-mcp-profiles/validation-t208.md).

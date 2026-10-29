@@ -1,0 +1,53 @@
+{
+  "schema": "caos.spec025.t212.v1",
+  "status": "SCOPED_PASS",
+  "source_base_head": "593c07e457ea198dbc47e16e87eb6d207ab13604",
+  "changed_modules": [
+    "terminal_service",
+    "provider_lifecycle"
+  ],
+  "red_selected_roots": 4,
+  "red_mypy_errors": 17,
+  "green_selected_roots": 5,
+  "green_mypy_errors": 0,
+  "mypy_follow_imports": "silent",
+  "checker_config_changed": false,
+  "casts_or_ignores_added": false,
+  "initial_checks": {
+    "passed": 67,
+    "failed": 1,
+    "seconds": 77.32
+  },
+  "bytecode_cache_only_checks": {
+    "passed": 67,
+    "failed": 1,
+    "seconds": 86.56
+  },
+  "original_fixture_child_deadline_seconds": 8,
+  "original_environment_import_seconds": 9.822712731,
+  "original_environment_total_seconds": 10.203574389,
+  "lock_entry_and_exit_seconds": 0.000274629,
+  "private_dependency_snapshot_files": 1197,
+  "private_dependency_source_bytes_verified": true,
+  "product_source_copied": false,
+  "product_source_canonical": true,
+  "global_dependencies_reinstalled": false,
+  "relocated_dependency_total_seconds": 3.885870956,
+  "final_checks": {
+    "passed": 68,
+    "warnings": 2,
+    "seconds": 64.13
+  },
+  "test_deadlines_assertions_coverage_changed": false,
+  "original_cold_start_latency_accepted": false,
+  "composition_kept": 5,
+  "composition_broken": 0,
+  "peer_review": "GO_read",
+  "global_typing_accepted": false,
+  "native_provider_revalidated": false,
+  "postgres_owner_held_for_next_serial_gate": true,
+  "source_sha256": {
+    "src/cli_agent_orchestrator/services/terminal_service.py": "9e78c1906a82c7f2ef42df0a9ba6689449e9fd327e19fc31baf03af69e389075",
+    "src/cli_agent_orchestrator/services/provider_lifecycle.py": "e2e9f175a0c63c5a916b894da2c85817a0b57f465f8a21419cd8f8f1746278cd"
+  }
+}

@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Typed terminal retirement boundaries · T212
+
+FR190/SC174: Resolve the17reproduced selected-root mypy diagnostics in terminal
+creation/rollback without ignoring errors, weakening configured checks or casting
+unknown ownership into authority. Preserve the exact owned lock descriptor,
+explicit backend-create tuple result, and boolean retirement decorator signature.
+Snapshot creation identities at nested cleanup boundaries; missing identity is
+not permission to acquire lifecycle/dispatch/retirement ownership. Preserve
+original errors, normal rollback and terminal-generation rules. Verify the same
+four roots with follow-imports=silent, existing lock/creation/lifecycle tests and
+composition; no global typing or renewed native acceptance from annotations.
+
 ## Disconnected cancellation through FIFO · T211
 
 FR189/SC173: Validate the currently unaccepted FIFO branch of generation-bound

@@ -1,5 +1,22 @@
 # Plan: provider MCP profiles
 
+## T212 · remove inherited terminal typing ambiguity
+
+Fresh selected-root mypy reproduces17errors on593c07e4 using configured
+settings and follow-imports=silent. The skip-import exploratory control has
+additional Any returns and is retained separately, not treated as equivalent.
+Use the locally owned int FD already opened by the outer stripe lock; annotate
+WorkerOutcome with its actual tuple. Give failure cleanup explicit stable string
+arguments and exclude absent identities before dispatch. Preserve the signature
+of the two boolean retirement helpers with ParamSpec/Concatenate forwarding.
+No schema/auth/grant/backend algorithm change or new casts/ignores. Verify
+existing filesystem and PostgreSQL creation/rollback composition with a held
+owner if those autouse fixtures require it. Preserve dirty Graphify; inspect
+existing nodes and source, not a graph rebuild. Synchronize stale provider-list
+headings with scoped T197/T210R6 and T211R2 receipts.
+Record the measured import/lock/exit distinction and complete dependency-wheel
+snapshot rule in AI_WORKFLOW6.1; preserve cold failures and the original8s gate.
+
 ## T211 · FIFO cancellation and disconnected ownership
 
 First extend the existing T182 composition fixture into the actual FIFO branch:
