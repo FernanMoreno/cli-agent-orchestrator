@@ -1,5 +1,20 @@
 # Provider MCP profiles and current acceptance
 
+## Native strong-emphasis render equivalence · T216
+
+FR193/SC177: The sealed T215 diagnostic proves that valid native CommonMark
+strong emphasis loses four formatting asterisks in the TUI, while all other
+visible content matches. Preserve the literal/whitespace guard first. On a
+mismatch, accept only a structured CommonMark strong-emphasis projection of
+the untrimmed native public body: paragraph/inline text/softbreak/strong tokens,
+reversible lexical source and unchanged visible content. Do not reparse the
+rendered text or strip arbitrary punctuation. Code, escapes, entities and
+unsupported token constructs must not acquire new acceptance accidentally.
+Keep original native TEXT, nonce/agent/database/receipt bindings, durable CAS,
+the existing64KiB native text cap and3s budget. No plaintext-only prompt workaround.
+Replay all captured pairs and exercise the real bound reader plus authorization
+negative controls before one current-source native task-query acceptance.
+
 ## Native render comparison diagnosis · T215
 
 FR192/SC176: Preserve T214 R1 as failed: one successful native task query,

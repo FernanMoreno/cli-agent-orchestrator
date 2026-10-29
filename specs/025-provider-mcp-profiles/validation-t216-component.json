@@ -1,0 +1,54 @@
+{
+  "schema": "caos.spec025.t216.component.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_NATIVE_ACCEPTANCE_PENDING",
+  "source_base_head": "e6acc459f45de51ce11618fa12ce2051787b0dcd",
+  "red": {
+    "failed": 3,
+    "passed": 26,
+    "seconds": 32.64
+  },
+  "provider_regression": {
+    "passed": 223,
+    "failed": 0,
+    "warnings": 2,
+    "seconds": 135.58
+  },
+  "sealed_actual_pair_replay": {
+    "passed": 4,
+    "failed": 0,
+    "returned_original_native_exactly": true,
+    "native_runtime_invoked": false
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "review_go": "f5d51cc922d04f838463eedaa741050c",
+  "grammar": "CommonMark paragraphs/text/softbreak/single-depth strong only, exact lexical reconstruction, native-only visible projection",
+  "literal_fast_path_preserved": true,
+  "rendered_side_reparsed": false,
+  "original_native_returned": true,
+  "receipt_final_nonblank_line_required_for_projection": true,
+  "existing_source_receipt_agent_store_cas_fences_preserved": true,
+  "native_text_cap_bytes": 65536,
+  "native_budget_seconds": 3,
+  "new_dependencies": 0,
+  "migrations": 0,
+  "global_acceptance_claimed": false,
+  "raw_text_published": false,
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/opencode_cli.py": "2fc2fe03c896c60e1f7a614e1b71bcf46c764b5d27266df409ba744d29739395",
+    "test/providers/test_opencode_v2_canonical_result.py": "c7979d6c151a315bdebf161b01d80bdcbb2587eed141a8e1f52a3eb0e93a35a6"
+  },
+  "observer_case_regression": {
+    "passed": 146,
+    "failed": 0,
+    "seconds": 157.53
+  },
+  "distinct_python_tests_passed": 369,
+  "obsidian": {
+    "operation": "save-20261029-caos-t215-proven-strong-render",
+    "strict_lint_issues": 0
+  }
+}

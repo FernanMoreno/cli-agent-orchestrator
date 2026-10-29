@@ -244,6 +244,101 @@ def test_native_text_that_does_not_match_rendered_content_is_not_substituted(tmp
         provider.canonicalize_turn_receipt_result(RENDERED)
 
 
+@pytest.mark.parametrize(
+    "native,rendered",
+    [
+        ("The task is **succeeded**.", "The task is succeeded."),
+        ("Estado __ñ, 中文__.", "Estado ñ, 中文."),
+        ("A **bold** answer.\n\nAnother **part**.", "A bold answer.\nAnother part."),
+    ],
+)
+def test_bound_v2_strong_emphasis_preserves_exact_native_text(tmp_path, native, rendered):
+    provider, _owner, _root, _database = _provider_and_store(
+        tmp_path,
+        parts=[native[:8], native[8:] + "\n" + TOKEN],
+    )
+    assert (
+        provider.canonicalize_turn_receipt_result(rendered + "\n" + TOKEN) == native + "\n" + TOKEN
+    )
+
+
+@pytest.mark.parametrize(
+    "native,rendered",
+    [
+        ("The task is **succeeded**.", "The task is failed."),
+        ("2 ** 3", "2 3"),
+        ("**unclosed", "unclosed"),
+        (r"\*\*literal\*\*", "literal"),
+        ("`**literal**`", "literal"),
+        ("    **literal**", "literal"),
+        ("```\n**literal**\n```", "literal"),
+        ("# **heading**", "heading"),
+        ("[label](https://example.invalid) **bold**", "label bold"),
+        ("**bold** &amp; literal", "bold & literal"),
+        ("<b>**bold**</b>", "bold"),
+        ("***nested***", "nested"),
+        ("**outer __inner__**", "outer inner"),
+        ("[unused]: https://example.invalid\n\n**bold**", "bold"),
+        ("**bold**  \nhard break", "bold hard break"),
+        ("**bold** &#65;", "bold A"),
+        ("**bold**\x00", "bold�"),
+        ("**succeeded**", "succeedeD"),
+    ],
+)
+def test_v2_strong_projection_does_not_erase_literal_or_unsupported_content(
+    tmp_path, native, rendered
+):
+    provider, _owner, _root, _database = _provider_and_store(
+        tmp_path,
+        parts=[native + "\n" + TOKEN],
+    )
+    with pytest.raises(OutputExtractionError):
+        provider.canonicalize_turn_receipt_result(rendered + "\n" + TOKEN)
+
+
+def test_v2_strong_projection_rejects_receipt_between_paragraphs(tmp_path):
+    native = "**first**\n" + TOKEN + "\nlast"
+    provider, *_ = _provider_and_store(tmp_path, parts=[native])
+    with pytest.raises(OutputExtractionError):
+        provider.canonicalize_turn_receipt_result("first\nlast\n" + TOKEN)
+
+
+def test_v2_strong_projection_parser_failure_stays_generic(tmp_path, monkeypatch):
+    import markdown_it
+
+    provider, *_ = _provider_and_store(tmp_path, parts=["**bold**\n" + TOKEN])
+
+    def fail(*args, **kwargs):
+        raise ValueError("private parser detail")
+
+    monkeypatch.setattr(markdown_it.MarkdownIt, "parse", fail)
+    with pytest.raises(OutputExtractionError) as error:
+        provider.canonicalize_turn_receipt_result("bold\n" + TOKEN)
+    assert str(error.value) == "OpenCode v2 canonical result is unavailable"
+
+
+def test_v2_strong_projection_stops_before_and_after_parse(monkeypatch):
+    import markdown_it
+
+    from cli_agent_orchestrator.providers import opencode_cli
+
+    parse = markdown_it.MarkdownIt.parse
+    calls = []
+
+    def watched(self, *args, **kwargs):
+        calls.append(True)
+        return parse(self, *args, **kwargs)
+
+    monkeypatch.setattr(markdown_it.MarkdownIt, "parse", watched)
+    monkeypatch.setattr(opencode_cli.time, "monotonic", lambda: 2.0)
+    assert opencode_cli._strong_render_signature("**bold**", stop=1.0) is None
+    assert calls == []
+    ticks = iter([0.0, 2.0])
+    monkeypatch.setattr(opencode_cli.time, "monotonic", lambda: next(ticks))
+    assert opencode_cli._strong_render_signature("**bold**", stop=1.0) is None
+    assert calls == [True]
+
+
 def test_v1_remains_identity_and_never_reads_v2_database(tmp_path):
     provider = OpenCodeCliProvider(TERMINAL_ID, "session", "window", AGENT)
     provider.restore_runtime_variant("opencode-v1")

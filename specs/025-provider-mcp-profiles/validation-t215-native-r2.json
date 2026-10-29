@@ -1,0 +1,100 @@
+{
+  "native_t214_accepted": false,
+  "native_error_code": "task_query_model_deadline_expired",
+  "elapsed_seconds": 292.307,
+  "capture_t215_complete": true,
+  "capture_seal": {
+    "version": 1,
+    "count": 8,
+    "failed": false,
+    "overflow": false
+  },
+  "private_pairs_validated": [
+    {
+      "thread_ordinal": 1,
+      "attempt_ordinal": 1,
+      "native_chars": 133,
+      "rendered_chars": 129,
+      "strong_delimiters": 2,
+      "literal_signature_equal": false,
+      "source_roundtrip_exact": true,
+      "strong_visible_projection_equal": true
+    },
+    {
+      "thread_ordinal": 1,
+      "attempt_ordinal": 2,
+      "native_chars": 133,
+      "rendered_chars": 129,
+      "strong_delimiters": 2,
+      "literal_signature_equal": false,
+      "source_roundtrip_exact": true,
+      "strong_visible_projection_equal": true
+    },
+    {
+      "thread_ordinal": 1,
+      "attempt_ordinal": 3,
+      "native_chars": 133,
+      "rendered_chars": 129,
+      "strong_delimiters": 2,
+      "literal_signature_equal": false,
+      "source_roundtrip_exact": true,
+      "strong_visible_projection_equal": true
+    },
+    {
+      "thread_ordinal": 2,
+      "attempt_ordinal": 0,
+      "native_chars": 133,
+      "rendered_chars": 129,
+      "strong_delimiters": 2,
+      "literal_signature_equal": false,
+      "source_roundtrip_exact": true,
+      "strong_visible_projection_equal": true
+    }
+  ],
+  "root_cause": "valid CommonMark strong emphasis is visually absent while the literal punctuation guard rejects it",
+  "raw_text_published": false,
+  "owned_cleanup_passed": true,
+  "execution_descriptors_reclosed": true,
+  "executed_archive_unchanged": true,
+  "held_postgres_identity_verified": true,
+  "client_borrowers": 0,
+  "private_databases": 0,
+  "schema": "caos.spec025.t215.native-r2.v1",
+  "date": "2026-10-29",
+  "source_head": "e6acc459f45de51ce11618fa12ce2051787b0dcd",
+  "source_pins": 600,
+  "status": "CAPTURE_PASS_NATIVE_TASK_QUERY_FAILED",
+  "admission_mib": 9833,
+  "task_query_limit_seconds": 180,
+  "memory_floor_mib": 6144,
+  "baseline_interaction_acceptance_reopened": false,
+  "offline_bound_store_replay": {
+    "sealed_pairs": 4,
+    "passed": 4,
+    "failed": 0,
+    "native_runtime_invoked": false,
+    "raw_text_published": false,
+    "checks": [
+      {
+        "pair": 1,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "pair": 2,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "pair": 3,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "pair": 4,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      }
+    ]
+  }
+}

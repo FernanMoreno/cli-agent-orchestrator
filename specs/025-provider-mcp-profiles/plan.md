@@ -1,5 +1,21 @@
 # Plan: provider MCP profiles
 
+## T216 · preserve strong-emphasis semantics at the render guard
+
+R2 retained four complete sealed private pairs:133native versus129rendered
+characters, differing only by the two valid `**` delimiters. Existing declared
+markdown-it-py parses a paragraph with strong tokens; exact source roundtrip
+and visible projection match. R2 stays failed; T215 diagnostic is complete.
+Keep `_render_guard_signature` unchanged and its two-call diagnostic contract.
+Add a narrow native-only CommonMark projection after the old comparison fails.
+Preserve body indentation when removing the receipt so code blocks cannot be
+mistaken for inline emphasis. Reject unsupported tokens and any non-whitespace
+source lost by parsing; return original native bytes, never the projection.
+Apply the existing native text size and canonicalization deadline. Verify with
+the bound vendor-store fixture, literal/code/escape/content mismatch negatives,
+actual private-pair replay, composition/review and then one fresh serial native
+case. No model/permission/catalog/schema/auth changes or new parser dependency.
+
 ## T215 · retain the first rejected native/rendered comparison
 
 R1 stages prove the automatic verifier runs:4native render rejections and no

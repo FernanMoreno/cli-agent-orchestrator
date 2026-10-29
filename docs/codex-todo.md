@@ -1,5 +1,19 @@
 # Codex: análisis y pendientes
 
+T216: corrección integrada para validación con análisis CommonMark limitado,
+contenido nativo exacto y recibo/identidad intactos. 369 pruebas Python y cuatro
+reproducciones de capturas reales PASS; arquitectura 5/0 y revisión Claude sin
+bloqueos. Falta aceptación del recorrido nativo con estas fuentes.
+[Componente y límites](../specs/025-provider-mcp-profiles/validation-t216-component.md).
+
+2026-10-29 · T215 completada como diagnóstico real: cuatro parejas selladas
+confirman que el render omite los delimitadores de negrita Markdown. Cuatro
+reproducciones con el lector nativo vinculado pasan; T216 corrige esta frontera
+con análisis estructurado y conservación exacta del contenido. T214 R2 continúa
+FALLIDA por timeout del recibo; limpieza verificada y lanzador cerrado. No se
+reabre la aceptación previa de preguntas/ACK/reinicio de v2.
+[Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t215-native-r2.md).
+
 2026-10-29 · T214 R1 real: consulta MCP completada, pero aceptación FALLIDA
 por4rechazos de comparación nativa/renderizada, sin CAS final.296,982s y
 limpieza/credenciales/fuentes intactas. El verificador automático sí se ejecutó.

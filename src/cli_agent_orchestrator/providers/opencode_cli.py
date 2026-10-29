@@ -129,17 +129,77 @@ _ACTIVE_TURN_RECEIPT_LINE = re.compile(
 )
 
 
-def _without_active_turn_receipt(text: str, nonce: str) -> str:
+def _without_active_turn_receipt(
+    text: str, nonce: str, *, preserve_whitespace: bool = False
+) -> str:
     pattern = re.compile(r"(?m)^[ \t]*" + re.escape(nonce) + r"[ \t]*$")
     public, count = pattern.subn("", text)
     if count != 1:
         raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
-    return public.strip()
+    return public if preserve_whitespace else public.strip()
 
 
 def _render_guard_signature(text: str) -> str:
     """Ignore display wrapping only for equivalence; never return this form."""
     return "".join(text.split())
+
+
+def _strong_render_signature(text: str, *, stop: float) -> Optional[str]:
+    """Project only reversible paragraph/strong markup, preserving literal data."""
+    from markdown_it import MarkdownIt
+
+    from cli_agent_orchestrator.utils.opencode_v2_store import TEXT_CAP
+
+    if time.monotonic() >= stop or len(text) > TEXT_CAP or len(text.encode("utf-8")) > TEXT_CAP:
+        return None
+    tokens = MarkdownIt("commonmark").parse(text)
+    if time.monotonic() >= stop or not tokens or len(tokens) % 3:
+        return None
+    source: List[str] = []
+    visible: List[str] = []
+    saw_strong = False
+    for index in range(0, len(tokens), 3):
+        opening, inline, closing = tokens[index : index + 3]
+        if (
+            (opening.type, inline.type, closing.type)
+            != ("paragraph_open", "inline", "paragraph_close")
+            or (opening.nesting, inline.nesting, closing.nesting) != (1, 0, -1)
+            or (opening.level, inline.level, closing.level) != (0, 1, 0)
+            or any(token.hidden for token in (opening, inline, closing))
+            or inline.children is None
+        ):
+            return None
+        raw_parts: List[str] = []
+        shown_parts: List[str] = []
+        strong: Optional[str] = None
+        for child in inline.children:
+            if child.type == "text":
+                raw_parts.append(child.content)
+                shown_parts.append(child.content)
+            elif child.type == "softbreak":
+                raw_parts.append("\n")
+                shown_parts.append("\n")
+            elif child.type == "strong_open" and child.markup in {"**", "__"} and strong is None:
+                strong = child.markup
+                raw_parts.append(child.markup)
+                saw_strong = True
+            elif child.type == "strong_close" and strong == child.markup:
+                raw_parts.append(child.markup)
+                strong = None
+            else:
+                return None
+        reconstructed = "".join(raw_parts)
+        if strong is not None or reconstructed != inline.content:
+            return None
+        source.append(reconstructed)
+        visible.append("".join(shown_parts))
+    # Reference definitions, escapes/entities and other lost source cannot hide
+    # behind the render projection. Whitespace equivalence is the existing rule.
+    if not saw_strong or "".join("\n".join(source).split()) != "".join(text.split()):
+        return None
+    if time.monotonic() >= stop:
+        return None
+    return "".join("\n".join(visible).split())
 
 
 # Processing footer — keybind hint present while the agent is generating.
@@ -846,16 +906,29 @@ class OpenCodeCliProvider(BaseProvider):
                 if native_receipts != [nonce]:
                     finish("rejected")
                     raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
-                native_public = _without_active_turn_receipt(native, nonce)
+                native_public = _without_active_turn_receipt(
+                    native, nonce, preserve_whitespace=True
+                )
                 rendered_public = _without_active_turn_receipt(result, nonce)
 
             observed_stages.add("native_render_guard")
             with receipt_verification_diagnostic_stage("native_render_guard") as finish:
-                if _render_guard_signature(native_public) != _render_guard_signature(
-                    rendered_public
-                ):
-                    finish("rejected")
-                    raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+                native_signature = _render_guard_signature(native_public)
+                rendered_signature = _render_guard_signature(rendered_public)
+                if native_signature != rendered_signature:
+                    try:
+                        receipt_is_final = native.rstrip().splitlines()[-1].strip() == nonce
+                        projected = (
+                            _strong_render_signature(native_public, stop=stop)
+                            if receipt_is_final and time.monotonic() < stop
+                            else None
+                        )
+                    except Exception:
+                        projected = None
+                    if projected != rendered_signature or time.monotonic() >= stop:
+                        finish("rejected")
+                        raise OutputExtractionError("OpenCode v2 canonical result is unavailable")
+                    assert_v2_database_unchanged(binding, stop=stop)
             return native
         except OutputExtractionError:
             raise
