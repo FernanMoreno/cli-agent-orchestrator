@@ -1,5 +1,21 @@
 # Plan: provider MCP profiles
 
+## T215 · retain the first rejected native/rendered comparison
+
+R1 stages prove the automatic verifier runs:4native render rejections and no
+durable CAS after successful extraction/identity checks. Rejected hypothesis:
+the controller need not read output to schedule verification. Do not change
+its acceptance predicate or force completion by an extra read. The original
+private runtime was normally removed, so no raw comparison pair survived.
+Extend only the existing source-pinned private API observer with an explicit
+opt-in capture of `_render_guard_signature` inputs, outside its fixed stage
+ledger. Anchor private files to an owned directory FD, cap8records/64KiB per
+input, correlate thread/attempt/part ordinals, restore the exact original hook
+and preserve every return/exception. Enable only for the new task-query case.
+Validate the installed bootstrap and observer failure/overflow/close/privacy
+controls before another serial native diagnostic. Inspect the private pair
+offline; no production behavior change before a reproduced cause.
+
 ## T213/T214 · a bounded witness for an owned completed task
 
 T166 accepts peers plus messages, not native task queries. T186 uses a mock

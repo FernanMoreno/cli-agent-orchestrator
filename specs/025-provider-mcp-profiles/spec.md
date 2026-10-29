@@ -1,5 +1,17 @@
 # Provider MCP profiles and current acceptance
 
+## Native render comparison diagnosis · T215
+
+FR192/SC176: Preserve T214 R1 as failed: one successful native task query,
+automatic extraction/receipt/native identity passed, native render comparison
+rejected four times, durable CAS never started. Capture only the two exact
+comparison inputs in an explicitly selected private API diagnostic, with
+bounded bytes/files, owned0700/0600 storage and normal hook restoration. Keep
+the existing content-free stage ledger unchanged. Preserve original function
+results/exceptions, source admission, native180s/6144MiB gates and cleanup.
+Replay captured inputs offline before changing parsing or render equivalence.
+No Markdown-stripping workaround or native/global acceptance from this capture.
+
 ## Owned task-query evidence · T213/T214
 
 FR191/SC175: Extend the opt-in MCP diagnostic witness to get_local_cao_task

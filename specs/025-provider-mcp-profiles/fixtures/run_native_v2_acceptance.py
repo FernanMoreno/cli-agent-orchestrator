@@ -3958,7 +3958,7 @@ RECEIPT_STAGE_SOURCE_FILES = (
 
 
 def _prepare_receipt_stage_api_pythonpath(
-    *, observer, bootstrap_root, raw_dir, source_hashes, role
+    *, observer, bootstrap_root, raw_dir, source_hashes, role, capture_render_inputs=False
 ):
     if role not in {"api_a", "api_b"} or type(source_hashes) is not dict:
         raise GateError("receipt_stage_bootstrap_context_invalid")
@@ -3966,7 +3966,8 @@ def _prepare_receipt_stage_api_pythonpath(
     if not all(_digest_shape(value) for value in hashes.values()):
         raise GateError("receipt_stage_source_hash_missing")
     bootstrap = Path(bootstrap_root) / role
-    value = observer.prepare_api_observer(bootstrap, raw_dir, REPO, hashes, role)
+    options = {"capture_render_inputs": True} if capture_render_inputs is True else {}
+    value = observer.prepare_api_observer(bootstrap, raw_dir, REPO, hashes, role, **options)
     expected = os.pathsep.join(map(str, (bootstrap, REPO / "src", REPO)))
     if value != expected:
         raise GateError("receipt_stage_api_pythonpath_mismatch")
@@ -7498,6 +7499,7 @@ def _run_enabled(
                     raw_dir=receipt_stage_context["raw_dir"],
                     source_hashes=runner_manifest["source_sha256s"],
                     role=role,
+                    capture_render_inputs=case.case_id == TASK_QUERY_CASE_ID,
                 )
                 started_server = _start_cao_server(
                     home,

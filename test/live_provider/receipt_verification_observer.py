@@ -1,8 +1,9 @@
 """Private, fixture-only bridge for receipt verification diagnostics.
 
 This module is copied into one API worker's private ``PYTHONPATH`` bootstrap.
-It deliberately has no production environment switch and records only fixed
-stage/outcome enums and bounded local ordinals.
+It deliberately has no production environment switch. Its stage ledger records
+only fixed enums/ordinals; a separate explicit private capture can retain bounded
+render-comparison inputs for offline diagnosis.
 """
 
 from __future__ import annotations
@@ -215,13 +216,15 @@ def prepare_api_observer(
     repo: Path,
     source_hashes: Mapping[str, str],
     role: str,
+    *,
+    capture_render_inputs: bool = False,
 ) -> str:
     """Create one API-only bootstrap and return a child-specific PYTHONPATH.
 
     The function never mutates this process's environment. The caller applies
     the returned value only to the selected API worker's environment.
     """
-    if not _role_is_valid(role):
+    if not _role_is_valid(role) or type(capture_render_inputs) is not bool:
         raise RuntimeError("private_observer_role_invalid")
     repo_path = Path(repo).resolve(strict=True)
     if not repo_path.is_dir() or not (repo_path / "src").is_dir():
@@ -249,12 +252,150 @@ def prepare_api_observer(
         "source_sha256": hashes,
         "helper_sha256": helper_hash,
     }
+    if capture_render_inputs:
+        config["capture_render_inputs"] = True
     config_bytes = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
     _write_new_file(bootstrap / HELPER_FILENAME, helper_bytes, maximum=MAX_HELPER_BYTES)
     _write_new_file(bootstrap / CONFIG_FILENAME, config_bytes, maximum=MAX_CONFIG_BYTES)
     _write_new_file(bootstrap / BOOTSTRAP_FILENAME, _sitecustomize_source(), maximum=4096)
 
     return os.pathsep.join((str(bootstrap), str(repo_path / "src"), str(repo_path)))
+
+
+class _RenderInputCapture:
+    """Bounded private data, never included in the content-free stage ledger."""
+
+    MAX_FILES = 8
+    MAX_INPUT_BYTES = 65536
+    MAX_RECORD_BYTES = 6 * MAX_INPUT_BYTES + 1024
+
+    def __init__(self, directory: Path, module: Any, attempt_getter: Any) -> None:
+        original = getattr(module, "_render_guard_signature", None)
+        if not callable(original) or not callable(attempt_getter):
+            raise RuntimeError("private_render_capture_hook_invalid")
+        self._directory = Path(directory).absolute()
+        _secure_directory(self._directory.parent)
+        if self._directory.exists() or self._directory.is_symlink():
+            raise RuntimeError("private_render_capture_must_be_new")
+        self._directory.mkdir(mode=0o700)
+        _secure_directory(self._directory)
+        self._fd = os.open(
+            self._directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        self._directory_identity = (os.fstat(self._fd).st_dev, os.fstat(self._fd).st_ino)
+        self._lock = threading.Lock()
+        self._closed = False
+        self._failed = False
+        self._overflow = False
+        self._count = 0
+        self._threads: dict[int, tuple[int, int]] = {}
+        self._module = module
+        self._original = original
+        self._attempt_getter = attempt_getter
+
+        @functools.wraps(original)
+        def wrapped(text: str) -> Any:
+            result = original(text)
+            try:
+                self._record_input(text)
+            except BaseException:
+                self._failed = True
+            return result
+
+        self._wrapped = wrapped
+        try:
+            module._render_guard_signature = wrapped
+        except BaseException:
+            os.close(self._fd)
+            raise
+
+    def _write(self, name: str, document: Mapping[str, Any]) -> None:
+        info = os.fstat(self._fd)
+        path_info = self._directory.lstat()
+        if (
+            (path_info.st_dev, path_info.st_ino) != self._directory_identity
+            or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            raise RuntimeError("private_render_capture_directory_changed")
+        data = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8", "strict"
+        )
+        if len(data) > self.MAX_RECORD_BYTES:
+            raise RuntimeError("private_render_capture_record_too_large")
+        fd = os.open(
+            name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=self._fd,
+        )
+        try:
+            view = memoryview(data)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError("private render capture write did not advance")
+                view = view[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    def _record_input(self, text: str) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            if (
+                self._count >= self.MAX_FILES
+                or type(text) is not str
+                or len(text) > self.MAX_INPUT_BYTES
+            ):
+                self._overflow = True
+                return
+            if len(text.encode("utf-8", "strict")) > self.MAX_INPUT_BYTES:
+                self._overflow = True
+                return
+            attempt = self._attempt_getter()
+            if type(attempt) is not int or attempt not in {0, 1, 2, 3}:
+                self._failed = True
+                return
+            ident = threading.get_ident()
+            thread, count = self._threads.get(ident, (len(self._threads) + 1, 0))
+            self._write(
+                f"input-{self._count + 1:02d}.json",
+                {
+                    "version": 1,
+                    "ordinal": self._count + 1,
+                    "attempt_ordinal": attempt,
+                    "thread_ordinal": thread,
+                    "part_ordinal": count % 2 + 1,
+                    "text": text,
+                },
+            )
+            self._threads[ident] = (thread, count + 1)
+            self._count += 1
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                if getattr(self._module, "_render_guard_signature", None) is self._wrapped:
+                    self._module._render_guard_signature = self._original
+                else:
+                    self._failed = True
+                self._write(
+                    "seal.json",
+                    {
+                        "version": 1,
+                        "count": self._count,
+                        "failed": self._failed,
+                        "overflow": self._overflow,
+                    },
+                )
+            finally:
+                os.close(self._fd)
 
 
 class _LedgerWriter:
@@ -478,7 +619,7 @@ def _load_strict_json(data: bytes) -> Any:
 def _read_private_config(path: Path) -> dict[str, Any]:
     config_bytes = _read_regular_file(path, maximum=MAX_CONFIG_BYTES, mode=0o600)
     value = _load_strict_json(config_bytes)
-    if type(value) is not dict or set(value) != {
+    if type(value) is not dict or set(value) - {"capture_render_inputs"} != {
         "schema_version",
         "role",
         "repo",
@@ -495,6 +636,7 @@ def _read_private_config(path: Path) -> dict[str, Any]:
         or type(value["raw_dir"]) is not str
         or type(value["helper_sha256"]) is not str
         or _SHA256_PATTERN.fullmatch(value["helper_sha256"]) is None
+        or ("capture_render_inputs" in value and type(value["capture_render_inputs"]) is not bool)
     ):
         raise RuntimeError("private_observer_config_invalid")
     return value
@@ -570,6 +712,7 @@ def _bootstrap_from_private_config(config_path: Path) -> None:
     hook_binding: tuple[Any, Any, Any] | None = None
     finish_lock = threading.Lock()
     finished = False
+    render_capture: _RenderInputCapture | None = None
     try:
         bootstrap = _secure_directory(Path(__file__).resolve(strict=True).parent)
         if Path(config_path).resolve(strict=True).parent != bootstrap:
@@ -597,6 +740,13 @@ def _bootstrap_from_private_config(config_path: Path) -> None:
         writer = _LedgerWriter(raw_dir, config["role"])
         previous_sink = setter(writer.emit)
         sink_installed = True
+        if config.get("capture_render_inputs") is True:
+            capture_parent = _secure_directory(raw_dir / "render-inputs", create=True)
+            render_capture = _RenderInputCapture(
+                capture_parent / config["role"],
+                modules["cli_agent_orchestrator.providers.opencode_cli"],
+                diagnostics.current_receipt_verification_attempt,
+            )
 
         def finish() -> None:
             nonlocal finished
@@ -605,6 +755,11 @@ def _bootstrap_from_private_config(config_path: Path) -> None:
                     return
                 finished = True
             _restore_uvicorn_shutdown_hook(hook_binding)
+            if render_capture is not None:
+                try:
+                    render_capture.close()
+                except BaseException:
+                    pass
             try:
                 setter(previous_sink)
             except BaseException:
@@ -620,6 +775,11 @@ def _bootstrap_from_private_config(config_path: Path) -> None:
         os.environ["PYTHONPATH"] = os.pathsep.join((str(repo / "src"), str(repo)))
     except BaseException:
         _restore_uvicorn_shutdown_hook(hook_binding)
+        if render_capture is not None:
+            try:
+                render_capture.close()
+            except BaseException:
+                pass
         if sink_installed and setter is not None:
             try:
                 setter(previous_sink)

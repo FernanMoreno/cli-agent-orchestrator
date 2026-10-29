@@ -1,0 +1,45 @@
+{
+  "schema": "caos.spec025.t215.component.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_NATIVE_DIAGNOSTIC_PENDING",
+  "source_base_head": "8885aae160f5134581eb8fa8b91dc9329d47f89b",
+  "source_sha256": {
+    "test/live_provider/receipt_verification_observer.py": "ac9c7d3ec5f3a6bc0ed475361e7e1e53e24ba1f559d2b0b3c5fe5a1726919b1b",
+    "test/live_provider/test_opencode_render_input_capture.py": "a552983c094e9d5c03d5c5c268d4cb9fa8c79cec08461e611abb1adf74ab7490",
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "3b589fedccadbb92d0a9be75b3cbbc974d3da6db0dcf969432e7c4d40e4249c3"
+  },
+  "red_tests_failed": 4,
+  "focused_observer_tests_passed": 27,
+  "installed_bootstrap_tests_passed": 6,
+  "installed_bootstrap_seconds": 25.75,
+  "regression": {
+    "passed": 431,
+    "failed": 0,
+    "subtests_passed": 20,
+    "existing_warnings": 3,
+    "seconds": 155.57
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "mypy": {
+    "existing_errors": 3,
+    "same_errors_reproduced_at_head": true,
+    "new_errors": 0,
+    "global_pass_claimed": false
+  },
+  "capture_limits": {
+    "files": 8,
+    "input_utf8_bytes": 65536,
+    "json_record_bytes": 394240
+  },
+  "stage_ledger_payload_schema_changed": false,
+  "default_config_changed": false,
+  "production_parser_changed": false,
+  "render_equivalence_changed": false,
+  "acceptance_changed": false,
+  "review_go": "b00ba079c5c64d4b9f4de1c665cfd3fe",
+  "real_capture_run": false,
+  "native_t214_accepted": false
+}

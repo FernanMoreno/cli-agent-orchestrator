@@ -1,5 +1,13 @@
 # Codex: análisis y pendientes
 
+2026-10-29 · T214 R1 real: consulta MCP completada, pero aceptación FALLIDA
+por4rechazos de comparación nativa/renderizada, sin CAS final.296,982s y
+limpieza/credenciales/fuentes intactas. El verificador automático sí se ejecutó.
+T215 añade captura privada acotada:431pruebas PASS/20subtests/ClaudeGO;
+falta capturar/reproducir el par real antes de corregir el comparador.
+[R1](../specs/025-provider-mcp-profiles/validation-t214-native-r1.md) ·
+[Captura](../specs/025-provider-mcp-profiles/validation-t215-component.md).
+
 2026-10-29 · T214: caso nativo `task_query` implementado, una consulta y
 receptor sin instrucciones, sin mensajes ni reinicio.402pruebasPython distintas
 y17Node PASS, arquitectura5-0/ClaudeGO. Falta la ejecución real con lanzador

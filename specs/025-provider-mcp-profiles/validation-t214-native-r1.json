@@ -1,0 +1,129 @@
+{
+  "schema": "caos.spec025.t214.native-r1.v1",
+  "status": "FAILED_NATIVE_ACCEPTANCE",
+  "source_head": "8885aae160f5134581eb8fa8b91dc9329d47f89b",
+  "source_files": 599,
+  "native_error_code": "task_query_model_deadline_expired",
+  "elapsed_seconds": 296.982,
+  "native_task_query_started_count": 1,
+  "native_task_query_names": [
+    "get_local_cao_task"
+  ],
+  "completed_tool_events": 1,
+  "safe_task_projection_events": 1,
+  "receipt_verification": {
+    "schema": "spec025.receipt-verification-stages.v1",
+    "status": "partial",
+    "acceptance_input_changed": false,
+    "epochs": {
+      "api_a": {
+        "role": "api_a",
+        "observer_status": "complete",
+        "event_count": 70,
+        "thread_count": 4,
+        "failed_event_count": 0,
+        "stage_outcome_counts": {
+          "admission": {
+            "current_capture": 0,
+            "progress_unconfirmed": 0,
+            "stale_capture": 0
+          },
+          "attempt": {
+            "started": 3,
+            "superseded": 0,
+            "unresolved": 3,
+            "verified": 0
+          },
+          "result_extraction": {
+            "error": 0,
+            "returned": 4,
+            "started": 4,
+            "unavailable": 0
+          },
+          "receipt_witness": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 4,
+            "rejected": 0,
+            "started": 4
+          },
+          "canonicalizer": {
+            "error": 4,
+            "not_applicable": 0,
+            "passed": 0,
+            "rejected": 0,
+            "started": 4
+          },
+          "active_receipt_identity": {
+            "error": 0,
+            "not_applicable": 0,
+            "passed": 4,
+            "rejected": 0,
+            "skip": 0,
+            "started": 4
+          },
+          "native_binding": {
+            "error": 0,
+            "passed": 4,
+            "rejected": 0,
+            "skip": 0,
+            "started": 4
+          },
+          "native_parts": {
+            "error": 0,
+            "passed": 4,
+            "rejected": 0,
+            "skip": 0,
+            "started": 4
+          },
+          "native_receipt_identity": {
+            "error": 0,
+            "passed": 4,
+            "rejected": 0,
+            "skip": 0,
+            "started": 4
+          },
+          "native_render_guard": {
+            "error": 0,
+            "passed": 0,
+            "rejected": 4,
+            "skip": 0,
+            "started": 4
+          },
+          "durable_cas": {
+            "conflict": 0,
+            "error": 0,
+            "settled": 0,
+            "started": 0
+          }
+        }
+      },
+      "api_b": {
+        "observer_status": "unavailable",
+        "role": "api_b",
+        "event_count": null,
+        "thread_count": null,
+        "failed_event_count": null,
+        "stage_outcome_counts": null
+      }
+    }
+  },
+  "closure": {
+    "native_success": false,
+    "error_code": "task_query_model_deadline_expired",
+    "elapsed_seconds": 296.982,
+    "owned_cleanup_passed": true,
+    "operator_preserved": true,
+    "execution_descriptors_reclosed": true,
+    "executed_archives_unchanged": true,
+    "held_postgres_identity_verified": true,
+    "client_borrowers": 0,
+    "private_databases": 0,
+    "rerun_historical_case": false
+  },
+  "private_receipt_sha256": "01c12be2fd6cb412aacbcc060d1763e4ba3749803b73b8a51add1cd43c5ae237",
+  "native_accepted": false,
+  "new_postgres_service": false,
+  "root_cause_not_yet_proven": true,
+  "manual_output_read_hypothesis_rejected": true
+}
