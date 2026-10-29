@@ -617,3 +617,138 @@ def test_real_opencode_owned_store_reaches_existing_receipt_cas(
     assert provider.pending_turn_receipt_state() is None
     assert status_calls == [(provider.terminal_id, TerminalStatus.COMPLETED)]
     assert database.read_bytes() == before
+
+
+class _ViewportReceiptProvider(_IdentityReceiptProvider):
+    supports_screen_detection = True
+
+    def extract_last_message_from_script(self, output):
+        raise ValueError("native redraw removed assistant head")
+
+    def extract_viewport_completion_result(self, viewport):
+        return RENDERED_RESULT if viewport == TRANSCRIPT else None
+
+    def receipt_result_viewport_terminal_status(self, viewport, result):
+        if viewport == TRANSCRIPT and self._result_has_active_receipt(result):
+            return TerminalStatus.COMPLETED
+        return None
+
+
+@pytest.mark.parametrize("historical_answer", [False, True])
+def test_last_uses_current_viewport_candidate_after_missing_or_stale_head(
+    monkeypatch, historical_answer
+):
+    provider = _ViewportReceiptProvider(TERMINAL_ID, "session", "window")
+    if historical_answer:
+        provider.extract_last_message_from_script = lambda _output: "old answer"
+    backend = MagicMock()
+    backend.get_history.side_effect = lambda *_a, **kw: (
+        TRANSCRIPT if kw.get("visible_only") else "history without current answer"
+    )
+    monkeypatch.setattr(remote, "placement", lambda _id: None)
+    monkeypatch.setattr(terminal, "ensure_terminal_is_not_work_owned", lambda _id: None)
+    monkeypatch.setattr(
+        terminal,
+        "get_terminal_metadata",
+        lambda _id: {"tmux_session": "session", "tmux_window": "window", "provider": "claude_code"},
+    )
+    monkeypatch.setattr(terminal, "get_terminal_turn_recovery", lambda _id: None)
+    monkeypatch.setattr(terminal, "get_backend", lambda: backend)
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", lambda _id: provider)
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: "raw redraw")
+    settled = _patch_settle(monkeypatch)
+    _patch_status(monkeypatch)
+    assert (
+        terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST, expected_generation=GENERATION)
+        == "Visible split\nbody"
+    )
+    assert len(settled) == 1
+    assert provider.pending_turn_receipt_state() is None
+
+
+@pytest.mark.parametrize("change", ["missing", "result", "generation", "provider"])
+def test_current_candidate_requires_two_consistent_observations(monkeypatch, change):
+    p = _ViewportReceiptProvider(TERMINAL_ID, "session", "window")
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", lambda _id: p)
+    first = (p, TRANSCRIPT, RENDERED_RESULT, True)
+    second = first
+    if change == "missing":
+        second = None
+    elif change == "result":
+        second = (p, TRANSCRIPT, "changed\n" + NONCE, True)
+    calls = 0
+
+    def capture(_id):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            if change == "generation":
+                p._pending_turn_generation = "f" * 32
+            elif change == "provider":
+                monkeypatch.setattr(terminal.provider_manager, "get_provider", lambda _id: object())
+            return second
+        return first
+
+    monkeypatch.setattr(terminal, "_post_turn_receipt_candidate", capture)
+    settled = _patch_settle(monkeypatch)
+    assert terminal._verify_current_receipt_candidate(TERMINAL_ID, p, GENERATION, False) is None
+    assert settled == []
+
+
+def test_native_hook_never_runs_on_raw_or_history_capture(monkeypatch):
+    p = _ViewportReceiptProvider(TERMINAL_ID, "session", "window")
+    called = []
+    monkeypatch.setattr(
+        type(p), "extract_viewport_completion_result", lambda *_a: called.append(True)
+    )
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", lambda _id: p)
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: TRANSCRIPT)
+    backend = MagicMock()
+    backend.get_history.side_effect = RuntimeError("viewport unavailable")
+    monkeypatch.setattr(terminal, "get_backend", lambda: backend)
+    assert terminal._post_turn_receipt_candidate(TERMINAL_ID) is None
+    assert called == []
+
+
+def test_native_hook_exception_is_only_missing_evidence(monkeypatch):
+    p = _ViewportReceiptProvider(TERMINAL_ID, "session", "window")
+
+    def broken(*_args):
+        raise OSError("optional channel unavailable")
+
+    monkeypatch.setattr(type(p), "extract_viewport_completion_result", broken)
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", lambda _id: p)
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: "raw")
+    backend = MagicMock()
+    backend.get_history.return_value = TRANSCRIPT
+    monkeypatch.setattr(terminal, "get_backend", lambda: backend)
+    assert terminal._post_turn_receipt_candidate(TERMINAL_ID) is None
+
+
+def test_last_does_not_retry_a_conflicted_durable_receipt(monkeypatch):
+    p = _ReceiptProvider()
+    monkeypatch.setattr(remote, "placement", lambda _id: None)
+    monkeypatch.setattr(terminal, "ensure_terminal_is_not_work_owned", lambda _id: None)
+    monkeypatch.setattr(
+        terminal,
+        "get_terminal_metadata",
+        lambda _id: {"tmux_session": "session", "tmux_window": "window", "provider": "claude_code"},
+    )
+    monkeypatch.setattr(terminal, "get_terminal_turn_recovery", lambda _id: None)
+    monkeypatch.setattr(terminal.provider_manager, "get_provider", lambda _id: p)
+    monkeypatch.setattr(terminal.status_monitor, "get_buffer", lambda _id: TRANSCRIPT)
+    backend = MagicMock()
+    backend.get_history.return_value = TRANSCRIPT
+    monkeypatch.setattr(terminal, "get_backend", lambda: backend)
+    monkeypatch.setattr(
+        terminal,
+        "_verify_current_receipt_candidate",
+        lambda *_a: pytest.fail(
+            "a durable CAS conflict must propagate without trying a new candidate"
+        ),
+    )
+    settled = _patch_settle(monkeypatch, return_value=False)
+    with pytest.raises(TurnResultUnavailableError, match="receipt changed"):
+        terminal.get_output(TERMINAL_ID, terminal.OutputMode.LAST)
+    assert len(settled) == 1
+    assert p.pending_turn_receipt_state() is not None

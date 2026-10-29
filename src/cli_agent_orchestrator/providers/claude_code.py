@@ -10,6 +10,7 @@ import re
 import secrets
 import shlex
 import stat
+import sys
 import threading
 import time
 from collections.abc import Mapping
@@ -46,6 +47,7 @@ from cli_agent_orchestrator.utils.mcp_tool_policy import (
     MCP_TOOL_PROFILE_ENV,
     encode_tool_filter,
 )
+from cli_agent_orchestrator.utils.native_completion_signal import NativeCompletionChannel
 from cli_agent_orchestrator.utils.terminal import wait_for_shell, wait_until_status
 from cli_agent_orchestrator.utils.text import strip_terminal_escapes
 
@@ -404,6 +406,7 @@ class ClaudeCodeProvider(BaseProvider):
         """Initialize provider state."""
         super().__init__(terminal_id, session_name, window_name, allowed_tools, skill_prompt)
         self._initialized = False
+        self._completion_channel: Optional[NativeCompletionChannel] = None
         self._cao_mcp_ready_path: Optional[Path] = None
         self._cao_mcp_ready_token: Optional[str] = None
         self._agent_profile = agent_profile
@@ -1258,6 +1261,93 @@ class ClaudeCodeProvider(BaseProvider):
             logger.debug("Claude initial viewport probe failed for %s: %s", self.terminal_id, exc)
             return TerminalStatus.UNKNOWN
 
+    def _with_native_completion_settings(self, command: str, profile: Any) -> str:
+        """Attach private hooks only to supported local tmux CLI executions."""
+        from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
+
+        if self._completion_channel is not None:
+            if not self._completion_channel.close():
+                return command
+            self._completion_channel = None
+        if not isinstance(get_backend(), TmuxBackend) or (
+            profile is not None and profile.container is not None
+        ):
+            return command
+        channel = None
+        try:
+            channel = NativeCompletionChannel.create(CAO_HOME_DIR, "claude_code", self.terminal_id)
+            callback = shlex.join(
+                [
+                    sys.executable,
+                    "-I",
+                    "-m",
+                    "cli_agent_orchestrator.providers.claude_completion_hook",
+                    str(channel.directory),
+                    self.terminal_id,
+                    channel.binding["epoch"],
+                    "claude_code",
+                ]
+            )
+            settings = {
+                "hooks": {
+                    event: [{"hooks": [{"type": "command", "command": callback}]}]
+                    for event in ("SessionStart", "Stop")
+                }
+            }
+            path = channel.directory / "settings.json"
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as output:
+                json.dump(settings, output)
+            self._completion_channel = channel
+            return command + " --settings " + shlex.quote(str(path))
+        except (OSError, ValueError):
+            if channel is not None:
+                self._completion_channel = channel
+                if channel.close():
+                    self._completion_channel = None
+            return command
+
+    def record_dispatched_message(self, message: str) -> None:
+        super().record_dispatched_message(message)
+        channel = self._completion_channel
+        receipt = self.pending_turn_receipt_state()
+        if channel is not None:
+            # Always disarm on non-task input, too. Startup is not task evidence.
+            channel.arm(
+                receipt["generation"] if receipt else None,
+                receipt["receipt_sha256"] if receipt else None,
+            )
+
+    def extract_viewport_completion_result(self, viewport: str) -> Optional[str]:
+        channel = self._completion_channel
+        receipt = self.pending_turn_receipt_state()
+        if channel is None or receipt is None:
+            return None
+        result = channel.result(receipt["generation"], receipt["receipt_sha256"])
+        if (
+            result
+            and self._result_has_active_receipt(result)
+            and self._result_has_active_receipt(viewport)
+            and re.search(COMPLETION_SUMMARY_PATTERN, viewport)
+            and self._screen_status_without_receipt(viewport.splitlines())
+            == TerminalStatus.COMPLETED
+        ):
+            return result
+        return None
+
+    def receipt_result_viewport_terminal_status(
+        self,
+        viewport: str,
+        result: str,
+    ) -> Optional[TerminalStatus]:
+        direct = super().receipt_result_viewport_terminal_status(viewport, result)
+        if direct is not None:
+            return direct
+        candidate = self.extract_viewport_completion_result(viewport)
+        if candidate is not None and candidate == result:
+            return TerminalStatus.COMPLETED
+        return None
+
     async def initialize(self) -> bool:
         """Initialize Claude Code provider by starting claude command."""
         from cli_agent_orchestrator.services.status_monitor import status_monitor
@@ -1284,6 +1374,7 @@ class ClaudeCodeProvider(BaseProvider):
 
         # Build properly escaped command string
         command = self._build_claude_command(profile)
+        command = self._with_native_completion_settings(command, profile)
 
         # Send Claude Code command using the backend. Arm the StatusMonitor
         # stickiness gate so the launching command can drive a fresh
@@ -1727,6 +1818,12 @@ class ClaudeCodeProvider(BaseProvider):
     supports_screen_detection = True
 
     def get_status_from_screen(self, screen_lines: List[str]) -> TerminalStatus:
+        status = self._screen_status_without_receipt(screen_lines)
+        if status == TerminalStatus.COMPLETED:
+            return self._receipt_completion_status("\n".join(screen_lines))
+        return status
+
+    def _screen_status_without_receipt(self, screen_lines: List[str]) -> TerminalStatus:
         """Detect status from a pyte-composited viewport (escape-free rows).
 
         Anchors on the bottom of the rendered screen — exactly what a human
@@ -1822,7 +1919,7 @@ class ClaudeCodeProvider(BaseProvider):
             if re.search(
                 GET_STATUS_COMPLETION_PATTERN, joined
             ) or EXTRACTION_RESPONSE_PATTERN.search(joined):
-                return self._receipt_completion_status(joined)
+                return TerminalStatus.COMPLETED
             return TerminalStatus.IDLE
 
         return TerminalStatus.UNKNOWN
@@ -1983,6 +2080,8 @@ class ClaudeCodeProvider(BaseProvider):
     def cleanup(self) -> None:
         """Clean up Claude Code provider."""
         self._initialized = False
+        if self._completion_channel is not None and self._completion_channel.close():
+            self._completion_channel = None
         if self._cao_mcp_ready_path is not None:
             try:
                 self._cao_mcp_ready_path.unlink(missing_ok=True)

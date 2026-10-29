@@ -5808,6 +5808,10 @@ def exit_terminal_cli(terminal_id: str) -> None:
     _send_provider_exit_command(terminal_id, provider)
 
 
+class _ReceiptWitnessUnavailable(TurnResultUnavailableError):
+    """History text lacks a current witness; no durable mutation was attempted."""
+
+
 @with_terminal_dispatch_lock
 def _verify_receipt_bearing_result(
     terminal_id: str,
@@ -5869,7 +5873,7 @@ def _verify_receipt_bearing_result(
                     terminal_status = receipt_witness(transcript, result)
             if terminal_status is None:
                 finish_witness("rejected")
-                raise TurnResultUnavailableError(
+                raise _ReceiptWitnessUnavailable(
                     "output was extractable but its active task receipt was not yet complete"
                 )
             finish_witness("passed")
@@ -5969,6 +5973,46 @@ def _verify_receipt_bearing_result(
     return public_result
 
 
+def _verify_current_receipt_candidate(
+    terminal_id: str,
+    provider: Any,
+    expected_generation: str | None,
+    ordinary_observation: bool,
+) -> str | None:
+    """Try two consistent current observations, never retry a failed durable CAS."""
+    if (
+        provider_manager.get_provider(terminal_id) is not provider
+        or getattr(provider, "requires_turn_receipt", False) is not True
+    ):
+        return None
+    receipt = provider.pending_turn_receipt_state()
+    if receipt is None or (
+        expected_generation is not None and receipt["generation"] != expected_generation
+    ):
+        return None
+    candidate = _post_turn_receipt_candidate(terminal_id)
+    second = _post_turn_receipt_candidate(terminal_id) if candidate is not None else None
+    if (
+        candidate is None
+        or second is None
+        or candidate[0] is not provider
+        or second[0] is not provider
+        or candidate[2:] != second[2:]
+        or provider_manager.get_provider(terminal_id) is not provider
+        or provider.pending_turn_receipt_state() != receipt
+    ):
+        return None
+    return _verify_receipt_bearing_result(
+        terminal_id,
+        provider,
+        second[1],
+        second[2],
+        rendered_viewport=second[3],
+        expected_generation=receipt["generation"],
+        ordinary_observation=ordinary_observation,
+    )
+
+
 def _post_turn_receipt_candidate(
     terminal_id: str,
 ) -> Optional[tuple[Any, str, str, bool]]:
@@ -6013,6 +6057,16 @@ def _post_turn_receipt_candidate(
         result = provider.extract_post_turn_completion_result(transcript)
         if result and witness(transcript, result) is not None:
             return result
+        if viewport:
+            # Resolve an actual class hook, never a dynamic instance proxy.
+            hook = getattr(type(provider), "extract_viewport_completion_result", None)
+            try:
+                result = hook(provider, transcript) if callable(hook) else None
+            except Exception:  # A native event is optional evidence, never a failure authority.
+                logger.debug("Current viewport completion hook unavailable for %s", terminal_id)
+                result = None
+            if isinstance(result, str) and result and witness(transcript, result) is not None:
+                return result
         return None
 
     raw_buffer = status_monitor.get_buffer(terminal_id)
@@ -6359,6 +6413,13 @@ def get_output(
                         expected_generation=expected_generation,
                         ordinary_observation=ordinary_observation,
                     )
+                except _ReceiptWitnessUnavailable:
+                    current = _verify_current_receipt_candidate(
+                        terminal_id, provider, expected_generation, ordinary_observation
+                    )
+                    if current is not None:
+                        return current
+                    raise
                 except OutputExtractionRejected:
                     raise
                 except OutputExtractionError:
@@ -6392,12 +6453,25 @@ def get_output(
                     expected_generation=expected_generation,
                     ordinary_observation=ordinary_observation,
                 )
+            except _ReceiptWitnessUnavailable:
+                current = _verify_current_receipt_candidate(
+                    terminal_id, provider, expected_generation, ordinary_observation
+                )
+                if current is not None:
+                    return current
+                raise
             except OutputExtractionRejected:
                 raise
             except OutputExtractionError:
                 raise
             except ValueError:
                 pass
+
+            current = _verify_current_receipt_candidate(
+                terminal_id, provider, expected_generation, ordinary_observation
+            )
+            if current is not None:
+                return current
 
             # Full scrollback also failed — distinguish overflow from no response.
             # If the buffer is close to full (>=90% of last escalation cap), the

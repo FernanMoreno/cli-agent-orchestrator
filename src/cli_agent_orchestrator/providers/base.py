@@ -731,6 +731,14 @@ class BaseProvider(ABC):
             else None
         )
 
+    def extract_viewport_completion_result(self, viewport: str) -> Optional[str]:
+        """Recover native completion only against the current visible viewport.
+
+        Native event evidence must never be attributed to a history/raw capture.
+        The service still requires an independent live witness and durable CAS.
+        """
+        return None
+
     def extract_post_turn_completion_result(self, transcript: str) -> Optional[str]:
         """Recover a receipt-bearing answer hidden by a provider-specific blocker.
 
