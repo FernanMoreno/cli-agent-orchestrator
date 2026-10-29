@@ -195,8 +195,26 @@ def backend(args):
             save(entry / "backend.json", ledger)
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         def log_message(self, *args):
             pass
+
+        def start_sse(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+        def sse_bytes(self, payload):
+            self.wfile.write(f"{len(payload):X}\r\n".encode() + payload + b"\r\n")
+            self.wfile.flush()
+
+        def end_sse(self):
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
 
         def do_POST(self):
             try:
@@ -220,9 +238,7 @@ def backend(args):
                             auxiliary_models=models,
                         )
                     if body.get("stream") is True:
-                        self.send_response(200)
-                        self.send_header("Content-Type", "text/event-stream")
-                        self.end_headers()
+                        self.start_sse()
                         chunk = {
                             "id": "aux",
                             "object": "chat.completion.chunk",
@@ -236,10 +252,10 @@ def backend(args):
                                 }
                             ],
                         }
-                        self.wfile.write(
+                        self.sse_bytes(
                             ("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode()
                         )
-                        self.wfile.flush()
+                        self.end_sse()
                         return
                     payload = json.dumps(
                         {
@@ -277,10 +293,7 @@ def backend(args):
                     receipt_sha256=hashlib.sha256(receipt.encode()).hexdigest(),
                     stream_open=True,
                 )
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Connection", "close")
-                self.end_headers()
+                self.start_sse()
 
                 def chunk(text, finish=None, *, role=None):
                     delta = {"content": text}
@@ -293,8 +306,7 @@ def backend(args):
                         "model": body["model"],
                         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
                     }
-                    self.wfile.write(("data: " + json.dumps(value) + "\n\n").encode())
-                    self.wfile.flush()
+                    self.sse_bytes(("data: " + json.dumps(value) + "\n\n").encode())
 
                 # The bundled SDK gates live content.delta events on role.
                 # A completed result alone did not exercise this boundary.
@@ -308,8 +320,8 @@ def backend(args):
                     time.sleep(0.5)
                 chunk("\nT220 finished\n" + receipt + "\n")
                 chunk("", "stop")
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
+                self.sse_bytes(b"data: [DONE]\n\n")
+                self.end_sse()
                 record(stream_open=False, finished=True)
             except (BrokenPipeError, ConnectionResetError):
                 record(stream_open=False, disconnected=True)
