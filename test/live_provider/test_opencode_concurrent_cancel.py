@@ -216,6 +216,8 @@ def test_native_cancel_a_while_b_continues(postgres_service):
             gen_b, entry_b = active(b)
             sample()
             native_records.append(json.loads((entry_b / "wrapper.json").read_text()))
+            tick = ledger(entry_b)["ticks"]
+            state["prefinish_output_bytes"] = output_after(b, 0, f"T220-progress-{tick:04d}")
             (entry_b / "release").touch(mode=0o600)
 
             def preflight_finished():

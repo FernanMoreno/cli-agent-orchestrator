@@ -222,7 +222,7 @@ def backend(args):
                             "choices": [
                                 {
                                     "index": 0,
-                                    "delta": {"content": "Local control"},
+                                    "delta": {"role": "assistant", "content": "Local control"},
                                     "finish_reason": "stop",
                                 }
                             ],
@@ -273,19 +273,23 @@ def backend(args):
                 self.send_header("Connection", "close")
                 self.end_headers()
 
-                def chunk(text, finish=None):
+                def chunk(text, finish=None, *, role=None):
+                    delta = {"content": text}
+                    if role is not None:
+                        delta["role"] = role
                     value = {
                         "id": "t220",
                         "object": "chat.completion.chunk",
                         "created": 1,
                         "model": body["model"],
-                        "choices": [
-                            {"index": 0, "delta": {"content": text}, "finish_reason": finish}
-                        ],
+                        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
                     }
                     self.wfile.write(("data: " + json.dumps(value) + "\n\n").encode())
                     self.wfile.flush()
 
+                # The bundled SDK gates live content.delta events on role.
+                # A completed result alone did not exercise this boundary.
+                chunk("", role="assistant")
                 deadline = time.monotonic() + 180
                 while not (entry / "release").exists():
                     assert time.monotonic() < deadline, "stream_budget_expired"
