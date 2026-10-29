@@ -892,3 +892,6 @@ T226/T223 bounded closure2026-10-29 on1ff27465: native preflight59.10s and concu
 
 
 T227 scoped closure2026-10-29 onded1b0e5: native99.80s/1889pins, actual productionstdio discovery and exact mcp__cao-mcp-server__list_siblings primaryoffer/0builtins/1primary, ownfinalverified/ownedcleanup/heldPG0-0.87expanded+28overlappingfinal controls,5-0architecture/style/Claude read review; no product/grant change. Invocation/operationauthorization and broaderprofile/backend/global matrices remainOPEN. [Receipt](validation-t227.json).
+
+
+- [ ] T228 [US2] [CL-05/operation authorization] Validate actual pinned native list_siblings invocation through real production MCP/API/PostgreSQL with positive discovery marker and denied markerless profile. One explicit diagnostic native client per-tool allow, zero built-ins, fixed server filter, original budgets. Add finite own-identity two-GET Unix bridge with strict request/lifecycle controls, native correlated tool_use/result and real API evidence, persisted nonempty group/empty results, failed-lookup control, own final/cleanup/source verification, independent review/style/composition; record exact scope and unchanged production default client-policy/global limits.

@@ -22,6 +22,7 @@ class NativeCancelAdapter:
     profile_options: str = ""
     allowed_tools: tuple[str, ...] = ()
     expected_mcp_tools: tuple[str, ...] = ()
+    native_operation: str = ""
 
 
 def _configure_opencode(home):
@@ -137,6 +138,16 @@ def native_profile_text(name, adapter):
 
 def claude_adapter_for_manifest(manifest):
     profile_case = manifest.get("profile_case", "")
+    if profile_case in {"mcp_execute_authorized", "mcp_execute_denied"}:
+        assert manifest["case_kind"] == "preflight", "MCP execution is preflight-only"
+        mode = profile_case.removeprefix("mcp_execute_")
+        return replace(
+            CLAUDE_MCP_OFFER,
+            native_operation=mode,
+            allowed_tools=(
+                ("@cao-mcp-server", "discovery") if mode == "authorized" else ("@cao-mcp-server",)
+            ),
+        )
     if profile_case == "mcp_offer":
         assert manifest["case_kind"] == "preflight", "MCP offer is a preflight-only gate"
         return CLAUDE_MCP_OFFER

@@ -12,8 +12,9 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
-from test.live_provider.claude_client_denial import text_stream
+from test.live_provider.claude_client_denial import text_stream, tool_stream
 from test.live_provider.native_cancel_adapters import CLAUDE, claude_adapter_for_manifest
 from test.live_provider.native_cancel_support import (
     isolated_wrapper,
@@ -103,10 +104,22 @@ def stream_end():
     )
 
 
-def validate_native_launch(values, expected_mcp_tools=()):
+def validate_native_launch(values, expected_mcp_tools=(), operator_mode=""):
     assert values[values.index("--model") + 1] == CLAUDE.model
     assert "--dangerously-skip-permissions" not in values
-    assert values[values.index("--permission-mode") + 1] == "default"
+    assert (
+        values.count("--permission-mode") == 1
+        and values[values.index("--permission-mode") + 1] == "default"
+    )
+    assert "--allowed-tools" not in values
+    if operator_mode:
+        assert operator_mode in {"authorized", "denied"}
+        assert (
+            values.count("--allowedTools") == 1
+            and values[values.index("--allowedTools") + 1] == "mcp__cao-mcp-server__list_siblings"
+        )
+    else:
+        assert "--allowedTools" not in values
     assert values.count("--tools") == 1 and values[values.index("--tools") + 1] == ""
     if expected_mcp_tools:
         from cli_agent_orchestrator.utils.mcp_readiness import READY_FILE_ENV, READY_TOKEN_ENV
@@ -133,9 +146,12 @@ def validate_native_launch(values, expected_mcp_tools=()):
 def wrapper(root, args):
     manifest = json.loads((Path(root) / "manifest.json").read_text())
     adapter = claude_adapter_for_manifest(manifest)
+    if adapter.native_operation and args != ["--version"]:
+        assert "--allowedTools" not in args and "--allowed-tools" not in args
+        args = [*args, "--allowedTools", "mcp__cao-mcp-server__list_siblings"]
 
     def validate(values):
-        validate_native_launch(values, adapter.expected_mcp_tools)
+        validate_native_launch(values, adapter.expected_mcp_tools, adapter.native_operation)
 
     def environment(env):
         if adapter.expected_mcp_tools:
@@ -151,6 +167,7 @@ def wrapper(root, args):
             DISABLE_TELEMETRY="1",
             DISABLE_ERROR_REPORTING="1",
             CAO_NATIVE_EXPECTED_MCP_TOOLS=json.dumps(adapter.expected_mcp_tools),
+            CAO_NATIVE_MCP_OPERATION=adapter.native_operation,
         )
         return env
 
@@ -222,6 +239,9 @@ def backend(args):
     )
     expected_tools = tuple(json.loads(os.environ.get("CAO_NATIVE_EXPECTED_MCP_TOOLS", "[]")))
     assert expected_tools in {(), ("mcp__cao-mcp-server__list_siblings",)}
+    operation_mode = os.environ.get("CAO_NATIVE_MCP_OPERATION", "")
+    assert operation_mode in {"", "authorized", "denied"}
+    operation = {"call_id": "tool_t228_" + uuid.uuid4().hex, "receipt": None}
     lock = threading.RLock()
 
     def record(**updates):
@@ -274,7 +294,24 @@ def backend(args):
                 assert route == "/v1/messages", "unexpected_native_route"
                 model = body["model"]
                 assert isinstance(model, str)
-                if not primary_request(body):
+                operation_result = None
+                if (
+                    operation_mode
+                    and ledger["primary_requests"] == 1
+                    and any(
+                        CLAUDE.primary_instruction in text
+                        for text in text_blocks(body.get("system", []))
+                    )
+                ):
+                    from test.live_provider.native_read_bridge import native_operation_result
+
+                    operation_result = native_operation_result(
+                        body, operation["call_id"], operation_mode
+                    )
+                    if operation_result is not None:
+                        assert body.get("stream") is True and model == CLAUDE.model
+                        assert set(native_tool_names(body)) == set(expected_tools)
+                if operation_result is None and not primary_request(body):
                     if expected_tools:
                         assert set(native_tool_names(body)).issubset(
                             expected_tools
@@ -298,18 +335,42 @@ def backend(args):
                             ).encode()
                         )
                     return
-                receipt = primary_receipt(body, expected_tools=expected_tools)
-                assert ledger["primary_requests"] == 0, "duplicate_native_input"
-                record(
-                    primary_requests=1,
-                    builtin_tool_count=0,
-                    mcp_tool_names=native_tool_names(body),
-                    tool_schema_sha256=hashlib.sha256(
-                        json.dumps(body.get("tools", []), sort_keys=True).encode()
-                    ).hexdigest(),
-                    stream_open=True,
-                    receipt_sha256=hashlib.sha256(receipt.encode()).hexdigest(),
-                )
+                if operation_result is not None:
+                    assert ledger.get("tool_result_requests", 0) == 0, "duplicate_tool_result"
+                    receipt = operation["receipt"]
+                    assert isinstance(receipt, str)
+                    record(tool_result_requests=1, tool_result=operation_result, stream_open=True)
+                else:
+                    receipt = primary_receipt(body, expected_tools=expected_tools)
+                    assert ledger["primary_requests"] == 0, "duplicate_native_input"
+                    record(
+                        primary_requests=1,
+                        builtin_tool_count=0,
+                        mcp_tool_names=native_tool_names(body),
+                        tool_schema_sha256=hashlib.sha256(
+                            json.dumps(body.get("tools", []), sort_keys=True).encode()
+                        ).hexdigest(),
+                        stream_open=True,
+                        receipt_sha256=hashlib.sha256(receipt.encode()).hexdigest(),
+                    )
+                    if operation_mode:
+                        operation["receipt"] = receipt
+                        record(
+                            tool_requested=True,
+                            tool_call_id=operation["call_id"],
+                            operator_client_allow=["mcp__cao-mcp-server__list_siblings"],
+                            stream_open=False,
+                        )
+                        self.respond(
+                            tool_stream(
+                                "mcp__cao-mcp-server__list_siblings",
+                                operation["call_id"],
+                                {},
+                                model=model,
+                            ),
+                            "text/event-stream",
+                        )
+                        return
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Transfer-Encoding", "chunked")
@@ -338,6 +399,12 @@ def backend(args):
     record()
     if expected_tools:
         probe_mcp_import(args, entry, record)
+    read_proxy = None
+    if operation_mode:
+        from test.live_provider.native_read_bridge import start_namespace_read_proxy
+
+        read_proxy = start_namespace_read_proxy(args)
+        record(native_read_proxy_started=True)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     process = subprocess.Popen(["/tmp/claude-native", *args])
@@ -346,6 +413,11 @@ def backend(args):
     finally:
         server.shutdown()
         server.server_close()
+        if read_proxy is not None:
+            read_proxy[0].shutdown()
+            read_proxy[0].server_close()
+            read_proxy[1].join(timeout=8)
+            assert not read_proxy[1].is_alive(), "namespace_read_proxy_not_retired"
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=5)

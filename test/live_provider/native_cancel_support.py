@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -64,6 +65,20 @@ def isolated_wrapper(root, args, *, gateway, native_path, prepare_environment, v
             masks += ["--ro-bind", "/dev/null", os.environ[key]]
     if (home / ".cao-postgres").exists():
         masks += ["--tmpfs", str(home / ".cao-postgres")]
+    bridge_mount = []
+    if manifest.get("profile_case") in {"mcp_execute_authorized", "mcp_execute_denied"}:
+        from test.live_provider.native_read_bridge import NATIVE_SOCKET
+
+        state = json.loads((root / "case-result.json").read_text())
+        bridge = Path(os.environ["CAO_NATIVE_READ_SOCKET"])
+        assert bridge == Path(state["tmux_root"]) / "read.sock"
+        info = bridge.lstat()
+        assert (
+            stat.S_ISSOCK(info.st_mode)
+            and info.st_uid == os.getuid()
+            and stat.S_IMODE(info.st_mode) == 0o600
+        )
+        bridge_mount = ["--ro-bind", str(bridge), NATIVE_SOCKET]
     command = [
         "bwrap",
         "--unshare-all",
@@ -96,6 +111,7 @@ def isolated_wrapper(root, args, *, gateway, native_path, prepare_environment, v
         "--bind",
         str(entry),
         "/tmp/evidence",
+        *bridge_mount,
         "--ro-bind",
         str(gateway),
         "/tmp/gateway.py",

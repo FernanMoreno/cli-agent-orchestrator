@@ -9,6 +9,7 @@ import select
 import shutil
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 from test.e2e import test_real_provider_matrix as matrix
@@ -60,6 +61,7 @@ def run_native_cancel_case(root, postgres_service, adapter):
     socket_root = owned_tmux.create_private_tmux_tmpdir()
     socket_path = socket_root / f"tmux-{os.getuid()}" / "default"
     server = None
+    read_bridge = None
     processes = {}
     sessions = set()
     native_records = []
@@ -187,10 +189,20 @@ def run_native_cancel_case(root, postgres_service, adapter):
                 "TMPDIR": str(socket_root),
                 "PATH": str(root / "bin") + ":/usr/local/bin:/usr/bin:/bin",
                 **adapter.environment,
+                **(
+                    {"CAO_NATIVE_READ_SOCKET": str(socket_root / "read.sock")}
+                    if adapter.native_operation
+                    else {}
+                ),
             },
             allowed_external_credentials=adapter.credential_names,
         )
         api_process = inspect.getclosurevars(server.stop).nonlocals["process"]
+        if adapter.native_operation:
+            from test.live_provider.native_read_bridge import OwnedReadBridge
+
+            read_bridge = OwnedReadBridge(socket_root / "read.sock", server.url)
+            read_bridge.__enter__()
         adapter.configure(home)
         for name in (adapter.profile_prefix + "_a", adapter.profile_prefix + "_b"):
             store = home / ".aws/cli-agent-orchestrator/agent-store"
@@ -205,6 +217,15 @@ def run_native_cancel_case(root, postgres_service, adapter):
         state["memory_before_b_mib"] = memory()
         b, session = matrix._create_parent(server, adapter.provider, adapter.profile_prefix + "_b")
         sample()
+        if read_bridge is not None:
+            read_bridge.bind_caller(b)
+            group = ["t228", b]
+            updated = request("PATCH", b, "/group", json={"group": group})
+            assert updated["group"] == group and updated["allowed_tools"] == list(
+                adapter.allowed_tools
+            )
+            state["persisted_discovery_group"] = True
+            state["native_operation_mode"] = adapter.native_operation
         if adapter.expected_mcp_tools:
             from cli_agent_orchestrator.utils.mcp_readiness import (
                 READY_FILE_ENV,
@@ -299,6 +320,20 @@ def run_native_cancel_case(root, postgres_service, adapter):
             state["b_final_turn"] = wait(preflight_finished)
             assert ledger(entry_b)["finished"] and ledger(entry_b)["primary_requests"] == 1
             matrix._delete_session(server, session)
+            if read_bridge is not None:
+                data = ledger(entry_b)
+                assert data["tool_requested"] is True and data["tool_result_requests"] == 1
+                assert data["operator_client_allow"] == ["mcp__cao-mcp-server__list_siblings"]
+                expected_paths = [f"/terminals/{b}"] + (
+                    [f"/terminals/{b}/siblings"] if adapter.native_operation == "authorized" else []
+                )
+                assert [row["path"] for row in read_bridge.rows] == expected_paths
+                assert all(row["status"] == 200 for row in read_bridge.rows)
+                assert read_bridge.attempts and all(
+                    row["admitted"] is True for row in read_bridge.attempts
+                )
+                state["actual_operation_verified"] = True
+                state["read_bridge_requests"] = read_bridge.rows
             state["preflight_passed"] = True
             return
         assert manifest["case_kind"] == "concurrent"
@@ -393,6 +428,9 @@ def run_native_cancel_case(root, postgres_service, adapter):
         matrix._delete_session(server, session)
         state["case_passed"] = True
     finally:
+        original_error = sys.exc_info()[1]
+        if original_error is not None:
+            state["first_failure_type"] = type(original_error).__name__
         # Keep the first failure and its raw capture even when initialization
         # failed before we could sample a native session.
         if manifest["case_kind"] == "inspect" or not (
@@ -406,6 +444,14 @@ def run_native_cancel_case(root, postgres_service, adapter):
                 shutil.copyfile(capture, archived)
                 archived.chmod(0o600)
         save(root / "case-result.json", state)
+        bridge_cleanup_error = None
+        if read_bridge is not None:
+            try:
+                read_bridge.__exit__(None, None, None)
+                state["read_bridge_retired"] = True
+            except BaseException as error:
+                bridge_cleanup_error = error
+                state["read_bridge_retired"] = False
         if server is not None:
             try:
                 if session is not None:
@@ -450,3 +496,5 @@ def run_native_cancel_case(root, postgres_service, adapter):
         shutil.rmtree(home)
         state["home_removed"] = not home.exists()
         save(root / "case-result.json", state)
+        if bridge_cleanup_error is not None and original_error is None:
+            raise bridge_cleanup_error

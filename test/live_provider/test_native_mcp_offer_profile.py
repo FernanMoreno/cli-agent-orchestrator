@@ -140,3 +140,38 @@ def test_import_probe_uses_actual_config_environment_and_records_failure(
     assert recorded[0] == {"production_mcp_import_started": True}
     if outcome != "timeout":
         assert (tmp_path / "mcp-import-probe.json").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("mode", ["authorized", "denied"])
+def test_execution_adds_only_temporary_exact_client_permission(tmp_path, monkeypatch, mode):
+    from test.live_provider import claude_cancel_gateway as gateway
+
+    manifest = {"case_kind": "preflight", "profile_case": "mcp_execute_" + mode}
+    adapter = adapters.claude_adapter_for_manifest(manifest)
+    assert adapter.native_operation == mode
+    assert adapter.allowed_tools == (
+        ("@cao-mcp-server", "discovery") if mode == "authorized" else ("@cao-mcp-server",)
+    )
+    profile = AgentProfile(
+        **yaml.safe_load(adapters.native_profile_text("mcp", adapter).split("---", 2)[1])
+    )
+    monkeypatch.setattr(claude_code, "CAO_HOME_DIR", tmp_path)
+    provider = claude_code.ClaudeCodeProvider(
+        "1234abcd", "s", "w", agent_profile="mcp", allowed_tools=profile.allowedTools
+    )
+    args = shlex.split(provider._build_claude_command(profile))
+    assert args[args.index("--tools") + 1] == "" and "--allowedTools" not in args
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setenv("MCP_TIMEOUT", "60000")
+    monkeypatch.setenv("MCP_CONNECT_TIMEOUT_MS", "60000")
+    captured = {}
+
+    def isolated(root, actual, *, validate_args, prepare_environment, **kwargs):
+        validate_args(actual)
+        assert actual[-2:] == ["--allowedTools", "mcp__cao-mcp-server__list_siblings"]
+        assert actual.count("--allowedTools") == 1
+        captured.update(prepare_environment({"HOME": str(tmp_path)}))
+
+    monkeypatch.setattr(gateway, "isolated_wrapper", isolated)
+    gateway.wrapper(tmp_path, args)
+    assert captured["CAO_NATIVE_MCP_OPERATION"] == mode
