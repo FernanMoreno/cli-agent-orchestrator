@@ -1,8 +1,10 @@
 """Shared native cancellation orchestration; adapters own configuration and wire."""
 
+import hashlib
 import inspect
 import json
 import os
+import re
 import select
 import shutil
 import stat
@@ -203,18 +205,78 @@ def run_native_cancel_case(root, postgres_service, adapter):
             assert response.status_code == 200
         state["memory_before_b_mib"] = memory()
         b, session = matrix._create_parent(server, adapter.provider, adapter.profile_prefix + "_b")
-        if manifest["case_kind"] == "preflight":
+        sample()
+        if manifest["case_kind"] == "inspect":
+            started_entries = entries(b)
+            assert (
+                len(started_entries) == 1 and (started_entries[0] / "session-start.json").is_file()
+            ), "native_session_start_hook_not_observed_before_input"
+
+        if manifest["case_kind"] in {"preflight", "inspect"}:
             send_turn_once(
                 request, b, adapter.prompt_prefix + ". Complete when released.", admission
             )
             gen_b, entry_b = active(b)
             sample()
             native_records.append(json.loads((entry_b / "wrapper.json").read_text()))
+            if manifest["case_kind"] == "inspect":
+                wait(lambda: ledger(entry_b)["ticks"] >= 57)
             tick = ledger(entry_b)["ticks"]
             state["prefinish_output_bytes"] = output_after(
                 b, 0, f"{adapter.progress_prefix}{tick:04d}"
             )
             (entry_b / "release").touch(mode=0o600)
+
+            if manifest["case_kind"] == "inspect":
+                wait(
+                    lambda: (entry_b / "stop-failure.json").exists()
+                    or (ledger(entry_b).get("finished") and (entry_b / "stop.json").exists())
+                )
+                assert not (entry_b / "stop-failure.json").exists(), "native_stop_failure_observed"
+                start = json.loads((entry_b / "session-start.json").read_text())
+                stop = json.loads((entry_b / "stop.json").read_text())
+                assert start["schema"] == stop["schema"] == "caos.claude-hook-observation.v1"
+                start, stop = start["payload"], stop["payload"]
+                assert (
+                    start["hook_event_name"] == "SessionStart" and stop["hook_event_name"] == "Stop"
+                )
+                assert start["session_id"] == stop["session_id"]
+                assert stop["stop_hook_active"] is False
+                markers = re.findall(
+                    r"(?m)^[ \t]*(CAO-TURN-RECEIPT-[a-f0-9]{32})[ \t]*$",
+                    stop["last_assistant_message"],
+                )
+                assert (
+                    len(markers) == 1
+                    and hashlib.sha256(markers[0].encode()).hexdigest()
+                    == ledger(entry_b)["receipt_sha256"]
+                )
+                native_turn = request("POST", b, "/turn/verify", params={"generation": gen_b})
+                response = matrix._request(
+                    "GET",
+                    server.url + "/terminals/" + b + "/output",
+                    params={"mode": "last", "generation": gen_b},
+                )
+                meta = request("GET", b)
+                target = meta["session_name"] + ":" + meta["name"]
+                for label, depth in (("viewport", "0"), ("history200", "-200"), ("history", "-")):
+                    capture = root / ("native-final-" + label + ".txt")
+                    capture.write_text(command("capture-pane", "-p", "-t", target, "-S", depth))
+                    capture.chmod(0o600)
+                state["inspection"] = {
+                    "scope": "native-hook schema observation only; not cancellation acceptance",
+                    "same_native_session": True,
+                    "own_final_receipt_in_structured_assistant_text": True,
+                    "native_hook_fields": sorted(stop),
+                    "assistant_text_bytes": len(stop["last_assistant_message"].encode()),
+                    "backend_ticks": ledger(entry_b)["ticks"],
+                    "api_turn": native_turn,
+                    "api_output_status": response.status_code,
+                    "api_output_body": response.json(),
+                }
+                matrix._delete_session(server, session)
+                state["inspection_completed"] = True
+                return
 
             def preflight_finished():
                 turn = request("POST", b, "/turn/verify", params={"generation": gen_b})
@@ -320,9 +382,14 @@ def run_native_cancel_case(root, postgres_service, adapter):
     finally:
         # Keep the first failure and its raw capture even when initialization
         # failed before we could sample a native session.
-        if not (state.get("case_passed") or state.get("preflight_passed")):
+        if manifest["case_kind"] == "inspect" or not (
+            state.get("case_passed") or state.get("preflight_passed")
+        ):
             for capture in (home / ".aws/cli-agent-orchestrator/logs/terminal").glob("*.log"):
-                archived = root / ("failed-" + capture.name)
+                archived = root / (
+                    ("observed-" if manifest["case_kind"] == "inspect" else "failed-")
+                    + capture.name
+                )
                 shutil.copyfile(capture, archived)
                 archived.chmod(0o600)
         save(root / "case-result.json", state)
@@ -361,7 +428,11 @@ def run_native_cancel_case(root, postgres_service, adapter):
             retired(record["pid"], (record["uid"], record["birth"])) for record in native_records
         )
         assert state["wrapper_processes_retired"] or not native_records
-        if state.get("case_passed") or state.get("preflight_passed"):
+        if (
+            state.get("case_passed")
+            or state.get("preflight_passed")
+            or state.get("inspection_completed")
+        ):
             assert state["observed_processes_retired"] and state["wrapper_processes_retired"]
         shutil.rmtree(home)
         state["home_removed"] = not home.exists()

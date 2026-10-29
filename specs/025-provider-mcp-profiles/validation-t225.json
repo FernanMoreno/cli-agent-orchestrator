@@ -1,0 +1,77 @@
+{
+  "schema": "caos.spec025.t225.native-hook-observation.v1",
+  "date": "2026-10-29",
+  "status": "OBSERVED_ONLY_NO_RUNTIME_COMPLETION_ACCEPTANCE",
+  "source_base_head": "37cb1b78091bdd7414b1c3c3a2a52ee7d7a94b6b",
+  "source_sha256": {
+    "test/live_provider/claude_completion_observer.py": "9012fc46ce4072203386aad5449cd45f25230f12dfd2a3ee0e13112b874e0a15",
+    "test/live_provider/test_claude_completion_observer.py": "a824ad6834cae948ba012c1f3ff47156319bcf84fafb43f204cc3f1729cfadfe",
+    "test/live_provider/native_cancel_adapters.py": "c6f119e5febc953f7290e4fb226b443f1339a34479c8dba88dccecfc708a41b0",
+    "test/live_provider/native_concurrent_cancel.py": "51ae9ac7fa7a038c65ea29d35e0399e590ae90f6887b647c94cab35e05a5cb19",
+    "test/live_provider/test_claude_concurrent_cancel.py": "3657dc1a88c874c6db8482aaa0748403a88da14e2ce051893107a3076375c12d"
+  },
+  "native_binary": {
+    "version": "ClaudeCode2.1.303",
+    "sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450"
+  },
+  "source_pins": 1884,
+  "inspection": {
+    "scope": "native-hook schema observation only; not cancellation acceptance",
+    "same_native_session": true,
+    "own_final_receipt_in_structured_assistant_text": true,
+    "native_hook_fields": [
+      "background_tasks",
+      "cwd",
+      "effort",
+      "hook_event_name",
+      "last_assistant_message",
+      "permission_mode",
+      "prompt_id",
+      "session_crons",
+      "session_id",
+      "stop_hook_active",
+      "transcript_path"
+    ],
+    "assistant_text_bytes": 1204,
+    "backend_ticks": 57,
+    "api_output_status": 202
+  },
+  "api_final_turn_state": "pending",
+  "seconds": 84.34,
+  "backend_primary_requests": 1,
+  "builtin_tools_offered": 0,
+  "original_budgets": {
+    "memory_floor_mib": 6144,
+    "native_seconds": 180,
+    "progress_observation_seconds": 5
+  },
+  "cleanup": {
+    "observed_processes_retired": true,
+    "wrapper_processes_retired": true,
+    "tmux_cleanup": true,
+    "home_removed": true
+  },
+  "postgres_after": {
+    "borrower_connections": 0,
+    "private_databases": 0,
+    "same_held_container": true
+  },
+  "verification": {
+    "controls_passed": 127,
+    "seconds": 32.22,
+    "actual_callback_cli_packets": 2,
+    "callback_stdout_and_stderr_empty": true,
+    "composition_kept": 5,
+    "composition_broken": 0,
+    "claude_review": "be9d2f3c824c49f59ca7540014aa405d",
+    "reviewed_interpreter_namespace_guard_applied": true
+  },
+  "limits": [
+    "Diagnostic callback has no runtime authority and does not settle or persist a CAO task",
+    "T223 remains failed at the final receipt gate; existing API returned202/pending",
+    "No model structured-output requirement, inference, operator login or new model tool grant",
+    "Runtime integration needs independent run/session/current-generation binding and existing CAS/witness controls",
+    "Native MCP/profile/backend/global scale gates remain distinct"
+  ],
+  "private_root": "/home/felni/.cache/caos-t225-native-completion-20261029"
+}

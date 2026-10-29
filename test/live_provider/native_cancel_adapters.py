@@ -1,7 +1,9 @@
 """Native configuration only; lifecycle and acceptance predicates are shared."""
 
 import json
-from dataclasses import dataclass
+import shlex
+import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
 
@@ -79,3 +81,29 @@ CLAUDE = NativeCancelAdapter(
     configure=_configure_claude,
     profile_options="permissionMode: default\n",
 )
+
+
+def _configure_claude_inspection(home):
+    repo = Path(__file__).resolve().parents[2]
+    roots = (repo, Path("/home/felni/.local/share/uv/python"))
+    executable = Path(sys.executable)
+    assert executable.is_absolute() and all(
+        any(candidate.is_relative_to(root) for root in roots)
+        for candidate in (executable, executable.resolve(strict=True))
+    ), "hook_interpreter_outside_verified_namespace"
+    _configure_claude(home)
+    command = shlex.join(
+        [sys.executable, "-m", "test.live_provider.claude_completion_observer", "/tmp/evidence"]
+    )
+    settings = {
+        "hooks": {
+            event: [{"hooks": [{"type": "command", "command": command}]}]
+            for event in ("SessionStart", "Stop", "StopFailure")
+        }
+    }
+    path = home / ".claude/settings.json"
+    path.write_text(json.dumps(settings))
+    path.chmod(0o600)
+
+
+CLAUDE_INSPECT = replace(CLAUDE, configure=_configure_claude_inspection)

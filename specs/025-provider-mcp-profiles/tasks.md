@@ -875,3 +875,8 @@ T223 concurrent-r1 FAILED2026-10-29 (104.44s): lifecycle/stale409/current200 and
 T224 scoped completion2026-10-29: actual18→0nativeoffer via commonpositive mapping/Claude--tools;442PASS/type0/composition5-0/ClaudeGO;preflightR3 ownreceipt/cleanup verified. MCPnative/profilematrix remains separate. [Receipt](validation-t224.json).
 
 T223 remains OPEN: concurrentR2 stale409/currentcancel20026.458s/replacement0requests/BsamePID-FIFO-GEN/fresh26527bytes passed, butB ownfinalreceipt stayedpending180s;overallFAIL284.01s. Actualraw-modeTmux replay losesassistanthead atallhistorydepths. No receipt-onlybypass or broaderacceptance. [Receipt](validation-t223.json).
+
+
+- [x] T225 [US4] [T223 dependency] Observe real pinned Claude SessionStart/Stop structured completion in an isolated57-tick diagnostic; strict bounded/exclusive private JSON writer and negative controls, match native session and own receipt, retain actual unverified API result, archive owned native evidence and cleanup. No model JSON mandate, permissive visible-nonce fallback, larger deadline or operator credential access. Runtime integration requires actual schema evidence first.
+
+T225 diagnostic completion2026-10-29: native84.34s/1884pins/oneprimary/0tools; sameSessionStart+Stop session and1204bytes ownreceipt-bearing assistanttext observed. ExistingAPI remains202/pending; no runtimecompletionacceptance.127controls/CLI2packets/architecture5-0/ClaudeGO/ownedcleanup/PostgreSQL0-0. [Receipt](validation-t225.json). T223 remainsOPEN pending separatelyspecified bound runtimeintegration.

@@ -1,5 +1,12 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-10-29 · T225: observado el evento nativo de finalización, sin aceptar todavía la tarea.**
+En84,34s, Claude entregó1204bytes de texto final por Stop, con la misma sesión y
+el recibo correcto; la API conservó202/pending. Esto identifica la frontera de
+extracción de terminal.127 controles y limpieza/PostgreSQL0-0; no se ha integrado
+el callback en el verificador de producción ni cerrado T223.
+[Diagnóstico y límites](../specs/025-provider-mcp-profiles/validation-t225.md).
+
 **2026-10-29 · T223/T224: recorrido común y corrección de permisos Claude.**
 Un único controlador/sandbox valida cancelación; adaptadores nativos separados.
 Claude con `allowedTools:[]` ofrecía18 herramientas nuevas: corregido con selección

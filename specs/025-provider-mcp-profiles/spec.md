@@ -1250,3 +1250,8 @@ Use one provider-neutral lifecycle observer/driver for generation ownership, sta
 ### T224 — fail-closed native tool availability for restricted Claude profiles
 
 T223 native preflight-r1 proved that allowedTools:[] still offered18 unknown/new built-in tools because a finite denylist cannot exclude a changing CLI catalogue. Restricted profiles must positively select only native tools mapped from their existing CAO grants, using the pinned CLI built-in availability control; an empty mapped grant selects no built-ins. Preserve unrestricted None/* behavior, CAO category semantics, legacy denied-native execution flags and independent MCP server/filter authorization. Do not extend permissions or classify this tool-offer failure as cancellation acceptance.
+
+
+### T225 — observe structured native completion before changing attribution
+
+The T223 long-output final-receipt failure is reproduced by exact raw-mode220×50 terminal replay: assistant head is absent even in full scrollback. Do not settle from an echoed/visible nonce alone or reduce output/deadlines. Observe the pinned Claude SessionStart/Stop native hook envelopes and complete last_assistant_message through a private, bounded, structured callback in the existing isolated synthetic long preflight. Match native session identity and own receipt without asking the model for JSON; retain failed API verification and exact native source archives. This task first establishes a transport contract, not final acceptance or an implemented runtime fallback. Operator login, native grants, authoritative PostgreSQL receipts and existing verification gates stay unchanged.
