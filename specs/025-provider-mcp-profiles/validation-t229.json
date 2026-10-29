@@ -1,0 +1,86 @@
+{
+  "schema": "caos.spec025.t229.scoped-discovery-readiness.v1",
+  "date": "2026-10-29",
+  "status": "IMPLEMENTED_API_POSTGRES_VALIDATED_NATIVE_PENDING_MEMORY",
+  "source_head": "8345ad67628aed11b8ab241316584581fb2ab7ed",
+  "source_sha256": {
+    "test/live_provider/claude_cancel_gateway.py": "4618c1a2df89802719df1636878d43fc671dcc84fd1e8cc32636a9c8a725f87d",
+    "test/live_provider/native_cancel_adapters.py": "45be7cdc391bd14ea3cb595be261226d051a57de8da169219e3971f15123c1af",
+    "test/live_provider/native_cancel_support.py": "df25213be8aafcfe0348cef5231f6c1acf36a3fc9fc05a2ed22a241791c7bcab",
+    "test/live_provider/native_concurrent_cancel.py": "c63e9691d32d23b1440884af57856a1d3e3316cab13883bcc4a6be21d44e8bb2",
+    "test/live_provider/native_discovery_fixture.py": "7d692377e593e1603dcf96ec684f752ec5fc77145c5f234e1740c53d610042ef",
+    "test/live_provider/native_read_bridge.py": "12014ea97c6ffafe5c2dc18c8cf566845f8e373c3dc08af4a7fabdaab4c72566",
+    "test/live_provider/test_native_cancel_support.py": "6ace41ec5e0f68dad56ead2c4ab43fe2905dba89df0d1af241038965974f5be1",
+    "test/live_provider/test_native_read_bridge.py": "58ca655e898d3d89a52f8c2e9356c165a0f76fbaaf3d07681a93ca8a0d6f1e67",
+    "test/live_provider/test_native_scoped_discovery.py": "e931b67d526d71177ac4ef4bf769b5eb5049aa9b5e8d3e079c515bb219928cbf",
+    "test/live_provider/test_scoped_discovery_mock_api.py": "1e17f5381b78cd94c7664b718467f4d28482f02fa4da42454adee89d5f158311"
+  },
+  "task_closed": false,
+  "actual_native_case_executed": false,
+  "actual_api_preflight": {
+    "passed": true,
+    "seconds": 66.23,
+    "real_api_postgres_tmux_mock_peers": 3,
+    "expected_peers": 1,
+    "same_session_group_decoys": 1,
+    "other_session_same_group_decoys": 1,
+    "peer_inference": false,
+    "also_passed_in_expanded_r1_and_r2": true
+  },
+  "validation": {
+    "initial_parser_passed": 43,
+    "initial_parser_seconds": 46.47,
+    "expanded_r1": {
+      "passed": 169,
+      "failed": 1,
+      "seconds": 101.79,
+      "reason": "Old sandbox test omitted mandatory case_kind; remaining launch contract also required tools empty."
+    },
+    "expanded_r2": {
+      "passed": 169,
+      "failed": 2,
+      "seconds": 88.56,
+      "reason": "Old sandbox test omitted tools empty; new adapter test expected unqualified rather than native MCP tool name. Only test inputs/expectation corrected."
+    },
+    "final_affected": {
+      "passed": 38,
+      "failed": 0,
+      "seconds": 26.55,
+      "overlaps_expanded": true
+    },
+    "unique_cases_covered_by_expanded_and_final": 171,
+    "style": "Black10files/isortPASS; normal commit hook ran; hook matched no stagedpaths so explicit style checks are evidence",
+    "composition": "PASS5kept0broken",
+    "claude_read_review": "Three scoped rounds; actual HTTP-body/expectation/privatewrite/PATH findings addressed; no remaining scoped blockers",
+    "public_raw_native_capture": false
+  },
+  "api_cleanup": {
+    "borrowers": 0,
+    "databases": 0,
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+  },
+  "native_admission": {
+    "required_available_mib": 6144,
+    "observed_available_mib": 2251,
+    "admitted": false,
+    "memory_floor_lowered": false,
+    "foreign_process_stopped": false,
+    "reason": "Foreign project lune process consumes about9GiB; unchanged. No current native result/final accepted."
+  },
+  "scope": [
+    "actual default-session/full-group-prefix discovery with independent one-peer expectation and two realmockdecoys atAPI boundary",
+    "native test harness and correlation wired but unexecuted",
+    "strict600boundednofollowcallerboundexpectation; exclusivecreate temp and atomicreplace final",
+    "boundedactualHTTPresponse capture in memory tied to path/status/hash and native row equality",
+    "extra session/mockprocess retirement checks; legacy empty/denied behavior preserved"
+  ],
+  "not_accepted": [
+    "T229 native client end-to-end",
+    "explicit cross_session/depth",
+    "APIbearer/tenant",
+    "default native client permission",
+    "otherprovider/profile/backend/version acceptance",
+    "externalinference/globalcapacity"
+  ],
+  "historical_acceptance": "T226-T228 retained on their own source/scenario; no reruns or historicalreconciliation changes"
+}

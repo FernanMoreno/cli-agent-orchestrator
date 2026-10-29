@@ -1,0 +1,25 @@
+# T229 — nonempty scoped discovery: implemented, native acceptance pending
+
+**Implemented and validated at the real API/PostgreSQL boundary, 2026-10-29. T229 remains open.** Implementation source `8345ad67628aed11b8ab241316584581fb2ab7ed`. [Machine receipt](validation-t229.json). No native T229 case was executed or accepted.
+
+The owned fixture starts three actual deterministic `mock_cli` terminals through the production API/tmux runtime. One same-session peer extends the caller's group; a second shares a string prefix but differs in a group component; a third has the same group in another session. Default discovery returns exactly the first peer with its independently recorded ID, group and metadata. Self and both decoys are excluded. These mock peers perform no external inference.
+
+The no-model API/PostgreSQL preflight passed in66.23s and passed again in both expanded runs. The held PostgreSQL container identity was verified; afterward it had0 borrower connections and0 private databases.
+
+## Native gate implemented
+
+A bounded owner-produced expectation is written before input; it binds caller/expected/excluded identities to independently created records, never to discovery output. The reader checks mode0600, owner, regular file, single link, no-follow, size, duplicate keys and schema. Its temporary file is exclusive-create0600; the final fresh-home path is replaced atomically. Gateway and owner compare the exact file digest.
+
+The existing native path now supports that expectation while preserving the T228 empty/default and denied contracts. The host checks the exact two HTTP paths/statuses, captured sibling response hash, independently expected rows and equality with the native correlated result. Response bodies stay bounded in memory. Extra sessions retire before the main session; process sampling covers the private socket's mock workers. Original isolation, explicit single native client grant, server discovery marker/filter,180s/6144MiB/5s gates and auth-disabled API fixture remain unchanged.
+
+## Verification and preserved failures
+
+Initial parser controls:43PASS/46.47s. Expanded R1:169PASS/1FAIL101.79s; R2:169PASS/2FAIL88.56s. The failures exposed stale sandbox-test inputs missing mandatory case_kind/empty native tools, plus a new adapter test expecting the unqualified tool name. Corrected the tests to match the actual launch contract and native MCP namespace; admission behavior was not relaxed. Final affected controls:38PASS/26.55s, overlapping the expanded suite. Together the expanded pass set and corrected final tests cover171 distinct cases; this is not a fresh monolithic171PASS run. Failed logs remain private.
+
+Black/isort10files, diff checks and composition/Import Linter5kept0broken pass. Claude performed three scoped read reviews; HTTP/native equality, private creation and mock-path findings were addressed. Existing12foreign Graphify changes were preserved; no production dependency change requires graph regeneration. Existing durable Obsidian evidence-boundary guidance was consulted; no new native acceptance is persisted.
+
+## Remaining acceptance
+
+Only2251MiB were available at final measurement, below6144MiB. A foreign project process consumes about9GiB; it was not stopped. The expensive native case stays unexecuted. Run one fresh source-bound closed/import-verified descriptor after enough memory is available, then require correlated native tool_use/result, exact matching peer/decoy exclusion, own final verification and complete physical/PostgreSQL cleanup before closing T229.
+
+This does not accept explicit cross_session/depth, bearer/tenant policy, default native client approval, other providers/profiles/backends, external inference or global capacity. T226-T228 and historical reconciliation receipts retain their own status/source.

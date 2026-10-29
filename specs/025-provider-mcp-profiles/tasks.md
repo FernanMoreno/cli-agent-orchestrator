@@ -904,3 +904,5 @@ T228 bounded closure2026-10-29 on74df3baa: authorized130.63s anddenied124.85s PA
 
 
 - [ ] T229 [US2] [CL-05/CL-07] Validate native nonempty list_siblings with one real designated mock_cli peer, same-session group-prefix decoy and other-session same-group decoy. Use existing real MCP/API/PG path and strict client/server grants; add bounded owner-produced expectation and native digest/result validation, preserve empty/default legacy semantics, known suffix/correlation/HTTP/final/source/cleanup and180s/6144MiB/5s. Test malformed/foreign/duplicate/self/decoy results and expectation files plus fixture retirement; review/style/composition and one fresh pinned native run. No nonempty peer LLM inference, explicit cross_session/depth, bearer/default-client-policy or global capacity claim.
+
+T229 checkpoint2026-10-29: implementation on8345ad67628aed11b8ab241316584581fb2ab7ed; realAPI/PostgreSQL mock-peer setup and exact default scope PASS,171distinct controls covered by expanded/final overlapping sets, architecture5/0/Claude review. Native acceptance NOTEXECUTED:2251MiB<6144MiB; task remains[ ]. [Evidence](validation-t229.md).

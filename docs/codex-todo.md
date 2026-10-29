@@ -1,5 +1,14 @@
 # Codex: análisis y pendientes
 
+**2026-10-29 · T229: descubrimiento no vacío implementado; aceptación nativa pendiente.**
+API/PostgreSQL/tmux devuelve al compañero esperado y excluye dos señuelos reales
+por grupo/sesión. Prueba API66,23s; regresión169PASS y38 controles finales
+solapados cubren171 casos distintos tras corregir entradas de pruebas.
+Arquitectura5/0 y revisión Claude; PostgreSQL0-0. No se ejecutó T229 nativa:
+2251MiB disponibles frente a6144MiB; proceso de otro proyecto intacto.
+T229 sigue abierta y T226-T228 conservan su alcance.
+[Resultados y límites](../specs/025-provider-mcp-profiles/validation-t229.md).
+
 **2026-10-29 · T228: ejecución MCP y permiso discovery comprobados con Claude nativo.**
 Con `discovery`, `list_siblings` ejecuta las dos lecturas reales de API/PostgreSQL;
 sin ese permiso, el servidor deniega tras leer el permiso y no consulta hermanos.
