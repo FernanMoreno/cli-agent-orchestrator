@@ -1,13 +1,24 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-10-29 · T220: cancelación nativa concurrente de OpenCode v2 validada.**
+A se cancela en 5,176 s; B conserva proceso/FIFO/generación, emite un marcador
+nuevo y termina con su propio recibo verificado. El reemplazo de A recibe 0
+peticiones HTTP: no hay reenvío. Preflight de 63,49 s y recorrido de 75,93 s en fuente
+`d552ce47`; limpieza propia completa y PostgreSQL 0/0 en el mismo contenedor.
+Son CLI reales con HTTP loopback controlado y visibilidad Mini `tools=show`;
+la oferta real de herramientas sigue vacía. No es inferencia externa ni prueba
+de permisos MCP o escala global. T013/OC-06 y las demás matrices siguen abiertas.
+[Resultados, fallos conservados y límites](../specs/025-provider-mcp-profiles/validation-t220.md).
+
 **2026-10-29 · T219: corregida la inicialización de OpenCode tras cancelar.**
 El reemplazo acredita readiness sin publicar IDLE ni liberar el recibo anterior;
 el detector público también conserva el fence hasta verificar o cancelar.
 Generación ajena rechazada antes de efectos; no se reenvía la tarea. Regresión
 381 PASS con PostgreSQL/tmux y 29 controles enfocados (solapados); arquitectura
 5/0. Fixture Codex alineada con el contrato FIFO actual, sin cambiar su producto.
-Es corrección y validación de componente: falta el recorrido nativo con dos
-terminales; T013/OC-06, perfiles/Work/global siguen abiertos. Las aceptaciones
+Ese checkpoint solo acreditaba componente; T220 añade ahora el recorrido
+nativo concurrente de OpenCode con el alcance descrito arriba. T013/OC-06 y los
+gates de perfiles/Work/global siguen abiertos. Las aceptaciones
 nativas anteriores mantienen sus fuentes originales.
 [Evidencia y límites](../specs/025-provider-mcp-profiles/validation-t219.md).
 

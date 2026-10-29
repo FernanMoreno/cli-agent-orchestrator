@@ -1,6 +1,12 @@
 # T220 — native OpenCode concurrent cancellation
 
-Status: harness integrated; actual native acceptance pending. T013/OC-06 remain open.
+Status: **bounded native concurrency PASS** on executed source `d552ce47be871a01dceaa51d0e00404058be388c`. T013/OC-06 global gates remain open.
+
+The actual native preflight passed63.49s with visible pre-finish text and a verified final receipt. The fresh two-agent case passed75.93s: foreign A generation409; current cancellation200 in5.176s; original A retired, replacement ready with zero HTTP requests; B retained its process, FIFO and generation, produced a fresh semantic marker in a22132-byte new output range, then verified its own final receipt. Child join/deletion preserved the cancellation verdict. Lowest available-memory admission sample9587MiB (floor6144); operation/stream180s and fresh-text5s predicates unchanged. PostgreSQL targets/borrowers returned0/0 on the same held parent; native processes, API, tmux root and private HOME retired. Executed0600 archives are unchanged and operational wrappers reclosed. [Structured receipt](validation-t220.json).
+
+This uses the supported diagnostic Mini display overlay `mini.tools=show`; model/MCP tool offers remain empty. It accepts actual native CLI/production API/FIFO/PostgreSQL lifecycle with controlled loopback HTTP. It does not accept external inference, default Mini pre-finish visibility, MCP permissions or global scale. The default display hides pending text; even with display enabled, the native Markdown renderer commits stable blocks, so each synthetic progress paragraph is closed before finish. The retained earlier failures below explain how that boundary was established rather than replaced by a spinner or longer deadline.
+
+Final source/binary/archive/physical-cleanup proofs cover the complete pinned source inventory and preserve all12 foreign Graphify files. Production runtime behavior is unchanged in T220; it validates T219 through actual native cancellation.
 
 Scope: two actual pinned OpenCode v2.0.18 CLI processes, one production API and isolated targets on the verified held PostgreSQL service. Synthetic OpenAI-compatible SSE inside a separate loopback-only namespace per attempt; no external inference or operator credential staging. Empty MCP surface does not establish MCP permissions. Built-in offers are counted separately.
 
@@ -23,3 +29,7 @@ Preflight r5 disproved the role-only explanation: the corrected SSE still produc
 Preflight r6 still failed visible progress with `mini.tools=show`, so neither the role fix nor the display setting alone establishes the complete cause. Empty primary model offer was observed and own cleanup passed. The next discriminating control uses explicitly framed HTTP/1.1 chunked SSE instead of an HTTP/1.0 close-delimited response, preserving the original pre-finish marker and five-second predicate. Do not treat this transport hypothesis as confirmed until the actual native consumer passes.
 
 Preflight r7 also failed the unchanged visible-text predicate with HTTP/1.1 chunks; chunking alone is not the demonstrated cause. The actual Mini scrollback renderer was then traced: streaming Markdown uses top-level blocks and commits only `_stableBlockCount`. Single newline ticks kept one paragraph open until EOF. The producer now closes each progress paragraph with a blank line; the preflight and concurrent FIFO markers,180s/6144MiB and five-second text predicate are unchanged. The next run must confirm this render boundary dynamically; static review alone did not prove earlier hypotheses.
+
+Final verification on the accepted runtime bytes:48 controls passed30.42s with configured coverage, Black/isort clean, composition5/0. Independent Claude read review covered protocol/cleanup; actual native r8 and concurrent r2 establish the subsequent render-boundary observation.1871 pinned source files and both0600 executed runner/wrapper archives match; all12 pre-existing tracked Graphify changes are byte-preserved. Obsidian operation `save-20261029-caos-t220-native-concurrency` records the scoped result and the failed-hypothesis lesson.
+
+Supported display semantics are documented in the [official OpenCode CLI settings](https://opencode.ai/v2/docs/cli/config); the actual pinned binary and native controls, not documentation alone, establish this acceptance.

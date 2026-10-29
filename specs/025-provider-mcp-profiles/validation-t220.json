@@ -1,0 +1,117 @@
+{
+  "schema": "caos.spec025.t220.native-concurrent-cancel.v1",
+  "date": "2026-10-29",
+  "status": "BOUNDED_NATIVE_CONCURRENCY_PASS",
+  "executed_source_head": "d552ce47be871a01dceaa51d0e00404058be388c",
+  "native_version": "2.0.18",
+  "native_binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "source_sha256": {
+    "test/live_provider/native_cancel_turn.py": "edaf019306fa38cd0314df51456023c184faf36b68808a28c5ae7afdaf757c04",
+    "test/live_provider/opencode_cancel_gateway.py": "915d8b8b0cf5c059d29f40d3a59743decf46215d34c707c07c2a3b993a5efddd",
+    "test/live_provider/test_native_cancel_turn.py": "b6d4f9d8f6d199886e1f083f9746258f65c4152c7536d64a39bc019214389312",
+    "test/live_provider/test_opencode_cancel_gateway.py": "7759f9e679ea1bd71ec999bce427efd331e12bacd57608b8c98eb84bd5dc04a2",
+    "test/live_provider/test_opencode_concurrent_cancel.py": "cc61f67d927b49073c5257a29cd6842161155093c8c77fdb1824bb600462df09"
+  },
+  "scope": {
+    "actual_native_cli": true,
+    "actual_production_api_and_fifo": true,
+    "actual_postgresql": true,
+    "controlled_loopback_http": true,
+    "external_model_inference": false,
+    "operator_credentials_staged": false,
+    "mcp_model_tool_offer_count": 0,
+    "builtin_model_tool_offer_count": 0,
+    "mini_tools_display": "show",
+    "default_mini_prefinish_text_visibility_accepted": false,
+    "global_scale_accepted": false
+  },
+  "native_preflight": {
+    "passed": true,
+    "seconds": 63.49,
+    "visible_text_before_stream_finish": true,
+    "final_turn_verified": true
+  },
+  "native_concurrent": {
+    "passed": true,
+    "seconds": 75.93,
+    "cancel_seconds": 5.176,
+    "foreign_generation_http_status": 409,
+    "current_generation_http_status": 200,
+    "a_same_generation_cancelled": true,
+    "a_original_process_retired": true,
+    "a_replacement_http_requests": 0,
+    "same_child_join_and_cleanup_verified": true,
+    "b_same_generation": true,
+    "b_same_fifo": true,
+    "b_original_process_alive_through_cancel": true,
+    "b_new_output_range_bytes": 22132,
+    "b_new_semantic_marker_observed": true,
+    "b_final_own_turn_verified": true,
+    "minimum_sampled_available_memory_mib": 9587,
+    "minimum_required_memory_mib": 6144,
+    "operation_and_stream_budget_seconds": 180,
+    "new_text_marker_budget_seconds": 5
+  },
+  "request_inventory": {
+    "a_original": {
+      "http_requests": 3,
+      "primary": 1,
+      "nonprimary": 2
+    },
+    "a_replacement": {
+      "http_requests": 0,
+      "primary": 0
+    },
+    "b_original": {
+      "http_requests": 3,
+      "primary": 1,
+      "nonprimary": 2
+    }
+  },
+  "proofs": {
+    "preflight-r8": {
+      "source_files": 1871,
+      "executed_archive_preserved": true,
+      "wrappers_reclosed": true,
+      "physical_cleanup_verified": true,
+      "postgres_parent_preserved": true
+    },
+    "concurrent-r2": {
+      "source_files": 1871,
+      "executed_archive_preserved": true,
+      "wrappers_reclosed": true,
+      "physical_cleanup_verified": true,
+      "postgres_parent_preserved": true
+    }
+  },
+  "private_root": "/home/felni/.cache/caos-t220-native-cancel-20261029",
+  "retained_attempts": [
+    "preflight-r1 admission rejection",
+    "preflight-r2 startup collision",
+    "preflight-r3 classification/cleanup failure plus exact-owned recovery",
+    "preflight-r4 completion-only partial pass",
+    "concurrent-r1 fresh-text failure",
+    "preflight-r5 role-only failure",
+    "preflight-r6 display-only failure",
+    "preflight-r7 chunk-only failure"
+  ],
+  "remaining_scope": "T013/OC-06 global scale, saturation, provider/profile/backend matrix and default Mini live-text visibility remain distinct.",
+  "verification": {
+    "focused_controls": {
+      "passed": 48,
+      "failed": 0,
+      "seconds": 30.42,
+      "coverage_settings_preserved": true
+    },
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    },
+    "black": "PASS",
+    "isort": "PASS",
+    "foreign_graphify_files_preserved": 12,
+    "claude_read_review_job": "d3d079a4f2454b7f93fc5bab046df3b0",
+    "claude_review_scope": "protocol/cleanup static review before the final native render-boundary correction; dynamic acceptance is the source-bound native evidence",
+    "obsidian_operation": "save-20261029-caos-t220-native-concurrency"
+  }
+}
