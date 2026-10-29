@@ -30,3 +30,6 @@ Black/isort and diff checks pass. Architecture: 5 kept/0 broken. Claude final re
 MCP/HTTP/result/receipt/seal/cleanup gates remain. No product permission or
 acceptance threshold change. A fresh pinned native execution is still required.
 [Structured evidence](validation-t218-component.json).
+
+Later native outcome: [R5 passes the scoped task-query contract](validation-t214-native-r5.md)
+on source ae12c82f. This component record retains its original pre-native status.

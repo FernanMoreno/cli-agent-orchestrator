@@ -1,5 +1,20 @@
 # Codex: análisis y pendientes
 
+**Estado actual · 2026-10-29: T214/T216/T217/T218 cerradas en su alcance.**
+OpenCode v2 R5 pasa una consulta real `get_local_cao_task` con identidad y resultado
+vinculados, recibo durable, estabilidad PostgreSQL, oferta HTTP emisora de doce
+herramientas y cierre normal. Consulta 9,124 s; total 151,439 s; mínimo muestreado
+8440 MiB. Receptor pasivo: catálogo MCP vacío y cero peticiones HTTP; su oferta
+del modelo sigue sin observarse. Fuente ae12c82f/600 archivos, límites intactos,
+limpieza completa y credenciales intactas. Los fallos R1–R4 se conservan.
+La tarea completada es una fixture sintética propia, sin acreditar ejecución de
+trabajadores. No se repite preguntas/ACK/reinicio ni se cierran todos los perfiles,
+concurrencia, `cao.work.message` o gates globales.
+[Recibo y alcance](../specs/025-provider-mcp-profiles/validation-t214-native-r5.md).
+
+Los avances anteriores se conservan como historial; los pendientes globales
+siguen en sus apartados numerados.
+
 T214 R4: consulta real, comparación nativa, recibo durable y limpieza PASS,
 pero recibo final FALSE por testigo de estabilidad PG no emitido. Se conserva.
 T218 corrige el productor sin retirar el requisito; 231 pruebas PASS y revisión

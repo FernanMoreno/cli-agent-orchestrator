@@ -6,8 +6,9 @@ admission 9482 MiB, minimum sampled 8379 MiB. Original 180 s/6144 MiB limits.
 Total 148.416 s, query 9.404 s, normal observer seal 0.201 s.
 
 The actual owned query completed, the native render guard passed and durable
-CAS settled the new verified turn. Actual MCP catalog/call and HTTP twelve/zero
-offer predicates pass. Receiver remained unprompted, inboxes empty; no messages
+CAS settled the new verified turn. Actual MCP catalog/call and the sender HTTP
+twelve-tool surface are exact. The passive receiver has zero HTTP requests;
+its model offer is unobserved. Receiver remained unprompted, inboxes empty; no messages
 or API restart were part of this case. The completed task is a synthetic owned
 fixture, not evidence of worker execution.
 

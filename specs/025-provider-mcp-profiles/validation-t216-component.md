@@ -34,3 +34,6 @@ accepted independently. [Structured evidence](validation-t216-component.json).
 
 Durable diagnostic conclusions saved to Obsidian in operation
 `save-20261029-caos-t215-proven-strong-render`; strict lint: 0 issues.
+
+Later native outcome: [R5 passes the scoped task-query contract](validation-t214-native-r5.md)
+on source ae12c82f. This component record retains its original pre-native status.

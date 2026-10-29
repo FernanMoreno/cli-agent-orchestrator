@@ -1,0 +1,148 @@
+{
+  "schema": "caos.spec025.t214.native-r5.v1",
+  "date": "2026-10-29",
+  "status": "ACCEPTED_SCOPED_NATIVE_TASK_QUERY",
+  "original_final_receipt_success": true,
+  "original_receipt_sha256": "fb9bcecba50c3b1d2e3545e08ecac2e58bcb2015fbb44541768066a68d063435",
+  "source_head": "ae12c82ff56836b1692f7e8aa18de65a2b95556e",
+  "source_pins": 600,
+  "binary": "OpenCode v2.0.18",
+  "binary_sha256": "10d405161d8b9595f4a2ec31254e961969e6ca3f8239ac9bd55b6ff6431dc24f",
+  "configured_model": "opencode-go/glm-5.3-flash",
+  "served_model_attestation_claimed": false,
+  "admission_mib": 9573,
+  "minimum_sampled_mib": 8440,
+  "memory_floor_mib": 6144,
+  "task_query_limit_seconds": 180,
+  "task_query_seconds": 9.124334720952902,
+  "elapsed_seconds": 151.439,
+  "observer_seal_seconds": 0.201,
+  "verified_fields": {
+    "task_fixture_owned_preflight_passed": true,
+    "task_query_turn_verified": true,
+    "task_query_receiver_unprompted": true,
+    "task_query_no_messages": true,
+    "postgres_target_identity_stable": true,
+    "native_catalog_and_calls_exact": true,
+    "native_model_request_cao_mcp_surfaces_exact": true,
+    "graceful_observer_seals_observed": true,
+    "observer_seal_within_10_seconds": true,
+    "api_cleanup": true,
+    "tmux_cleanup": true,
+    "postgres_cleanup": true,
+    "private_state_removed": true,
+    "operator_auth_unchanged": true,
+    "source_unchanged": true,
+    "binary_unchanged": true,
+    "runner_unchanged": true,
+    "python_interpreter_unchanged": true
+  },
+  "calls": [
+    {
+      "server": "cao-mcp-server",
+      "tool": "get_local_cao_task",
+      "status": "completed",
+      "error_present": false,
+      "result_present": true,
+      "safe_result_task_argument_matches": true,
+      "safe_result_task_binding_observed": true,
+      "safe_result_task_id_matches": true,
+      "safe_result_task_requester_matches": true,
+      "safe_result_task_result_state": "succeeded",
+      "safe_result_task_result_state_matches": true,
+      "safe_result_task_state": "succeeded",
+      "safe_result_task_state_matches": true,
+      "safe_result_success": true
+    }
+  ],
+  "sender_mcp_catalog_size": 12,
+  "receiver_mcp_catalog_size": 0,
+  "receiver_mcp_call_count": 0,
+  "http_observations": {
+    "sender": {
+      "observer_status": "observed",
+      "tool_offer_status": "observed",
+      "request_count": 3,
+      "target_primary_request_count": 2,
+      "valid_target_primary_request_count": 2,
+      "trace_complete": true,
+      "hook_disposed": true,
+      "overflow": false
+    },
+    "receiver": {
+      "observer_status": "observed",
+      "tool_offer_status": "unobserved",
+      "request_count": 0,
+      "target_primary_request_count": 0,
+      "valid_target_primary_request_count": 0,
+      "trace_complete": true,
+      "hook_disposed": true,
+      "overflow": false
+    }
+  },
+  "verification_stages": {
+    "attempt": {
+      "started": 1,
+      "verified": 1
+    },
+    "native_render_guard": {
+      "started": 1,
+      "passed": 1
+    },
+    "durable_cas": {
+      "started": 1,
+      "settled": 1
+    }
+  },
+  "capture_seal": {
+    "version": 1,
+    "count": 2,
+    "failed": false,
+    "overflow": false
+  },
+  "owned_closure": {
+    "native_t214_accepted": true,
+    "native_error_code": null,
+    "elapsed_seconds": 151.439,
+    "task_query_seconds": 9.124334720952902,
+    "task_query_turn_verified": true,
+    "owned_cleanup_passed": true,
+    "execution_descriptors_reclosed": true,
+    "executed_archive_unchanged": true,
+    "held_postgres_identity_verified": true,
+    "client_borrowers": 0,
+    "private_databases": 0,
+    "raw_text_published": false
+  },
+  "executed_runner_sha256": "4a7534464e93c203d7d6e38720af18f23a4b21b6327cd81bba136baa49e699ff",
+  "synthetic_completed_task_not_worker_execution": true,
+  "api_restarts_in_case": 0,
+  "messages_in_case": 0,
+  "baseline_qa_ack_restart_reexecuted": false,
+  "prior_failed_receipts_preserved": [
+    "R1",
+    "R2",
+    "R3",
+    "R4"
+  ],
+  "raw_text_published": false,
+  "global_acceptance_claimed": false,
+  "work_message_acceptance_claimed": false,
+  "all_profiles_acceptance_claimed": false,
+  "component_post_sort_hashes_match_executed_pinset": true,
+  "runtime_source_after_document_updates": {
+    "runtime_source_files": 600,
+    "exact_executed_source_match_after_document_updates": true,
+    "execution_source_head": "ae12c82ff56836b1692f7e8aa18de65a2b95556e"
+  },
+  "final_review": {
+    "job_id": "c2bcaffa17ac4cc8ba3e6db92dedd2bd",
+    "scoped_closure_supported": true,
+    "historical_r4_passive_http_wording_corrected": true,
+    "original_receipts_unchanged": true
+  },
+  "obsidian": {
+    "operation": "save-20261029-caos-t218-producer-witness-acceptance",
+    "strict_lint_issues": 0
+  }
+}

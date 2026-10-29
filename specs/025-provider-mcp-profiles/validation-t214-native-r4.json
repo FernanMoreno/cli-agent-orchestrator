@@ -73,5 +73,27 @@
       ]
     ],
     "raw_text_published": false
+  },
+  "http_observations": {
+    "sender": {
+      "observer_status": "observed",
+      "tool_offer_status": "observed",
+      "request_count": 3,
+      "target_primary_request_count": 2,
+      "valid_target_primary_request_count": 2,
+      "trace_complete": true,
+      "hook_disposed": true,
+      "overflow": false
+    },
+    "receiver": {
+      "observer_status": "observed",
+      "tool_offer_status": "unobserved",
+      "request_count": 0,
+      "target_primary_request_count": 0,
+      "valid_target_primary_request_count": 0,
+      "trace_complete": true,
+      "hook_disposed": true,
+      "overflow": false
+    }
   }
 }

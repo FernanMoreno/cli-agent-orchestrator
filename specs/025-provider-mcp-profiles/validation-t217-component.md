@@ -29,3 +29,6 @@ require one fresh source-pinned task query with actual HTTP offer, one completed
 owned result, verified durable turn, normal observer seal and owned cleanup.
 The accepted v2 questions/ACK/restart baseline is not repeated or reopened.
 [Structured component evidence](validation-t217-component.json).
+
+Later native outcome: [R5 passes the scoped task-query contract](validation-t214-native-r5.md)
+on source ae12c82f. This component record retains its original pre-native status.
