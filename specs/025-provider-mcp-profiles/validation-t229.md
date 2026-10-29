@@ -1,6 +1,6 @@
-# T229 — nonempty scoped discovery: implemented, native acceptance pending
+# T229 — native nonempty default-session scoped discovery accepted
 
-**Implemented and validated at the real API/PostgreSQL boundary, 2026-10-29. T229 remains open.** Implementation source `8345ad67628aed11b8ab241316584581fb2ab7ed`. [Machine receipt](validation-t229.json). No native T229 case was executed or accepted.
+**PASS for one bounded native case, 2026-10-29. T229 closed in this scope.** Executed source `1f1268d1b8ac0946930e34db3b3b842b3d5167d8`; implementation source `8345ad67628aed11b8ab241316584581fb2ab7ed`. [Machine receipt](validation-t229.json).
 
 The owned fixture starts three actual deterministic `mock_cli` terminals through the production API/tmux runtime. One same-session peer extends the caller's group; a second shares a string prefix but differs in a group component; a third has the same group in another session. Default discovery returns exactly the first peer with its independently recorded ID, group and metadata. Self and both decoys are excluded. These mock peers perform no external inference.
 
@@ -16,10 +16,14 @@ The existing native path now supports that expectation while preserving the T228
 
 Initial parser controls:43PASS/46.47s. Expanded R1:169PASS/1FAIL101.79s; R2:169PASS/2FAIL88.56s. The failures exposed stale sandbox-test inputs missing mandatory case_kind/empty native tools, plus a new adapter test expecting the unqualified tool name. Corrected the tests to match the actual launch contract and native MCP namespace; admission behavior was not relaxed. Final affected controls:38PASS/26.55s, overlapping the expanded suite. Together the expanded pass set and corrected final tests cover171 distinct cases; this is not a fresh monolithic171PASS run. Failed logs remain private.
 
-Black/isort10files, diff checks and composition/Import Linter5kept0broken pass. Claude performed three scoped read reviews; HTTP/native equality, private creation and mock-path findings were addressed. Existing12foreign Graphify changes were preserved; no production dependency change requires graph regeneration. Existing durable Obsidian evidence-boundary guidance was consulted; no new native acceptance is persisted.
+Black/isort10files, diff checks and composition/Import Linter5kept0broken pass. Claude performed three scoped read reviews; HTTP/native equality, private creation and mock-path findings were addressed. Existing12foreign Graphify changes were preserved; no production dependency change requires graph regeneration. Durable Obsidian evidence-boundary guidance records the accepted scope through one reviewed transaction.
 
-## Remaining acceptance
+## Native execution and cleanup
 
-Only2251MiB were available at final measurement, below6144MiB. A foreign project process consumes about9GiB; it was not stopped. The expensive native case stays unexecuted. Run one fresh source-bound closed/import-verified descriptor after enough memory is available, then require correlated native tool_use/result, exact matching peer/decoy exclusion, own final verification and complete physical/PostgreSQL cleanup before closing T229.
+After the user authorized stopping the previously identified foreign memory consumer, available memory exceeded the original floor. One fresh1894-pin source-bound descriptor passed actual closed imports/signature/manifest admission and executed unchanged source1f1268d1. Pinned native Claude2.1.303 completed in126.44s, with1primaryrequest/1correlatedtool_result, exactly1matchingpeer/2excludeddecoys/selfexcluded, and ownfinalverified. Actual captured API rows equal the native result, including status; the private expectation digest matches the independent fixture record. Fresh prefinish output12588bytes; minimum recorded memory10566MiB, above6144MiB. Original180s/5s predicates hold.
 
-This does not accept explicit cross_session/depth, bearer/tenant policy, default native client approval, other providers/profiles/backends, external inference or global capacity. T226-T228 and historical reconciliation receipts retain their own status/source.
+Extra and main sessions, observed mock/native processes, wrappers, read bridge, private tmux and owned HOME retired. Exact executed runner/source archive hashes are retained in the machine receipt; source bytes stayed unchanged and the operational wrapper reclosed. The same held PostgreSQL container ends with0borrowers/0privateDBs. The initial memory-blocked checkpoint and failed offline test logs remain historical evidence, not native failures.
+
+## Acceptance boundary
+
+This accepts one native Claude profile's nonempty default-session/full-group-prefix discovery through production MCP/API/PostgreSQL, with explicit diagnostic native client grant and an auth-disabled owned API. Mock peers perform no external inference. It does not accept explicit cross_session/depth, bearer/tenant policy, default native client approval, other providers/profiles/backends, external inference or global capacity. T226-T228 and historical reconciliation receipts retain their own status/source.

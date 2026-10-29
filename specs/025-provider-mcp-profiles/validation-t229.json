@@ -1,8 +1,7 @@
 {
   "schema": "caos.spec025.t229.scoped-discovery-readiness.v1",
   "date": "2026-10-29",
-  "status": "IMPLEMENTED_API_POSTGRES_VALIDATED_NATIVE_PENDING_MEMORY",
-  "source_head": "8345ad67628aed11b8ab241316584581fb2ab7ed",
+  "status": "PASS_BOUNDED_NATIVE_NONEMPTY_DEFAULT_SCOPE",
   "source_sha256": {
     "test/live_provider/claude_cancel_gateway.py": "4618c1a2df89802719df1636878d43fc671dcc84fd1e8cc32636a9c8a725f87d",
     "test/live_provider/native_cancel_adapters.py": "45be7cdc391bd14ea3cb595be261226d051a57de8da169219e3971f15123c1af",
@@ -15,8 +14,8 @@
     "test/live_provider/test_native_scoped_discovery.py": "e931b67d526d71177ac4ef4bf769b5eb5049aa9b5e8d3e079c515bb219928cbf",
     "test/live_provider/test_scoped_discovery_mock_api.py": "1e17f5381b78cd94c7664b718467f4d28482f02fa4da42454adee89d5f158311"
   },
-  "task_closed": false,
-  "actual_native_case_executed": false,
+  "task_closed": true,
+  "actual_native_case_executed": true,
   "actual_api_preflight": {
     "passed": true,
     "seconds": 66.23,
@@ -59,7 +58,24 @@
     "databases": 0,
     "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
   },
-  "native_admission": {
+  "scope": [
+    "actual default-session/full-group-prefix discovery with independent one-peer expectation and two realmockdecoys atAPI boundary",
+    "native Claude2.1.303 productionstdioMCP/API/PG correlated nonempty scopeddiscovery and ownfinal verified",
+    "strict600boundednofollowcallerboundexpectation; exclusivecreate temp and atomicreplace final",
+    "boundedactualHTTPresponse capture in memory tied to path/status/hash and native row equality",
+    "extra session/mockprocess retirement checks; legacy empty/denied behavior preserved"
+  ],
+  "not_accepted": [
+    "explicit cross_session/depth",
+    "APIbearer/tenant",
+    "default native client permission",
+    "otherprovider/profile/backend/version acceptance",
+    "externalinference/globalcapacity"
+  ],
+  "historical_acceptance": "T226-T228 retained on their own source/scenario; no reruns or historicalreconciliation changes",
+  "implementation_head": "8345ad67628aed11b8ab241316584581fb2ab7ed",
+  "source_head": "1f1268d1b8ac0946930e34db3b3b842b3d5167d8",
+  "previous_native_admission": {
     "required_available_mib": 6144,
     "observed_available_mib": 2251,
     "admitted": false,
@@ -67,20 +83,52 @@
     "foreign_process_stopped": false,
     "reason": "Foreign project lune process consumes about9GiB; unchanged. No current native result/final accepted."
   },
-  "scope": [
-    "actual default-session/full-group-prefix discovery with independent one-peer expectation and two realmockdecoys atAPI boundary",
-    "native test harness and correlation wired but unexecuted",
-    "strict600boundednofollowcallerboundexpectation; exclusivecreate temp and atomicreplace final",
-    "boundedactualHTTPresponse capture in memory tied to path/status/hash and native row equality",
-    "extra session/mockprocess retirement checks; legacy empty/denied behavior preserved"
-  ],
-  "not_accepted": [
-    "T229 native client end-to-end",
-    "explicit cross_session/depth",
-    "APIbearer/tenant",
-    "default native client permission",
-    "otherprovider/profile/backend/version acceptance",
-    "externalinference/globalcapacity"
-  ],
-  "historical_acceptance": "T226-T228 retained on their own source/scenario; no reruns or historicalreconciliation changes"
+  "native_admission": {
+    "required_available_mib": 6144,
+    "observed_before_api_mib": 10715,
+    "observed_before_caller_mib": 10566,
+    "admitted": true,
+    "memory_floor_lowered": false,
+    "memory_block_resolved_by_user_authorized_targeted_stop": true
+  },
+  "native_case": {
+    "status": "PASS_BOUNDED_NATIVE_NONEMPTY_DEFAULT_SCOPE",
+    "source_head": "1f1268d1b8ac0946930e34db3b3b842b3d5167d8",
+    "source_pins": 1894,
+    "seconds": 126.44,
+    "expected_peer_count": 1,
+    "excluded_decoy_count": 2,
+    "self_excluded": true,
+    "api_native_rows_equal": true,
+    "native_final_state": "verified",
+    "primary_requests": 1,
+    "tool_result_requests": 1,
+    "prefinish_fresh_output_bytes": 12588,
+    "minimum_recorded_memory_mib": 10566,
+    "executed_source_archive_sha256": "345f5e9fb962020b873966750861a5c6e6a59c4d4f0b314ecd0993da053859db",
+    "executed_runner_sha256": "05ba363f34d283497b9778fa800051d8015fbacca6711d58188039ecec6c966f",
+    "expectation_sha256": "41be7847a4f9176d97fe11e144ca7ba3b8092852a545b5df883cd0f793df1b18",
+    "cleanup": {
+      "scoped_fixture_sessions_retired": true,
+      "read_bridge_retired": true,
+      "tmux_cleanup": true,
+      "observed_processes_retired": true,
+      "wrapper_processes_retired": true,
+      "home_removed": true
+    },
+    "postgres_before": {
+      "clients": 0,
+      "databases": 0,
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+    },
+    "postgres_after": {
+      "clients": 0,
+      "databases": 0,
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+    },
+    "source_preserved": true,
+    "wrapper_reclosed": true,
+    "native_binary_sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450"
+  },
+  "obsidian": "Reviewed transaction save-20261029-caos-t229-native-nonempty-discovery; see private apply/lint receipts"
 }

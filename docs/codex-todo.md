@@ -1,12 +1,13 @@
 # Codex: análisis y pendientes
 
-**2026-10-29 · T229: descubrimiento no vacío implementado; aceptación nativa pendiente.**
-API/PostgreSQL/tmux devuelve al compañero esperado y excluye dos señuelos reales
-por grupo/sesión. Prueba API66,23s; regresión169PASS y38 controles finales
-solapados cubren171 casos distintos tras corregir entradas de pruebas.
-Arquitectura5/0 y revisión Claude; PostgreSQL0-0. No se ejecutó T229 nativa:
-2251MiB disponibles frente a6144MiB; proceso de otro proyecto intacto.
-T229 sigue abierta y T226-T228 conservan su alcance.
+**2026-10-29 · T229: descubrimiento nativo no vacío aceptado en su alcance.**
+Claude2.1.303 recibe al compañero esperado y excluye dos señuelos reales por
+grupo/sesión y al propio agente. Caso126,44s/1894archivos, filas HTTP/nativo
+idénticas, resultado final verificado, limpieza completa y PostgreSQL0-0;
+mínimo10566MiB.171 casos cubiertos entre regresión y38 controles finales
+solapados, arquitectura5/0 y revisión Claude. Se resolvió el bloqueo de memoria.
+Permiso temporal explícito del cliente, API sin auth y compañeros mock:
+otros perfiles, cross_session/depth, bearer y capacidad global siguen separados.
 [Resultados y límites](../specs/025-provider-mcp-profiles/validation-t229.md).
 
 **2026-10-29 · T228: ejecución MCP y permiso discovery comprobados con Claude nativo.**
