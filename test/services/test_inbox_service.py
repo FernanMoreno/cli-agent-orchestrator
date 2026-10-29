@@ -547,7 +547,7 @@ class TestEagerInboxDelivery:
 class TestPollOpenCodePendingMessages:
     """Tests for the OpenCode inbox poller."""
 
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_receiver_ids_by_provider")
+    @patch("cli_agent_orchestrator.services.inbox_service.iter_pending_receiver_ids_by_provider")
     def test_polls_pending_opencode_receivers(self, mock_list_receivers):
         """Test poller attempts delivery for each pending OpenCode receiver."""
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
@@ -562,7 +562,7 @@ class TestPollOpenCodePendingMessages:
             [call("receiver-1", 1, None), call("receiver-2", 1, None)], any_order=True
         )
 
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_receiver_ids_by_provider")
+    @patch("cli_agent_orchestrator.services.inbox_service.iter_pending_receiver_ids_by_provider")
     def test_survives_per_receiver_failure(self, mock_list_receivers):
         """Test one failed receiver does not stop the poll loop."""
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
@@ -577,7 +577,7 @@ class TestPollOpenCodePendingMessages:
 class TestReconcileOrphanedMessages:
     """Tests for the provider-agnostic inbox reconciliation sweep (issue #131)."""
 
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_receiver_ids_older_than")
+    @patch("cli_agent_orchestrator.services.inbox_service.iter_pending_receiver_ids_older_than")
     def test_reconciles_stale_receivers(self, mock_list_receivers):
         """Sweep attempts delivery for each receiver with an orphaned message."""
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
@@ -592,7 +592,7 @@ class TestReconcileOrphanedMessages:
             [call("receiver-1", 1, None), call("receiver-2", 1, None)], any_order=True
         )
 
-    @patch("cli_agent_orchestrator.services.inbox_service.list_pending_receiver_ids_older_than")
+    @patch("cli_agent_orchestrator.services.inbox_service.iter_pending_receiver_ids_older_than")
     def test_survives_per_receiver_failure(self, mock_list_receivers):
         """One failed receiver does not stop the sweep."""
         mock_list_receivers.return_value = ["receiver-1", "receiver-2"]
@@ -775,8 +775,8 @@ class TestRun:
 @pytest.mark.parametrize(
     ("batch_method", "receiver_list_method"),
     [
-        ("poll_opencode_pending_messages", "list_pending_receiver_ids_by_provider"),
-        ("reconcile_orphaned_messages", "list_pending_receiver_ids_older_than"),
+        ("poll_opencode_pending_messages", "iter_pending_receiver_ids_by_provider"),
+        ("reconcile_orphaned_messages", "iter_pending_receiver_ids_older_than"),
     ],
 )
 async def test_cancelled_nested_batch_remains_owned_until_drain(

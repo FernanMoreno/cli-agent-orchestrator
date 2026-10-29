@@ -1,5 +1,15 @@
 # Codex: análisis y pendientes
 
+**2026-10-29 · T222: descubrimiento de receptores con memoria cliente acotada.**
+Los dos sondeos usan un cursor PostgreSQL por bloques de128 filas y alimentan
+las cuatro entregas acotadas, conservando filtros y orden. Pruebas reales de
+snapshot, cierre temprano y cursor/entregas simultáneos;165 PASS, tipo/estilo y
+arquitectura5/0, revisión Claude/Luna. Pico Python observado:88,4 KB con256
+receptores y90,1 KB con8192; no es RAM total ni coste del servidor PostgreSQL.
+El sondeo retiene una conexión/snapshot hasta consumir o cerrar el cursor;
+capacidad/saturación global y los recibos nativos anteriores siguen separados.
+[Resultados y límites](../specs/025-provider-mcp-profiles/validation-t222.md).
+
 **2026-10-29 · T221: corregido un bloqueo entre receptores en los sondeos de inbox.**
 La entrega retenida de A ya no impide llegar a B en el polling OpenCode ni en la
 reconciliación compartida. Hay cuatro trabajadores/tareas como máximo por sondeo,

@@ -8,7 +8,7 @@ import uuid
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional, cast
+from typing import Any, Dict, Iterator, List, NamedTuple, Optional, cast
 
 from sqlalchemy import (
     BigInteger,
@@ -30,6 +30,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.sql import Select
 
 from cli_agent_orchestrator import constants
 from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
@@ -2509,7 +2510,7 @@ def has_unreclaimed_window_label(tmux_session: str, tmux_window: str) -> bool:
     This read does not reserve a label across processes. Creation callers hold
     their session lifecycle lock through backend creation and row publication.
     """
-    statement = (
+    statement: Select[tuple[int]] = (
         select(literal_column("1"))
         .select_from(TerminalModel)
         .where(
@@ -2709,6 +2710,54 @@ def list_all_terminals() -> List[Dict[str, Any]]:
             }
             for t in terminals
         ]
+
+
+_PENDING_RECEIVER_FETCH_SIZE = 128
+
+
+def _iter_pending_receiver_ids(
+    *, provider: Optional[str] = None, older_than: Optional[datetime] = None
+) -> Iterator[str]:
+    """Stream one finite SQL snapshot; its parent consumer owns early close.
+
+    Only this iterator's thread may use its Session/result. Delivery workers
+    open their own context-bound sessions. The named cursor retains one read
+    connection/snapshot until exhaustion or explicit close; it bounds Python
+    buffering, not PostgreSQL's DISTINCT aggregation work.
+    """
+    statement = (
+        select(InboxModel.receiver_id)
+        .join(TerminalModel, TerminalModel.id == InboxModel.receiver_id)
+        .where(InboxModel.status == MessageStatus.PENDING.value)
+        .distinct()
+        .execution_options(
+            stream_results=True,
+            yield_per=_PENDING_RECEIVER_FETCH_SIZE,
+            max_row_buffer=_PENDING_RECEIVER_FETCH_SIZE,
+        )
+    )
+    if provider is not None:
+        statement = statement.where(TerminalModel.provider == provider)
+    if older_than is not None:
+        statement = statement.where(InboxModel.created_at < older_than)
+    with SessionLocal() as session:
+        result = session.execute(statement)
+        try:
+            for row in result:
+                yield row[0]
+        finally:
+            result.close()
+
+
+def iter_pending_receiver_ids_by_provider(provider: str) -> Iterator[str]:
+    """Bounded live discovery; callers must close an unfinished iterator."""
+    return _iter_pending_receiver_ids(provider=provider)
+
+
+def iter_pending_receiver_ids_older_than(min_age_seconds: int) -> Iterator[str]:
+    """Keep one age cutoff and SQL snapshot for the whole bounded scan."""
+    cutoff = datetime.now() - timedelta(seconds=min_age_seconds)
+    return _iter_pending_receiver_ids(older_than=cutoff)
 
 
 def list_pending_receiver_ids_by_provider(provider: str) -> List[str]:

@@ -19,8 +19,8 @@ from cli_agent_orchestrator.backends.base import TerminalNotFoundError
 from cli_agent_orchestrator.clients.database import (
     _managed_inbox_target,
     get_pending_messages,
-    list_pending_receiver_ids_by_provider,
-    list_pending_receiver_ids_older_than,
+    iter_pending_receiver_ids_by_provider,
+    iter_pending_receiver_ids_older_than,
     update_message_status,
 )
 from cli_agent_orchestrator.constants import (
@@ -544,30 +544,38 @@ class InboxService:
     ) -> None:
         assert getattr(self._operation_context, "depth", 0) > 0
         receivers = iter(receiver_ids)
-        with ThreadPoolExecutor(
-            max_workers=_SWEEP_DELIVERY_CONCURRENCY, thread_name_prefix="cao-inbox-sweep"
-        ) as executor:
+        try:
+            with ThreadPoolExecutor(
+                max_workers=_SWEEP_DELIVERY_CONCURRENCY, thread_name_prefix="cao-inbox-sweep"
+            ) as executor:
 
-            def submit(terminal_id: str) -> Future[None]:
-                # Context-local PostgreSQL/tenant bindings must cross this new
-                # thread boundary independently for each concurrently running key.
-                return executor.submit(
-                    contextvars.copy_context().run,
-                    self._deliver_sweep_receiver,
-                    terminal_id,
-                    registry,
-                    label,
-                )
+                def submit(terminal_id: str) -> Future[None]:
+                    # Each worker gets a fresh copy, never the parent's cursor.
+                    return executor.submit(
+                        contextvars.copy_context().run,
+                        self._deliver_sweep_receiver,
+                        terminal_id,
+                        registry,
+                        label,
+                    )
 
-            pending = {
-                submit(terminal_id)
-                for terminal_id in islice(receivers, _SWEEP_DELIVERY_CONCURRENCY)
-            }
-            while pending:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                for future in done:
-                    future.result()
-                pending.update(submit(terminal_id) for terminal_id in islice(receivers, len(done)))
+                pending = {
+                    submit(terminal_id)
+                    for terminal_id in islice(receivers, _SWEEP_DELIVERY_CONCURRENCY)
+                }
+                while pending:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        future.result()
+                    pending.update(
+                        submit(terminal_id) for terminal_id in islice(receivers, len(done))
+                    )
+        finally:
+            # On early failure, join children before releasing the unfinished
+            # read cursor, and close it before outer admission/drain can finish.
+            close = getattr(receivers, "close", None)
+            if close is not None:
+                close()
 
     def poll_opencode_pending_messages(self, registry: PluginRegistry | None = None) -> None:
         """Poll OpenCode terminals for pending inbox messages.
@@ -577,7 +585,7 @@ class InboxService:
         emit an IDLE/COMPLETED transition to trigger delivery on its own.
         """
         with self._track_operation():
-            receiver_ids = list_pending_receiver_ids_by_provider(ProviderType.OPENCODE_CLI.value)
+            receiver_ids = iter_pending_receiver_ids_by_provider(ProviderType.OPENCODE_CLI.value)
             self._deliver_sweep(receiver_ids, registry, "OpenCode inbox poll")
 
     def reconcile_orphaned_messages(self, registry: PluginRegistry | None = None) -> None:
@@ -595,7 +603,7 @@ class InboxService:
         messages — it only adopts ones they have already missed.
         """
         with self._track_operation():
-            receiver_ids = list_pending_receiver_ids_older_than(INBOX_RECONCILE_GRACE_SECONDS)
+            receiver_ids = iter_pending_receiver_ids_older_than(INBOX_RECONCILE_GRACE_SECONDS)
             self._deliver_sweep(receiver_ids, registry, "Inbox reconciliation")
 
 

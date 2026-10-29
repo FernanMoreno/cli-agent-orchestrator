@@ -22,12 +22,12 @@ from cli_agent_orchestrator.services import inbox_service as module
     ("listing", "daemon", "interval"),
     [
         (
-            "list_pending_receiver_ids_by_provider",
+            "iter_pending_receiver_ids_by_provider",
             "opencode_inbox_delivery_daemon",
             "INBOX_POLLING_INTERVAL",
         ),
         (
-            "list_pending_receiver_ids_older_than",
+            "iter_pending_receiver_ids_older_than",
             "inbox_reconciliation_daemon",
             "INBOX_RECONCILE_INTERVAL",
         ),

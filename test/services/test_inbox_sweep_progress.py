@@ -8,8 +8,8 @@ from cli_agent_orchestrator.services import inbox_service as module
 
 pytestmark = pytest.mark.offline_database
 SWEEPS = [
-    ("poll_opencode_pending_messages", "list_pending_receiver_ids_by_provider"),
-    ("reconcile_orphaned_messages", "list_pending_receiver_ids_older_than"),
+    ("poll_opencode_pending_messages", "iter_pending_receiver_ids_by_provider"),
+    ("reconcile_orphaned_messages", "iter_pending_receiver_ids_older_than"),
 ]
 
 

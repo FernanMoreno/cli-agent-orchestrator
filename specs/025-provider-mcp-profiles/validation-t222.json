@@ -1,0 +1,121 @@
+{
+  "schema": "caos.spec025.t222.receiver-stream.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_GLOBAL_SCALE_PENDING",
+  "source_base_head": "11be5af2e2859b330418275b33cd8d2cdb5efd9d",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/clients/database.py": "3602b666da31a526b0eb909269b8a8761072a2d3500106dd4b84432b20cae307",
+    "src/cli_agent_orchestrator/services/inbox_service.py": "56483ac2d7126d434af72335f7f3210e34da53b5861efa45caac40b17e0b368c",
+    "test/services/test_inbox_service.py": "bfe189a28615bf7f2120f9aa1af1fc7dc9fafc3d7d31ea03a9619b70abc6f749",
+    "test/services/test_inbox_sweep_progress.py": "4f5510ecf00531dddc63dc1fafc720294e4493c9d413ac2dd2079a82090bb33d",
+    "test/integration/test_inbox_sweep_postgres.py": "3b68a22ac2f26735269fa9497048e72af9c603391b21668dfe0250de153fac0f",
+    "test/services/test_inbox_receiver_streaming.py": "476ce8b6d084424164e53d4caf0b0f00ec3ea2ac70fba3a58b53702dd1b60def",
+    "test/services/test_inbox_receiver_ownership.py": "13b50316f09c1985fc8485a7452833673143262b37ecfeb675de2095584f82dd",
+    "test/integration/test_inbox_receiver_cursor.py": "457400f3b7a21b317c9d143029f4ae9d2600ec85052ed084127c3a5e8c4466e6",
+    "test/integration/test_inbox_stream_dispatch.py": "58708b866519aecdf80f894707da336cd1e70dd7ca91e9482860544d76b2e51b"
+  },
+  "reproduction": {
+    "failed": 2,
+    "seconds": 36.96,
+    "candidate_receivers": 1000,
+    "boundary": "legacy all() exhausted discovery before initial delivery"
+  },
+  "implementation": {
+    "single_distinct_sql_snapshot": true,
+    "server_side_cursor": true,
+    "client_fetch_rows": 128,
+    "max_dispatch_futures_per_sweep": 4,
+    "legacy_list_apis_preserved": true,
+    "filters_and_same_receiver_fifo_preserved": true,
+    "fixed_age_cutoff": true,
+    "parent_only_session_and_cursor": true,
+    "child_sessions_separate": true,
+    "explicit_unfinished_iterator_close_after_child_join_before_admission_retirement": true,
+    "normal_exhaustion_can_release_cursor_earlier": true,
+    "schema_or_migrations_changed": false,
+    "max_parent_read_cursors_for_existing_two_daemons": 2
+  },
+  "verification": {
+    "initial_green": {
+      "passed": 52,
+      "seconds": 60.64
+    },
+    "ownership": {
+      "passed": 6,
+      "seconds": 36.49
+    },
+    "postgres_cursor_memory_and_api": {
+      "passed": 5,
+      "seconds": 61.16
+    },
+    "live_cursor_and_schema": {
+      "passed": 5,
+      "seconds": 46.96
+    },
+    "final_regression": {
+      "passed": 165,
+      "failed": 0,
+      "warnings": 5,
+      "seconds": 149.63,
+      "pytest_targets": 21,
+      "unique_test_files": 20,
+      "new_cases": 12,
+      "coverage_settings_preserved": true
+    },
+    "mypy": {
+      "source_files": 2,
+      "issues": 0,
+      "preexisting_unannotated_literal_select_corrected": true,
+      "sql_value_ast_unchanged": true
+    },
+    "black": "PASS",
+    "isort": "PASS",
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    },
+    "claude_read_review": "09e605d8923845818944cf4d8644991d",
+    "luna_max_ecc_review": "scale_remaining_scope_t221",
+    "model_class_asts_unchanged": 33,
+    "core_migrations_ast_unchanged": true
+  },
+  "metrics": {
+    "targeted": {
+      "t222_memory": {
+        "small_receivers": 256,
+        "large_receivers": 8192,
+        "small_peak_bytes": 88410,
+        "large_peak_bytes": 90138
+      }
+    },
+    "live_targeted": {
+      "t222_live_cursor": {
+        "state": "idle in transaction",
+        "snapshot_open": true,
+        "snapshot_age_seconds": 0.039606
+      }
+    },
+    "regression": {
+      "t222_memory": {
+        "small_receivers": 256,
+        "large_receivers": 8192,
+        "small_peak_bytes": 88041,
+        "large_peak_bytes": 89730
+      },
+      "t222_live_cursor": {
+        "state": "idle in transaction",
+        "snapshot_open": true,
+        "snapshot_age_seconds": 0.031533
+      }
+    }
+  },
+  "scope_limits": [
+    "Python heap measurement excludes libpq/native allocations and RSS; named-cursor/fetch controls separately establish row buffering",
+    "PostgreSQL DISTINCT aggregation work and global throughput/capacity remain unmeasured",
+    "Parent read cursor retains a connection and MVCC snapshot during consumption; short fixture snapshot age is not a production bound",
+    "New eligibility after the SELECT snapshot is discovered by the next sweep",
+    "No new native/provider/model acceptance; previous native receipts retain their executed source",
+    "Global T013/OC-06 and supported provider/auth/backend matrix remain separate"
+  ],
+  "private_root": "/home/felni/.cache/caos-t222-receiver-stream-20261029"
+}
