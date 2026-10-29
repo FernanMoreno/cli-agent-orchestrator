@@ -1,5 +1,13 @@
 # Codex: análisis y pendientes
 
+T214 R3 FALLIDA: apareció código en línea además de negrita; limpieza correcta
+y lanzador cerrado. T217 añade su proyección estructurada reversible manteniendo
+el contenido literal: 380 pruebas Python y ocho reproducciones reales PASS,
+arquitectura 5/0 y revisión Claude sin bloqueos. Falta el recorrido nativo con
+las fuentes nuevas; la aceptación previa de v2 permanece intacta.
+[R3](../specs/025-provider-mcp-profiles/validation-t214-native-r3.md) ·
+[T217](../specs/025-provider-mcp-profiles/validation-t217-component.md).
+
 T216: corrección integrada para validación con análisis CommonMark limitado,
 contenido nativo exacto y recibo/identidad intactos. 369 pruebas Python y cuatro
 reproducciones de capturas reales PASS; arquitectura 5/0 y revisión Claude sin

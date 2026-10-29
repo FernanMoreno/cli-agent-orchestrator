@@ -249,6 +249,10 @@ def test_native_text_that_does_not_match_rendered_content_is_not_substituted(tmp
     [
         ("The task is **succeeded**.", "The task is succeeded."),
         ("Estado __ñ, 中文__.", "Estado ñ, 中文."),
+        ("Task `owned_id` is **succeeded**.", "Task owned_id is succeeded."),
+        ("Literal `**stars**` and `&amp;`.", "Literal **stars** and &amp;."),
+        ("Literal ``a`b``.", "Literal a`b."),
+        ("**`a`**", "a"),
         ("A **bold** answer.\n\nAnother **part**.", "A bold answer.\nAnother part."),
     ],
 )
@@ -283,6 +287,13 @@ def test_bound_v2_strong_emphasis_preserves_exact_native_text(tmp_path, native, 
         ("**bold** &#65;", "bold A"),
         ("**bold**\x00", "bold�"),
         ("**succeeded**", "succeedeD"),
+        ("`  code  ` **bold**", "code bold"),
+        ("`line\nfold` **bold**", "line fold bold"),
+        ("`&#65;` **bold**", "A bold"),
+        (r"`\*` **bold**", "* bold"),
+        ("`literal` **bold**", "literaL bold"),
+        ("`a **bold**", "a bold"),
+        ("    `code`", "code"),
     ],
 )
 def test_v2_strong_projection_does_not_erase_literal_or_unsupported_content(
@@ -331,11 +342,11 @@ def test_v2_strong_projection_stops_before_and_after_parse(monkeypatch):
 
     monkeypatch.setattr(markdown_it.MarkdownIt, "parse", watched)
     monkeypatch.setattr(opencode_cli.time, "monotonic", lambda: 2.0)
-    assert opencode_cli._strong_render_signature("**bold**", stop=1.0) is None
+    assert opencode_cli._inline_render_signature("**bold**", stop=1.0) is None
     assert calls == []
     ticks = iter([0.0, 2.0])
     monkeypatch.setattr(opencode_cli.time, "monotonic", lambda: next(ticks))
-    assert opencode_cli._strong_render_signature("**bold**", stop=1.0) is None
+    assert opencode_cli._inline_render_signature("**bold**", stop=1.0) is None
     assert calls == [True]
 
 

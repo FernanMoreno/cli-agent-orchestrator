@@ -1,0 +1,61 @@
+{
+  "native_t214_accepted": false,
+  "native_error_code": "task_query_model_deadline_expired",
+  "elapsed_seconds": 309.357,
+  "task_query_seconds": null,
+  "task_query_turn_verified": null,
+  "owned_cleanup_passed": true,
+  "execution_descriptors_reclosed": true,
+  "executed_archive_unchanged": true,
+  "held_postgres_identity_verified": true,
+  "client_borrowers": 0,
+  "private_databases": 0,
+  "raw_text_published": false,
+  "schema": "caos.spec025.t214.native-r3.v1",
+  "date": "2026-10-29",
+  "status": "FAILED_INLINE_CODE_RENDER_REJECTION",
+  "source_head": "0e9d09b585190acd5665fb487aae9835db100d0c",
+  "source_pins": 600,
+  "admission_mib": 9523,
+  "memory_floor_mib": 6144,
+  "task_query_limit_seconds": 180,
+  "capture_seal": {
+    "version": 1,
+    "count": 8,
+    "failed": false,
+    "overflow": false
+  },
+  "captured_pairs": 4,
+  "independent_structured_reconstruction": [
+    {
+      "pair": 1,
+      "exact_source_roundtrip": true,
+      "visible_projection_exact": true,
+      "inline_code_spans": 1,
+      "raw_text_published": false
+    },
+    {
+      "pair": 2,
+      "exact_source_roundtrip": true,
+      "visible_projection_exact": true,
+      "inline_code_spans": 1,
+      "raw_text_published": false
+    },
+    {
+      "pair": 3,
+      "exact_source_roundtrip": true,
+      "visible_projection_exact": true,
+      "inline_code_spans": 1,
+      "raw_text_published": false
+    },
+    {
+      "pair": 4,
+      "exact_source_roundtrip": true,
+      "visible_projection_exact": true,
+      "inline_code_spans": 1,
+      "raw_text_published": false
+    }
+  ],
+  "root_cause": "additional reversible inline-code syntax omitted in TUI; strong-only projection fails closed",
+  "baseline_interaction_acceptance_reopened": false
+}

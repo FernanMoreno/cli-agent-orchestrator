@@ -144,8 +144,8 @@ def _render_guard_signature(text: str) -> str:
     return "".join(text.split())
 
 
-def _strong_render_signature(text: str, *, stop: float) -> Optional[str]:
-    """Project only reversible paragraph/strong markup, preserving literal data."""
+def _inline_render_signature(text: str, *, stop: float) -> Optional[str]:
+    """Project reversible paragraph strong/code markup, preserving literal data."""
     from markdown_it import MarkdownIt
 
     from cli_agent_orchestrator.utils.opencode_v2_store import TEXT_CAP
@@ -157,7 +157,7 @@ def _strong_render_signature(text: str, *, stop: float) -> Optional[str]:
         return None
     source: List[str] = []
     visible: List[str] = []
-    saw_strong = False
+    saw_markup = False
     for index in range(0, len(tokens), 3):
         opening, inline, closing = tokens[index : index + 3]
         if (
@@ -176,13 +176,23 @@ def _strong_render_signature(text: str, *, stop: float) -> Optional[str]:
             if child.type == "text":
                 raw_parts.append(child.content)
                 shown_parts.append(child.content)
+            elif (
+                child.type == "code_inline"
+                and child.markup
+                and set(child.markup) == {"`"}
+                and "\n" not in child.content
+                and "\r" not in child.content
+            ):
+                raw_parts.extend((child.markup, child.content, child.markup))
+                shown_parts.append(child.content)
+                saw_markup = True
             elif child.type == "softbreak":
                 raw_parts.append("\n")
                 shown_parts.append("\n")
             elif child.type == "strong_open" and child.markup in {"**", "__"} and strong is None:
                 strong = child.markup
                 raw_parts.append(child.markup)
-                saw_strong = True
+                saw_markup = True
             elif child.type == "strong_close" and strong == child.markup:
                 raw_parts.append(child.markup)
                 strong = None
@@ -195,7 +205,7 @@ def _strong_render_signature(text: str, *, stop: float) -> Optional[str]:
         visible.append("".join(shown_parts))
     # Reference definitions, escapes/entities and other lost source cannot hide
     # behind the render projection. Whitespace equivalence is the existing rule.
-    if not saw_strong or "".join("\n".join(source).split()) != "".join(text.split()):
+    if not saw_markup or "".join("\n".join(source).split()) != "".join(text.split()):
         return None
     if time.monotonic() >= stop:
         return None
@@ -919,7 +929,7 @@ class OpenCodeCliProvider(BaseProvider):
                     try:
                         receipt_is_final = native.rstrip().splitlines()[-1].strip() == nonce
                         projected = (
-                            _strong_render_signature(native_public, stop=stop)
+                            _inline_render_signature(native_public, stop=stop)
                             if receipt_is_final and time.monotonic() < stop
                             else None
                         )

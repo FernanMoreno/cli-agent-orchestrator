@@ -1,0 +1,92 @@
+{
+  "schema": "caos.spec025.t217.component.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_NATIVE_ACCEPTANCE_PENDING",
+  "source_base_head": "0e9d09b585190acd5665fb487aae9835db100d0c",
+  "red": {
+    "failed": 3,
+    "passed": 44,
+    "seconds": 61.65
+  },
+  "sealed_actual_pair_replay": {
+    "sealed_pairs": 8,
+    "passed": 8,
+    "failed": 0,
+    "native_runtime_invoked": false,
+    "raw_text_published": false,
+    "checks": [
+      {
+        "round": 2,
+        "pair": 1,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 2,
+        "pair": 2,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 2,
+        "pair": 3,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 2,
+        "pair": 4,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 3,
+        "pair": 1,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 3,
+        "pair": 2,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 3,
+        "pair": 3,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      },
+      {
+        "round": 3,
+        "pair": 4,
+        "source_bound_vendor_store": true,
+        "returned_native_exactly": true
+      }
+    ]
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "design_review_go": "d4b6e89c9d0d4e6faa893253bda8221b",
+  "implementation_review_go": "5627d4b9c8424a65acc4e3808b275ff6",
+  "grammar_extension": "exactly reconstructible single-line code_inline with nonempty backtick-only markup; literal content preserved",
+  "rendered_side_reparsed": false,
+  "original_native_returned": true,
+  "existing_identity_and_cas_fences_preserved": true,
+  "native_text_cap_bytes": 65536,
+  "native_budget_seconds": 3,
+  "new_dependencies": 0,
+  "global_acceptance_claimed": false,
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/opencode_cli.py": "71ae11a933a8cbcad3b46828d7604e10d7ec7cfab01aaaf060359b55c564cf26",
+    "test/providers/test_opencode_v2_canonical_result.py": "0ce9c7b6ff624930fb620d3afc7cb89aa9ca018c5ac07bb85581c65866845360"
+  },
+  "regression": {
+    "passed": 380,
+    "failed": 0,
+    "warnings": 2,
+    "seconds": 252.13
+  }
+}

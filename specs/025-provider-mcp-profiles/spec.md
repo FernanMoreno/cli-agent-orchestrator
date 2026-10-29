@@ -1,5 +1,18 @@
 # Provider MCP profiles and current acceptance
 
+## Native inline-code render equivalence · T217
+
+FR194/SC178: Preserve T214 R3 failed and T216 component evidence. Its four
+sealed actual pairs add one inline-code span to the recognized strong paragraph.
+Extend the structured native-only projection to code_inline with backtick-only
+nonempty delimiters, single-line content and exact lexical reconstruction.
+Project its entire content unchanged: stars, entities and escapes inside code
+remain literal. Refuse code whitespace normalization, newline folding, fenced or
+indented blocks and all other unsupported constructs. Retain final receipt,
+source/agent/database/CAS identity, exact native TEXT and 64 KiB/3 s bounds.
+Require a bound-reader RED/GREEN, all eight actual pair replays and review before
+one fresh source-pinned native task-query case. Do not force plaintext prompts.
+
 ## Native strong-emphasis render equivalence · T216
 
 FR193/SC177: The sealed T215 diagnostic proves that valid native CommonMark

@@ -1,5 +1,16 @@
 # Plan: provider MCP profiles
 
+## T217 · preserve literal content inside recognized inline code
+
+R3 failed with normal cleanup and four complete sealed pairs. Unlike R2, its
+paragraph contains code_inline plus strong tokens. Independent AST reconstruction
+of both constructs exactly recovers each native source and matches visible
+rendered content. Add a narrow reversible inline-code branch, rename the helper
+to `_inline_render_signature`, keep the existing literal fast path and all
+T216 fences, then replay R2 and R3 captures through the bound vendor reader.
+Add positive literal-code controls and negative normalization/content cases;
+review, run regression/composition, integrate and repin before the next real run.
+
 ## T216 · preserve strong-emphasis semantics at the render guard
 
 R2 retained four complete sealed private pairs:133native versus129rendered
