@@ -1,5 +1,11 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+2026-10-29 · T214: caso nativo `task_query` implementado, una consulta y
+receptor sin instrucciones, sin mensajes ni reinicio.402pruebasPython distintas
+y17Node PASS, arquitectura5-0/ClaudeGO. Falta la ejecución real con lanzador
+actualizado; T214 no se cierra por estas pruebas offline.
+[Caso y límites](../specs/025-provider-mcp-profiles/validation-t214-case.md).
+
 2026-10-29 · T213: evidencia acotada de `get_local_cao_task` implementada;
 306 pruebas y20subtests PASS, tipos/arquitectura5-0/revisiónClaudeGO.
 Comprueba tarea, solicitante y estados sin registrar sus contenidos ni IDs.

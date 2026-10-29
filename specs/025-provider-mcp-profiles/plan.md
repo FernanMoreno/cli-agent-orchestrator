@@ -28,6 +28,14 @@ protected requester keywords, while explicitly selecting the safe projection.
 Execute that generated module and handler with late issuance before any native
 run. A one-call native case still needs its own prompt, offer and cleanup
 acceptance; the two-message/restart loop cannot establish that case unchanged.
+Implement a distinct task_query case with the same native two-terminal startup
+and common graceful-exit/seal/delete/finally tail. The receiver remains
+unprompted. Branch only around the message/restart body; preserve its statements
+unchanged for existing cases. Use a dedicated180s query/turn receipt predicate,
+actual API instance/project/principal-owned synthetic completed PG fixture and
+exact one-call projection. Shared admission/source pins/capability ownership and
+all teardown checks still apply; no restart or receiver inference is claimed.
+Graphify has no current runner node; verify all affected paths against source.
 
 ## T212 · remove inherited terminal typing ambiguity
 

@@ -64,6 +64,7 @@ SOURCE_FINGERPRINT_SHA256: str | None = None
 RUNNER_SHA256_AT_ADMISSION: str | None = None
 MEMORY_FLOOR_MIB = 6144
 MODEL_PHASE_SECONDS = 75.0
+TASK_QUERY_SECONDS = 180.0
 OBSERVER_GRACE_SECONDS = 10.0
 OUTPUT_RANGE_MAX_BYTES = 1024 * 1024
 OUTPUT_RANGE_CHUNK_BYTES = 64 * 1024
@@ -157,6 +158,7 @@ class NativeV2AcceptanceCase:
 DEFAULT_CASE_ID = "collaboration"
 GENERIC_MESSAGE_CASE_ID = "generic_message"
 COORDINATION_CASE_ID = "coordination"
+TASK_QUERY_CASE_ID = "task_query"
 COORDINATION_SENDER_TOOLS = tuple(
     sorted(
         SENDER_TOOLS
@@ -264,6 +266,29 @@ CASE_DEFINITIONS = (
         requires_human_capability=True,
         native_surface="unfiltered coordination12; one authorized read and two exact message phases",
     ),
+    NativeV2AcceptanceCase(
+        case_id=TASK_QUERY_CASE_ID,
+        label="t214-native-v2-task-query",
+        manifest_schema="spec025.t214.native-v2-task-query-manifest.v1",
+        receipt_schema="spec025.t214.opencode-v2-task-query.private.v1",
+        profile_fixture_path="specs/025-provider-mcp-profiles/fixtures/native-v2-task-query-acceptance-profiles.json",
+        profile_fixture_schema="caos.native-v2-task-query-acceptance-profiles.v1",
+        profile_prefix="t214-v2-task-query",
+        group_prefix="spec025-t214-task-query-v2",
+        session_prefix="t214query",
+        sender_allowed_tools=("@cao-mcp-server",),
+        sender_enabled_mcp_tools=None,
+        sender_catalog=COORDINATION_SENDER_TOOLS,
+        sender_calls=("get_local_cao_task",),
+        sender_prompt=(
+            "Query the supplied completed diagnostic task with exactly one "
+            "cao-mcp-server_get_local_cao_task call. Report its terminal state briefly. "
+            "Do not use any other tool or change files."
+        ),
+        receiver_prompt=_RECEIVER_PROMPT,
+        requires_human_capability=True,
+        native_surface="unfiltered coordination12; one owned synthetic completed-task query; passive receiver",
+    ),
 )
 
 SOURCE_PATHS = (
@@ -275,6 +300,8 @@ SOURCE_PATHS = (
     "specs/025-provider-mcp-profiles/fixtures/native-v2-collaboration-acceptance-profiles.json",
     "specs/025-provider-mcp-profiles/fixtures/native-v2-generic-message-acceptance-profiles.json",
     "specs/025-provider-mcp-profiles/fixtures/native-v2-coordination-acceptance-profiles.json",
+    "specs/025-provider-mcp-profiles/fixtures/native-v2-task-query-acceptance-profiles.json",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_task_query_case.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py",
     "specs/025-provider-mcp-profiles/fixtures/native_v2_text_probe.py",
     "specs/025-provider-mcp-profiles/fixtures/test_native_v2_text_probe.py",
@@ -1282,6 +1309,20 @@ def _case_fixture_contract(case_id: Any = DEFAULT_CASE_ID) -> bool:
     ):
         return False
     expected_calls = list(case.sender_calls)
+    if case.case_id == TASK_QUERY_CASE_ID:
+        return (
+            document.get("label") == case.label
+            and document.get("receipt_schema") == case.receipt_schema
+            and document.get("sender_calls") == expected_calls
+            and document.get("receiver_catalog") == []
+            and checks
+            == {
+                "sender_calls_exact": expected_calls,
+                "task_fixture": "owned_synthetic_completed",
+                "api_restarts": 0,
+                "messages": 0,
+            }
+        )
     if case.case_id in {DEFAULT_CASE_ID, COORDINATION_CASE_ID}:
         if checks.get("sender_calls_exact") != expected_calls:
             return False
@@ -1418,13 +1459,15 @@ def _case_native_profile(role: str, case_id: Any = DEFAULT_CASE_ID) -> str:
         raise ValueError("invalid_role")
     return (
         "coordination"
-        if role == "sender" and case.case_id == COORDINATION_CASE_ID
+        if role == "sender" and case.case_id in {COORDINATION_CASE_ID, TASK_QUERY_CASE_ID}
         else "collaboration"
     )
 
 
 def _case_observer_options(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
     case = _case_definition(case_id)
+    if case.case_id == TASK_QUERY_CASE_ID:
+        return {"expected_safe_result_tool": "get_local_cao_task"}
     return (
         {"expected_safe_result_tool": "list_local_cao_peers"}
         if case.case_id == COORDINATION_CASE_ID
@@ -1436,7 +1479,7 @@ def _case_mcp_wire_names(case_id: Any = DEFAULT_CASE_ID) -> tuple[str, ...]:
     case = _case_definition(case_id)
     return (
         tuple("cao-mcp-server_" + tool for tool in case.sender_catalog)
-        if case.case_id == COORDINATION_CASE_ID
+        if case.case_id in {COORDINATION_CASE_ID, TASK_QUERY_CASE_ID}
         else MCP_HTTP_OFFER_TOOL_NAMES
     )
 
@@ -1451,7 +1494,7 @@ def _case_http_offer_names(case_id: Any = DEFAULT_CASE_ID) -> tuple[str, ...]:
 
 def _case_receipt_key(field: str, case_id: Any = DEFAULT_CASE_ID) -> str:
     case = _case_definition(case_id)
-    if case.case_id != COORDINATION_CASE_ID:
+    if case.case_id not in {COORDINATION_CASE_ID, TASK_QUERY_CASE_ID}:
         return field
     return {
         "sender_native_v3_full_collaboration_unfiltered": "sender_native_v3_full_coordination_unfiltered",
@@ -1461,6 +1504,8 @@ def _case_receipt_key(field: str, case_id: Any = DEFAULT_CASE_ID) -> str:
 
 def _case_scope(case_id: Any = DEFAULT_CASE_ID) -> str:
     case = _case_definition(case_id)
+    if case.case_id == TASK_QUERY_CASE_ID:
+        return "one native coordination12 task query of an owned synthetic completed receipt; passive receiver, no messages or API restart"
     if case.case_id == GENERIC_MESSAGE_CASE_ID:
         return "one exact two-tool generic-message sender, one zero-tool receiver, two generic send_message phases around API restart"
     if case.case_id == COORDINATION_CASE_ID:
@@ -1499,6 +1544,51 @@ def _coordination_result_contract(sender: Any) -> bool:
         and reads[0].get("safe_result_success") is True
         and type(reads[0].get("safe_result_peer_count")) is int
         and reads[0]["safe_result_peer_count"] == 0
+    )
+
+
+def _task_query_prompt(task_id: Any) -> str:
+    if (
+        type(task_id) is not str
+        or re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", task_id
+        )
+        is None
+    ):
+        raise GateError("task_query_identity_invalid")
+    return (
+        "Call cao-mcp-server_get_local_cao_task exactly once with task_id "
+        + task_id
+        + ". This is an owned synthetic completed receipt. Report its state briefly. "
+        "Do not use other tools or change files."
+    )
+
+
+def _task_query_result_contract(sender: Any) -> bool:
+    calls = sender.get("mcp_tool_calls") if type(sender) is dict else None
+    if type(calls) is not list or len(calls) != 1 or type(calls[0]) is not dict:
+        return False
+    call = calls[0]
+    return (
+        call.get("server") == "cao-mcp-server"
+        and call.get("tool") == "get_local_cao_task"
+        and call.get("status") == "completed"
+        and call.get("error_present") is False
+        and all(
+            call.get(key) is True
+            for key in (
+                "result_present",
+                "safe_result_success",
+                "safe_result_task_binding_observed",
+                "safe_result_task_argument_matches",
+                "safe_result_task_id_matches",
+                "safe_result_task_requester_matches",
+                "safe_result_task_state_matches",
+                "safe_result_task_result_state_matches",
+            )
+        )
+        and call.get("safe_result_task_state") == "succeeded"
+        and call.get("safe_result_task_result_state") == "succeeded"
     )
 
 
@@ -1790,6 +1880,7 @@ def _observer_contract(observations: dict[str, Any], case_id: Any = DEFAULT_CASE
     receiver_catalog_status = receiver.get("mcp_catalog_observation_status")
     return (
         (case.case_id != COORDINATION_CASE_ID or _coordination_result_contract(sender))
+        and (case.case_id != TASK_QUERY_CASE_ID or _task_query_result_contract(sender))
         and isinstance(calls, list)
         and all(isinstance(call, dict) for call in calls)
         and sender.get("observer_status") == "observed"
@@ -2508,6 +2599,158 @@ def _private_root_cleanup_safe(receipt: Any) -> bool:
     )
 
 
+def _task_query_passive_offer_contract(observation: Any, *, expected_nonce: str) -> bool:
+    return (
+        type(observation) is dict
+        and observation.get("observer_status") == "observed"
+        and observation.get("tool_offer_status") == "unobserved"
+        and observation.get("nonce") == expected_nonce
+        and observation.get("hook_disposed") is True
+        and observation.get("trace_complete") is True
+        and observation.get("overflow") is False
+        and observation.get("requests") == []
+        and all(
+            type(observation.get(key)) is int and observation[key] == 0
+            for key in (
+                "request_count",
+                "durable_record_count",
+                "target_primary_request_count",
+                "valid_target_primary_request_count",
+                "other_tool_name_count",
+            )
+        )
+        and type(observation.get("tool_name_counts")) is dict
+        and set(observation["tool_name_counts"]) == set(_case_http_offer_names(TASK_QUERY_CASE_ID))
+        and all(
+            type(value) is int and value == 0 for value in observation["tool_name_counts"].values()
+        )
+    )
+
+
+def _task_query_acceptance_contract(receipt: dict[str, Any]) -> bool:
+    """Task-only scope with the same source, authority and retirement fences."""
+    case = _case_definition(TASK_QUERY_CASE_ID)
+    manifest = RUN_MANIFEST if type(RUN_MANIFEST) is dict else {}
+    excluded = {
+        "receiver_model_phase_within_75_seconds",
+        "sender_model_phase_within_75_seconds",
+        "two_exact_pg_api_messages",
+        "both_message_phases_passed",
+        "terminal_metadata_stable_on_api_restart",
+        "terminal_lifecycle_stable_on_api_restart",
+        "terminal_verified_receipts_stable_on_api_restart",
+        "native_process_identity_stable_on_api_restart",
+        "provider_root_identity_stable_on_api_restart",
+        "first_pg_api_row_stable_on_restart",
+        "api_restart_process_changed",
+        "api_b_cleanup",
+    }
+    required = tuple(
+        _case_receipt_key(key, TASK_QUERY_CASE_ID)
+        for key in _REQUIRED_TRUE_RECEIPT_FIELDS
+        if key not in excluded
+    )
+    exact = {
+        "schema": case.receipt_schema,
+        "case_id": case.case_id,
+        "artifact_label": case.label,
+        "profile_fixture_path": case.profile_fixture_path,
+        "profile_fixture_schema": case.profile_fixture_schema,
+        "scope": _case_scope(case.case_id),
+        "native_surface": case.native_surface,
+        "model": MODEL,
+        "auth_lane": MODEL,
+        "cao_auth_mode": "off",
+        "source_head_expected": EXPECTED_HEAD,
+        "source_head": EXPECTED_HEAD,
+        "run_manifest_sha256": RUN_MANIFEST_SHA256,
+        "review_digest": REVIEW_DIGEST,
+        "source_fingerprint_sha256_expected": SOURCE_FINGERPRINT_SHA256,
+        "source_fingerprint_sha256": SOURCE_FINGERPRINT_SHA256,
+        "runner_sha256_expected": RUNNER_SHA256_AT_ADMISSION,
+        "runner_sha256": RUNNER_SHA256_AT_ADMISSION,
+        "profile_fixture_sha256_expected": manifest.get("profile_fixture_sha256"),
+        "operator_auth_snapshot_sha256": manifest.get("operator_auth_snapshot_sha256"),
+        "binary_sha256_expected": PINNED_OPENCODE_SHA256,
+        "postgres_container_id_expected": PINNED_POSTGRES_ID,
+        "postgres_container_id": PINNED_POSTGRES_ID,
+        "postgres_image_id_expected": PINNED_POSTGRES_IMAGE,
+        "postgres_image_id": PINNED_POSTGRES_IMAGE,
+        "postgres_fixture_cleanup_guard_source_sha256": PINNED_POSTGRES_FIXTURE_SHA256,
+        "postgres_fixture_cleanup_guard_derived_sha256": PINNED_POSTGRES_GUARD_DERIVATION_SHA256,
+        "sender_capability_source_owner_kind": "authenticated_creation",
+        "native_model_offer_scope": "selected_model_primary_requests_only",
+        "receiver_native_builtin_execution_observation": "not_observed",
+    }
+    manifest_exact = {
+        "schema": case.manifest_schema,
+        "case_id": case.case_id,
+        "artifact_label": case.label,
+        "case_profile_fixture_path": case.profile_fixture_path,
+        "case_profile_fixture_schema": case.profile_fixture_schema,
+        "receipt_schema": case.receipt_schema,
+    }
+    admissions = receipt.get("memory_admissions_mib")
+    memory_keys = set(_SUCCESS_MEMORY_ADMISSIONS[:7]) | {"task_query"}
+    return (
+        "error_code" not in receipt
+        and all(
+            type(value) is str and bool(value) and receipt.get(key) == value
+            for key, value in exact.items()
+        )
+        and all(manifest.get(key) == value for key, value in manifest_exact.items())
+        and all(
+            receipt.get(key) is True
+            for key in required
+            + (
+                "task_fixture_owned_preflight_passed",
+                "task_query_turn_verified",
+                "task_query_receiver_unprompted",
+                "task_query_no_messages",
+            )
+        )
+        and _private_root_cleanup_safe(receipt)
+        and _capability_binding_diagnostics_pass(receipt)
+        and _observer_contract(receipt.get("native_observations", {}), case.case_id)
+        and _within_budget(receipt.get("task_query_seconds"), TASK_QUERY_SECONDS)
+        and _within_budget(receipt.get("observer_seal_seconds"), OBSERVER_GRACE_SECONDS)
+        and receipt.get("phases") == []
+        and receipt.get("api_worker_restarts", 0) == 0
+        and receipt.get("api_b_launch_attempted") is False
+        and receipt.get("api_b_cleanup") is False
+        and receipt.get("api_a_launch_attempted") is True
+        and type(receipt.get("api_server_record_count")) is int
+        and receipt["api_server_record_count"] == 1
+        and all(
+            type(receipt.get(key)) is int and receipt[key] > 0
+            for key in ("api_a_pid", "api_a_process_start")
+        )
+        and type(receipt.get("session_delete_http_status")) is int
+        and receipt["session_delete_http_status"] == 200
+        and receipt.get("cleanup_failures") == []
+        and all(
+            receipt.get(key) is False
+            for key in (
+                "actual_cancel_observed",
+                "cross_model_or_oauth_claimed",
+                "claude_used",
+                "credentials_cleanup_deferred",
+                "postgres_cleanup_deferred",
+            )
+        )
+        and receipt.get("receipt_redacted_only") is True
+        and receipt.get("private_raw_evidence_present") is True
+        and receipt.get("retained_private_state")
+        == {"status": "removed", "credential_snapshot": "removed"}
+        and type(admissions) is dict
+        and set(admissions) == memory_keys
+        and all(
+            type(admissions[key]) is int and admissions[key] >= MEMORY_FLOOR_MIB
+            for key in memory_keys
+        )
+    )
+
+
 def _acceptance_contract(receipt: Any, case_id: Any = DEFAULT_CASE_ID) -> bool:
     """Pure final receipt predicate using the exact emitted receipt shape."""
     if not isinstance(receipt, dict):
@@ -2516,6 +2759,8 @@ def _acceptance_contract(receipt: Any, case_id: Any = DEFAULT_CASE_ID) -> bool:
         selected_case = _case_definition(case_id)
     except GateError:
         return False
+    if selected_case.case_id == TASK_QUERY_CASE_ID:
+        return _task_query_acceptance_contract(receipt)
     is_generic = selected_case.case_id == GENERIC_MESSAGE_CASE_ID
     manifest = RUN_MANIFEST if isinstance(RUN_MANIFEST, dict) else {}
     required_true_fields = (
@@ -2713,11 +2958,19 @@ def _self_check(case_id: Any = DEFAULT_CASE_ID) -> dict[str, Any]:
             "cao_get_interaction",
             "cao_escalate_interaction",
         },
-        "only_two_message_operations": case.sender_calls
-        == (
-            ("list_local_cao_peers" if case.case_id == COORDINATION_CASE_ID else "list_siblings"),
-            "send_message",
-            "send_message",
+        "only_two_message_operations": (
+            case.sender_calls == ("get_local_cao_task",)
+            if case.case_id == TASK_QUERY_CASE_ID
+            else case.sender_calls
+            == (
+                (
+                    "list_local_cao_peers"
+                    if case.case_id == COORDINATION_CASE_ID
+                    else "list_siblings"
+                ),
+                "send_message",
+                "send_message",
+            )
         ),
         "no_execute_in_full_tool_offer": (
             "cao-mcp-server_execute" not in MCP_HTTP_OFFER_TOOL_NAMES
@@ -6303,6 +6556,169 @@ def _record_pre_restart_snapshot_exception(receipt, error):
     checkpoint["private_error_code"] = code or "unknown_private_runtime_error"
 
 
+def _run_task_query(
+    *,
+    receipt,
+    requests,
+    server,
+    terminals,
+    connect,
+    target,
+    working_directory,
+    binding_path,
+    nonce,
+    principal,
+):
+    """One native query; completed fixture is synthetic, not executed work."""
+    from uuid import uuid4
+
+    from cli_agent_orchestrator.services.local_peer_service import project_binding
+
+    sender_id = terminals["sender"]["id"]
+    receiver_id = terminals["receiver"]["id"]
+    context_deadline = time.monotonic() + OBSERVER_GRACE_SECONDS
+    identity = _api_json(
+        requests,
+        "GET",
+        server.url + "/local-coordination/identity",
+        expected=200,
+        deadline=context_deadline,
+    )
+    binding = project_binding(working_directory)
+    verified = _api_json(
+        requests,
+        "GET",
+        server.url + "/local-coordination/projects/verify",
+        expected=200,
+        deadline=context_deadline,
+        params={
+            "project_path": str(working_directory),
+            "expected_project_id": binding["project_id"],
+        },
+    )
+    source_id = identity.get("instance_id") if type(identity) is dict else None
+    if type(source_id) is not str or verified.get("matches") is not True or not principal.id:
+        raise GateError("task_query_context_invalid")
+    before = {
+        role: _api_json(
+            requests,
+            "GET",
+            server.url + "/terminals/" + data["id"],
+            expected=200,
+            deadline=context_deadline,
+        )
+        for role, data in terminals.items()
+    }
+    task_id, target_id = str(uuid4()), str(uuid4())
+    if target_id == source_id:
+        raise GateError("task_query_synthetic_target_collision")
+    result = {"state": "succeeded", "output": "owned synthetic diagnostic fixture"}
+    with connect(target) as connection:
+        old = connection.execute(
+            "SELECT generation FROM terminal_turn_receipts WHERE terminal_id=%s", (sender_id,)
+        ).fetchone()
+        old_generation = old["generation"] if old else None
+        connection.execute(
+            "INSERT INTO local_peer_tasks (task_id,source_instance_id,target_instance_id,requester_terminal_id,requester_principal_id,project_id,operation_key,request_hash,use_worktree,state,result_json,created_at,updated_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,false,'succeeded',%s,%s,%s)",
+            (
+                task_id,
+                source_id,
+                target_id,
+                sender_id,
+                principal.id,
+                binding["project_id"],
+                "t214-" + nonce,
+                hashlib.sha256(nonce.encode()).hexdigest(),
+                json.dumps(result),
+                dt.datetime.now(dt.timezone.utc),
+                dt.datetime.now(dt.timezone.utc),
+            ),
+        )
+    prepared = _api_json(
+        requests,
+        "GET",
+        server.url + "/local-coordination/agent/tasks/" + task_id,
+        expected=200,
+        deadline=context_deadline,
+        params={"requester_terminal_id": sender_id},
+    )
+    if not (
+        prepared.get("task_id") == task_id
+        and prepared.get("requester_terminal_id") == sender_id
+        and prepared.get("source_instance_id") == source_id
+        and prepared.get("project_id") == binding["project_id"]
+        and prepared.get("state") == "succeeded"
+        and prepared.get("result") == result
+    ):
+        raise GateError("task_query_fixture_preflight_failed")
+    _write_private(
+        binding_path,
+        json.dumps(
+            {
+                "nonce": nonce,
+                "task_id": task_id,
+                "requester_terminal_id": sender_id,
+                "state": "succeeded",
+            }
+        ),
+    )
+    receipt["task_fixture_owned_preflight_passed"] = True
+    _admit(receipt, "task_query")
+    start = time.monotonic()
+    deadline = start + TASK_QUERY_SECONDS
+    submitted = _api_json(
+        requests,
+        "POST",
+        server.url + "/terminals/" + sender_id + "/input",
+        expected=200,
+        deadline=deadline,
+        params={"message": _task_query_prompt(task_id)},
+    )
+    sequence = submitted.get("turn_sequence")
+    if (
+        submitted.get("success") is not True
+        or type(sequence) is not int
+        or sequence != before["sender"].get("turn_sequence") + 1
+    ):
+        raise GateError("task_query_turn_sequence_invalid")
+    while time.monotonic() < deadline:
+        state = _api_json(
+            requests, "GET", server.url + "/terminals/" + sender_id, expected=200, deadline=deadline
+        )
+        with connect(target, readonly=True) as connection:
+            proof = connection.execute(
+                "SELECT generation,phase FROM terminal_turn_receipts WHERE terminal_id=%s",
+                (sender_id,),
+            ).fetchone()
+        if (
+            state.get("status") == "completed"
+            and state.get("turn_sequence") == sequence
+            and state.get("turn_completed") == sequence
+            and proof
+            and proof["generation"] != old_generation
+            and proof["phase"] == "result_verified"
+        ):
+            break
+        time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+    else:
+        raise GateError("task_query_model_deadline_expired")
+    receipt["task_query_seconds"] = time.monotonic() - start
+    receipt["task_query_turn_verified"] = True
+    after_receiver = _api_json(
+        requests, "GET", server.url + "/terminals/" + receiver_id, expected=200, deadline=deadline
+    )
+    receipt["task_query_receiver_unprompted"] = all(
+        before["receiver"].get(key) == after_receiver.get(key)
+        for key in ("turn_sequence", "turn_completed")
+    )
+    receipt["task_query_no_messages"] = not _pg_rows(
+        connect, target, receiver_id
+    ) and not _api_rows(requests, server.url, receiver_id)
+    if not receipt["task_query_receiver_unprompted"] or not receipt["task_query_no_messages"]:
+        raise GateError("task_query_unrelated_activity_observed")
+
+
 def _run_enabled(
     model: str,
     *,
@@ -6845,6 +7261,14 @@ def _run_enabled(
             "CAO_OPENCODE_MCP_SOURCE_ROOT": str(REPO),
             "CAO_ENABLE_SENDER_ID_INJECTION": "true",
         }
+        task_binding_path = raw_observer_dir / "task-query-binding.json"
+        if case.case_id == TASK_QUERY_CASE_ID:
+            child_env.update(
+                {
+                    "CAO_OPENCODE_MCP_SAFE_RESULT_TOOL": "get_local_cao_task",
+                    "CAO_OPENCODE_MCP_SAFE_TASK_BINDING_PATH": str(task_binding_path),
+                }
+            )
         path_value = os.pathsep.join((str(PINNED_OPENCODE.parent), "/usr/bin", "/bin"))
         install_env = {
             "HOME": str(home),
@@ -7447,575 +7871,595 @@ def _run_enabled(
                 raise GateError("coordination_project_preflight_failed")
             receipt["coordination_context_preflight_passed"] = True
 
-        phase_prompts = tuple(
-            _phase_prompt(index, receiver_id, message, case.case_id)
-            for index, (_phase_name, message) in enumerate(PHASES)
-        )
-        expected_prompt_document = _http_prompt_expectations(
-            sender_id=sender_id,
-            nonce=prompt_nonce,
-            phase_prompts=phase_prompts,
-        )
-        expectation_path = prompt_observer.write_expectations(
-            working_directory=role_workdirs["sender"], document=expected_prompt_document
-        )
-        expected_bytes = _read_owned_private_file(expectation_path, maximum=64 * 1024)
-        if json.loads(expected_bytes) != expected_prompt_document:
-            raise GateError("http_prompt_expectation_copy_mismatch")
-        prompt_context["expectation_bytes"] = expected_bytes
-
-        if response_context is None:
-            raise GateError("http_response_observer_context_unavailable")
-        expected_response_document = _http_response_expectations(nonce=prompt_nonce)
-        response_expectation_path = response_observer.write_expectations(
-            working_directory=role_workdirs["sender"],
-            document=expected_response_document,
-        )
-        response_expectation_bytes = _read_owned_private_file(
-            response_expectation_path,
-            maximum=response_observer.MAX_EXPECTATION_BYTES,
-        )
-        if json.loads(response_expectation_bytes) != expected_response_document:
-            raise GateError("http_response_expectation_copy_mismatch")
-        response_context["prompt_expectation_bytes"] = expected_bytes
-        response_context["expectation_bytes"] = response_expectation_bytes
-
-        first_row_identity = None
-        first_api_identity = None
-        provider_processes_before_restart = None
-        metadata_before_restart = None
-        target_fingerprint_before_restart = target_fingerprint
-        server_a = server
-        output_range_observers = {
-            "sender": _new_output_range_observer(),
-            "receiver": _new_output_range_observer(),
-        }
-
-        for index, (phase_name, message) in enumerate(PHASES):
-            _cancellation_checkpoint()
-            _admit(receipt, f"model_phase_{index + 1}_sender")
-            _admit(receipt, f"model_phase_{index + 1}_receiver")
-            lifecycle_before = _api_lifecycle_snapshot(
-                requests,
-                server.url,
-                terminals,
-                diagnostic=receipt.setdefault("lifecycle_observations", {}).setdefault(
-                    f"phase_{index + 1}_before", {}
+        if case.case_id == TASK_QUERY_CASE_ID:
+            _run_task_query(
+                receipt=receipt,
+                requests=requests,
+                server=server,
+                terminals=terminals,
+                connect=connect,
+                target=targets.main,
+                working_directory=role_workdirs["sender"],
+                binding_path=task_binding_path,
+                nonce=nonce,
+                principal=_auth_off_loopback_creation_principal(
+                    server, api_process, api_identity_a, PINNED_PYTHON
                 ),
             )
-            sender_sequence_before = lifecycle_before["sender"]["turn_sequence"]
-            receiver_sequence_before = lifecycle_before["receiver"]["turn_sequence"]
-            capture = message_live.AguiCapture(server.url, sender_id, receiver_id)
-            captures.append(capture)
-            capture_history.append(capture)
-            capture.start(timeout=20, failure_stage="phase_a" if index == 0 else "phase_b")
-            _admit(receipt, f"model_phase_{index + 1}_start")
-            _reset_output_range_markers(output_range_observers["sender"])
-            _reset_output_range_markers(output_range_observers["receiver"])
-            phase: dict[str, Any] = {
-                "name": phase_name,
-                "receiver_ack_exact": None,
-                "output_range_observations": {"sender": [], "receiver": []},
-                "sender_last_observations": [],
-                "sender_last_observations_truncated": False,
-            }
-            receipt["phases"].append(phase)
-            model_start = time.monotonic()
-            sender_deadline = model_start + MODEL_PHASE_SECONDS
-            response = requests.post(
-                f"{server.url}/terminals/{sender_id}/input",
-                params={"message": phase_prompts[index]},
-                timeout=30,
+        else:
+            phase_prompts = tuple(
+                _phase_prompt(index, receiver_id, message, case.case_id)
+                for index, (_phase_name, message) in enumerate(PHASES)
             )
-            _cancellation_checkpoint()
-            if response.status_code != 200:
-                raise GateError("model_input_http_status_mismatch")
-            input_result = response.json()
-            if not isinstance(input_result, dict):
-                raise GateError("model_input_sequence_invalid")
-            sequence = input_result.get("turn_sequence")
-            if (
-                input_result.get("success") is not True
-                or type(sequence) is not int
-                or sequence != sender_sequence_before + 1
-            ):
-                raise GateError("model_input_sequence_invalid")
-            final_terminal: dict[str, Any] = {}
-            final_receiver: dict[str, Any] = {}
-            last_text = ""
-            last_rows: list[dict[str, Any]] = []
-            last_viewport = ""
-            sender_completed_at: float | None = None
-            sender_terminal_closed_at: float | None = None
-            receiver_started_at: float | None = None
-            receiver_completed_at: float | None = None
-            receiver_output_text = ""
-            previous_poll_started: float | None = None
-            while True:
+            expected_prompt_document = _http_prompt_expectations(
+                sender_id=sender_id,
+                nonce=prompt_nonce,
+                phase_prompts=phase_prompts,
+            )
+            expectation_path = prompt_observer.write_expectations(
+                working_directory=role_workdirs["sender"], document=expected_prompt_document
+            )
+            expected_bytes = _read_owned_private_file(expectation_path, maximum=64 * 1024)
+            if json.loads(expected_bytes) != expected_prompt_document:
+                raise GateError("http_prompt_expectation_copy_mismatch")
+            prompt_context["expectation_bytes"] = expected_bytes
+
+            if response_context is None:
+                raise GateError("http_response_observer_context_unavailable")
+            expected_response_document = _http_response_expectations(nonce=prompt_nonce)
+            response_expectation_path = response_observer.write_expectations(
+                working_directory=role_workdirs["sender"],
+                document=expected_response_document,
+            )
+            response_expectation_bytes = _read_owned_private_file(
+                response_expectation_path,
+                maximum=response_observer.MAX_EXPECTATION_BYTES,
+            )
+            if json.loads(response_expectation_bytes) != expected_response_document:
+                raise GateError("http_response_expectation_copy_mismatch")
+            response_context["prompt_expectation_bytes"] = expected_bytes
+            response_context["expectation_bytes"] = response_expectation_bytes
+
+            first_row_identity = None
+            first_api_identity = None
+            provider_processes_before_restart = None
+            metadata_before_restart = None
+            target_fingerprint_before_restart = target_fingerprint
+            server_a = server
+            output_range_observers = {
+                "sender": _new_output_range_observer(),
+                "receiver": _new_output_range_observer(),
+            }
+
+            for index, (phase_name, message) in enumerate(PHASES):
                 _cancellation_checkpoint()
-                current_time = time.monotonic()
-                if sender_completed_at is None and current_time >= sender_deadline:
-                    break
-                if receiver_started_at is None and current_time >= sender_deadline:
-                    break
-                if (
-                    receiver_started_at is not None
-                    and receiver_completed_at is None
-                    and current_time >= receiver_started_at + MODEL_PHASE_SECONDS
-                ):
-                    break
-                if sender_completed_at is not None and receiver_completed_at is not None:
-                    break
-                poll_started = time.monotonic()
-                last_viewport = tmux.get_history(
-                    session_name,
-                    terminals["sender"]["name"],
-                    strip_escapes=True,
-                    visible_only=True,
-                )
-                last_rows = _pg_rows(connect, targets.main, receiver_id)
-                if sender_completed_at is None:
-                    sender_range_sample, sender_range_in_time = _bounded_output_range_sample(
-                        requests,
-                        server.url,
-                        sender_id,
-                        output_range_observers["sender"],
-                        deadline=sender_deadline,
-                        phase_started=model_start,
-                    )
-                    phase["output_range_observations"]["sender"].append(
-                        _label_range_sample_provenance(sender_range_sample)
-                    )
-                    if not sender_range_in_time:
-                        break
-                    output_response, output_observed_in_time = _bounded_phase_get(
-                        requests,
-                        f"{server.url}/terminals/{sender_id}/output",
-                        deadline=sender_deadline,
-                        params={"mode": "last"},
-                    )
-                    if not output_observed_in_time or output_response is None:
-                        break
-                    output_body = _sender_last_body(
-                        output_response, phase, sequence, time.monotonic() - model_start
-                    )
-                    if output_response.status_code == 200:
-                        last_text = (
-                            output_body.get("output", "") if isinstance(output_body, dict) else ""
-                        )
-                    sender_terminal, sender_terminal_in_time = _read_terminal_before_deadline(
-                        requests,
-                        server.url,
-                        sender_id,
-                        deadline=sender_deadline,
-                    )
-                    if not sender_terminal_in_time or sender_terminal is None:
-                        break
-                    final_terminal = sender_terminal
-                    sender_observation = _sender_last_observation(
-                        output_response.status_code,
-                        output_body,
-                        final_terminal,
-                        sequence,
-                        time.monotonic() - model_start,
-                    )
-                    _record_sender_last_observation(phase, sender_observation)
-                    if (
-                        sender_terminal_closed_at is None
-                        and sender_observation["terminal_closed_for_input"] is True
-                    ):
-                        sender_terminal_closed_at = time.monotonic()
-                    _attach_range_turn_fields(
-                        sender_range_sample,
-                        sender_terminal,
-                        role="sender",
-                        expected_sequence=sequence,
-                    )
-                    if (
-                        LAST_RECEIPT in last_text
-                        and final_terminal.get("status") == "completed"
-                        and final_terminal.get("turn_sequence") == sequence
-                        and final_terminal.get("turn_completed") == sequence
-                    ):
-                        sender_completed_at = time.monotonic()
-                receiver_deadline = (
-                    receiver_started_at + MODEL_PHASE_SECONDS
-                    if receiver_started_at is not None
-                    else sender_deadline
-                )
-                receiver_range_sample, receiver_range_in_time = _bounded_output_range_sample(
+                _admit(receipt, f"model_phase_{index + 1}_sender")
+                _admit(receipt, f"model_phase_{index + 1}_receiver")
+                lifecycle_before = _api_lifecycle_snapshot(
                     requests,
                     server.url,
-                    receiver_id,
-                    output_range_observers["receiver"],
-                    deadline=receiver_deadline,
-                    phase_started=(
-                        receiver_started_at if receiver_started_at is not None else model_start
+                    terminals,
+                    diagnostic=receipt.setdefault("lifecycle_observations", {}).setdefault(
+                        f"phase_{index + 1}_before", {}
                     ),
                 )
-                phase["output_range_observations"]["receiver"].append(
-                    _label_range_sample_provenance(receiver_range_sample)
+                sender_sequence_before = lifecycle_before["sender"]["turn_sequence"]
+                receiver_sequence_before = lifecycle_before["receiver"]["turn_sequence"]
+                capture = message_live.AguiCapture(server.url, sender_id, receiver_id)
+                captures.append(capture)
+                capture_history.append(capture)
+                capture.start(timeout=20, failure_stage="phase_a" if index == 0 else "phase_b")
+                _admit(receipt, f"model_phase_{index + 1}_start")
+                _reset_output_range_markers(output_range_observers["sender"])
+                _reset_output_range_markers(output_range_observers["receiver"])
+                phase: dict[str, Any] = {
+                    "name": phase_name,
+                    "receiver_ack_exact": None,
+                    "output_range_observations": {"sender": [], "receiver": []},
+                    "sender_last_observations": [],
+                    "sender_last_observations_truncated": False,
+                }
+                receipt["phases"].append(phase)
+                model_start = time.monotonic()
+                sender_deadline = model_start + MODEL_PHASE_SECONDS
+                response = requests.post(
+                    f"{server.url}/terminals/{sender_id}/input",
+                    params={"message": phase_prompts[index]},
+                    timeout=30,
                 )
-                if not receiver_range_in_time:
-                    break
-                receiver_terminal, receiver_terminal_in_time = _read_terminal_before_deadline(
-                    requests,
-                    server.url,
-                    receiver_id,
-                    deadline=receiver_deadline,
-                )
-                if not receiver_terminal_in_time or receiver_terminal is None:
-                    break
-                final_receiver = receiver_terminal
-                _attach_range_turn_fields(
-                    receiver_range_sample,
-                    receiver_terminal,
-                    role="receiver",
-                    expected_sequence=receiver_sequence_before + 1,
-                )
-                receiver_sequence = final_receiver.get("turn_sequence")
-                receiver_completed = final_receiver.get("turn_completed")
+                _cancellation_checkpoint()
+                if response.status_code != 200:
+                    raise GateError("model_input_http_status_mismatch")
+                input_result = response.json()
+                if not isinstance(input_result, dict):
+                    raise GateError("model_input_sequence_invalid")
+                sequence = input_result.get("turn_sequence")
                 if (
-                    type(receiver_sequence) is int
-                    and receiver_sequence == receiver_sequence_before + 1
-                    and receiver_started_at is None
+                    input_result.get("success") is not True
+                    or type(sequence) is not int
+                    or sequence != sender_sequence_before + 1
                 ):
-                    receiver_started_at = previous_poll_started or model_start
-                    _admit(receipt, f"receiver_phase_{index + 1}_started")
-                if (
-                    type(receiver_sequence) is int
-                    and receiver_sequence > receiver_sequence_before + 1
-                ):
-                    raise GateError("receiver_turn_count_exceeded_one_delivery")
-                if (
-                    receiver_started_at is not None
-                    and final_receiver.get("status") in {"idle", "completed"}
-                    and receiver_sequence == receiver_sequence_before + 1
-                    and type(receiver_completed) is int
-                    and receiver_completed == receiver_sequence
-                    and receiver_completed_at is None
-                ):
-                    receiver_completed_at = time.monotonic()
-                if sender_completed_at is not None and receiver_completed_at is not None:
-                    break
-                previous_poll_started = poll_started
-                time.sleep(0.5)
-            _cancellation_checkpoint()
-            phase["elapsed_seconds"] = round(time.monotonic() - model_start, 3)
-            raw_sender_model_seconds = (
-                sender_completed_at - model_start if sender_completed_at is not None else None
-            )
-            raw_receiver_model_seconds = (
-                receiver_completed_at - receiver_started_at
-                if receiver_completed_at is not None and receiver_started_at is not None
-                else None
-            )
-            phase["sender_model_within_75_seconds"] = _within_budget(
-                raw_sender_model_seconds, MODEL_PHASE_SECONDS
-            )
-            phase["receiver_model_within_75_seconds"] = _within_budget(
-                raw_receiver_model_seconds, MODEL_PHASE_SECONDS
-            )
-            phase["sender_model_seconds"] = (
-                round(raw_sender_model_seconds, 3) if raw_sender_model_seconds is not None else None
-            )
-            phase["receiver_model_seconds"] = (
-                round(raw_receiver_model_seconds, 3)
-                if raw_receiver_model_seconds is not None
-                else None
-            )
-            measured_model_phases = [
-                value
-                for value in (
-                    phase["sender_model_seconds"],
-                    phase["receiver_model_seconds"],
-                )
-                if value is not None
-            ]
-            phase["model_seconds"] = max(measured_model_phases, default=None)
-            phase["last_receipt_unicode_verified"] = LAST_RECEIPT in last_text
-            raw_sender_closed_seconds = (
-                sender_terminal_closed_at - model_start
-                if sender_terminal_closed_at is not None
-                else None
-            )
-            phase["sender_terminal_closed_seconds"] = (
-                round(raw_sender_closed_seconds, 3)
-                if raw_sender_closed_seconds is not None
-                else None
-            )
-            phase["sender_terminal_closed_within_75_seconds"] = _within_budget(
-                raw_sender_closed_seconds, MODEL_PHASE_SECONDS
-            )
-            phase["durable_turn_completed"] = sender_completed_at is not None
-            phase["receiver_turn_completed_once"] = (
-                receiver_completed_at is not None
-                and final_receiver.get("status") in {"idle", "completed"}
-                and type(final_receiver.get("turn_sequence")) is int
-                and type(final_receiver.get("turn_completed")) is int
-                and final_receiver.get("turn_sequence") == receiver_sequence_before + 1
-                and final_receiver.get("turn_completed") == receiver_sequence_before + 1
-            )
-            receiver_output_body = None
-            receiver_output_http_status = None
-            receiver_output_in_time = False
-            receiver_output_parse_failed = False
-            if receiver_completed_at is not None and receiver_started_at is not None:
-                try:
-                    receiver_output, receiver_output_in_time = _bounded_phase_get(
-                        requests,
-                        f"{server.url}/terminals/{receiver_id}/output",
-                        deadline=receiver_started_at + MODEL_PHASE_SECONDS,
-                        params={"mode": "last"},
-                    )
-                    receiver_output_http_status = (
-                        receiver_output.status_code if receiver_output is not None else None
-                    )
+                    raise GateError("model_input_sequence_invalid")
+                final_terminal: dict[str, Any] = {}
+                final_receiver: dict[str, Any] = {}
+                last_text = ""
+                last_rows: list[dict[str, Any]] = []
+                last_viewport = ""
+                sender_completed_at: float | None = None
+                sender_terminal_closed_at: float | None = None
+                receiver_started_at: float | None = None
+                receiver_completed_at: float | None = None
+                receiver_output_text = ""
+                previous_poll_started: float | None = None
+                while True:
+                    _cancellation_checkpoint()
+                    current_time = time.monotonic()
+                    if sender_completed_at is None and current_time >= sender_deadline:
+                        break
+                    if receiver_started_at is None and current_time >= sender_deadline:
+                        break
                     if (
-                        receiver_output_in_time
-                        and receiver_output is not None
-                        and receiver_output.status_code == 200
+                        receiver_started_at is not None
+                        and receiver_completed_at is None
+                        and current_time >= receiver_started_at + MODEL_PHASE_SECONDS
                     ):
-                        try:
-                            receiver_output_body = receiver_output.json()
-                        except Exception:
-                            receiver_output_parse_failed = True
-                            raise
-                        receiver_output_text = (
-                            receiver_output_body.get("output", "")
-                            if isinstance(receiver_output_body, dict)
-                            else ""
+                        break
+                    if sender_completed_at is not None and receiver_completed_at is not None:
+                        break
+                    poll_started = time.monotonic()
+                    last_viewport = tmux.get_history(
+                        session_name,
+                        terminals["sender"]["name"],
+                        strip_escapes=True,
+                        visible_only=True,
+                    )
+                    last_rows = _pg_rows(connect, targets.main, receiver_id)
+                    if sender_completed_at is None:
+                        sender_range_sample, sender_range_in_time = _bounded_output_range_sample(
+                            requests,
+                            server.url,
+                            sender_id,
+                            output_range_observers["sender"],
+                            deadline=sender_deadline,
+                            phase_started=model_start,
                         )
-                        phase["receiver_ack_exact"] = _receiver_ack_exact(receiver_output_text)
-                except Exception:
-                    # Keep failures private and report only the fixed ACK gate.
-                    pass
-            phase["receiver_last_observation"] = _receiver_last_observation(
-                receiver_output_http_status,
-                receiver_output_body,
-                receiver_output_in_time,
-                parse_failed=receiver_output_parse_failed,
-            )
-            receiver_failure_code = _receiver_phase_failure_code(phase)
-            _raise_receiver_phase_failure_if_needed(
-                phase=phase,
-                failure_code=receiver_failure_code,
-                raw_dir=raw_dir,
-                phase_ordinal=index + 1,
-                body=receiver_output_body,
-            )
-            _write_private(raw_dir / f"phase-{index + 1}-screen.private", last_viewport)
-            _write_private(
-                raw_dir / f"phase-{index + 1}-pg.private",
-                json.dumps(last_rows, default=str, ensure_ascii=False),
-            )
-            if (
-                phase["sender_model_within_75_seconds"] is not True
-                or phase["receiver_model_within_75_seconds"] is not True
-            ):
-                raise GateError(_model_phase_failure_code(phase))
-            api_rows_now = _api_rows(requests, server.url, receiver_id)
-            agui_matches = capture.take_until(time.monotonic() + 1.0)
-            capture.stop()
-            capture_thread_dead = _capture_threads_confirmed_dead([capture])
-            phase["agui_capture_stopped_cleanly"] = _capture_stopped_cleanly(capture)
-            phase["agui_redacted_one_notification"] = agui_matches == [True]
-            if capture_thread_dead:
-                captures.remove(capture)
-            if not capture_thread_dead:
-                raise GateError("agui_capture_thread_cleanup_unconfirmed")
-            if not phase["agui_capture_stopped_cleanly"]:
-                raise GateError("agui_capture_stream_health_failed")
-            phase["one_exact_pg_api_message"] = _phase_contract(
-                expected_message=message,
+                        phase["output_range_observations"]["sender"].append(
+                            _label_range_sample_provenance(sender_range_sample)
+                        )
+                        if not sender_range_in_time:
+                            break
+                        output_response, output_observed_in_time = _bounded_phase_get(
+                            requests,
+                            f"{server.url}/terminals/{sender_id}/output",
+                            deadline=sender_deadline,
+                            params={"mode": "last"},
+                        )
+                        if not output_observed_in_time or output_response is None:
+                            break
+                        output_body = _sender_last_body(
+                            output_response, phase, sequence, time.monotonic() - model_start
+                        )
+                        if output_response.status_code == 200:
+                            last_text = (
+                                output_body.get("output", "")
+                                if isinstance(output_body, dict)
+                                else ""
+                            )
+                        sender_terminal, sender_terminal_in_time = _read_terminal_before_deadline(
+                            requests,
+                            server.url,
+                            sender_id,
+                            deadline=sender_deadline,
+                        )
+                        if not sender_terminal_in_time or sender_terminal is None:
+                            break
+                        final_terminal = sender_terminal
+                        sender_observation = _sender_last_observation(
+                            output_response.status_code,
+                            output_body,
+                            final_terminal,
+                            sequence,
+                            time.monotonic() - model_start,
+                        )
+                        _record_sender_last_observation(phase, sender_observation)
+                        if (
+                            sender_terminal_closed_at is None
+                            and sender_observation["terminal_closed_for_input"] is True
+                        ):
+                            sender_terminal_closed_at = time.monotonic()
+                        _attach_range_turn_fields(
+                            sender_range_sample,
+                            sender_terminal,
+                            role="sender",
+                            expected_sequence=sequence,
+                        )
+                        if (
+                            LAST_RECEIPT in last_text
+                            and final_terminal.get("status") == "completed"
+                            and final_terminal.get("turn_sequence") == sequence
+                            and final_terminal.get("turn_completed") == sequence
+                        ):
+                            sender_completed_at = time.monotonic()
+                    receiver_deadline = (
+                        receiver_started_at + MODEL_PHASE_SECONDS
+                        if receiver_started_at is not None
+                        else sender_deadline
+                    )
+                    receiver_range_sample, receiver_range_in_time = _bounded_output_range_sample(
+                        requests,
+                        server.url,
+                        receiver_id,
+                        output_range_observers["receiver"],
+                        deadline=receiver_deadline,
+                        phase_started=(
+                            receiver_started_at if receiver_started_at is not None else model_start
+                        ),
+                    )
+                    phase["output_range_observations"]["receiver"].append(
+                        _label_range_sample_provenance(receiver_range_sample)
+                    )
+                    if not receiver_range_in_time:
+                        break
+                    receiver_terminal, receiver_terminal_in_time = _read_terminal_before_deadline(
+                        requests,
+                        server.url,
+                        receiver_id,
+                        deadline=receiver_deadline,
+                    )
+                    if not receiver_terminal_in_time or receiver_terminal is None:
+                        break
+                    final_receiver = receiver_terminal
+                    _attach_range_turn_fields(
+                        receiver_range_sample,
+                        receiver_terminal,
+                        role="receiver",
+                        expected_sequence=receiver_sequence_before + 1,
+                    )
+                    receiver_sequence = final_receiver.get("turn_sequence")
+                    receiver_completed = final_receiver.get("turn_completed")
+                    if (
+                        type(receiver_sequence) is int
+                        and receiver_sequence == receiver_sequence_before + 1
+                        and receiver_started_at is None
+                    ):
+                        receiver_started_at = previous_poll_started or model_start
+                        _admit(receipt, f"receiver_phase_{index + 1}_started")
+                    if (
+                        type(receiver_sequence) is int
+                        and receiver_sequence > receiver_sequence_before + 1
+                    ):
+                        raise GateError("receiver_turn_count_exceeded_one_delivery")
+                    if (
+                        receiver_started_at is not None
+                        and final_receiver.get("status") in {"idle", "completed"}
+                        and receiver_sequence == receiver_sequence_before + 1
+                        and type(receiver_completed) is int
+                        and receiver_completed == receiver_sequence
+                        and receiver_completed_at is None
+                    ):
+                        receiver_completed_at = time.monotonic()
+                    if sender_completed_at is not None and receiver_completed_at is not None:
+                        break
+                    previous_poll_started = poll_started
+                    time.sleep(0.5)
+                _cancellation_checkpoint()
+                phase["elapsed_seconds"] = round(time.monotonic() - model_start, 3)
+                raw_sender_model_seconds = (
+                    sender_completed_at - model_start if sender_completed_at is not None else None
+                )
+                raw_receiver_model_seconds = (
+                    receiver_completed_at - receiver_started_at
+                    if receiver_completed_at is not None and receiver_started_at is not None
+                    else None
+                )
+                phase["sender_model_within_75_seconds"] = _within_budget(
+                    raw_sender_model_seconds, MODEL_PHASE_SECONDS
+                )
+                phase["receiver_model_within_75_seconds"] = _within_budget(
+                    raw_receiver_model_seconds, MODEL_PHASE_SECONDS
+                )
+                phase["sender_model_seconds"] = (
+                    round(raw_sender_model_seconds, 3)
+                    if raw_sender_model_seconds is not None
+                    else None
+                )
+                phase["receiver_model_seconds"] = (
+                    round(raw_receiver_model_seconds, 3)
+                    if raw_receiver_model_seconds is not None
+                    else None
+                )
+                measured_model_phases = [
+                    value
+                    for value in (
+                        phase["sender_model_seconds"],
+                        phase["receiver_model_seconds"],
+                    )
+                    if value is not None
+                ]
+                phase["model_seconds"] = max(measured_model_phases, default=None)
+                phase["last_receipt_unicode_verified"] = LAST_RECEIPT in last_text
+                raw_sender_closed_seconds = (
+                    sender_terminal_closed_at - model_start
+                    if sender_terminal_closed_at is not None
+                    else None
+                )
+                phase["sender_terminal_closed_seconds"] = (
+                    round(raw_sender_closed_seconds, 3)
+                    if raw_sender_closed_seconds is not None
+                    else None
+                )
+                phase["sender_terminal_closed_within_75_seconds"] = _within_budget(
+                    raw_sender_closed_seconds, MODEL_PHASE_SECONDS
+                )
+                phase["durable_turn_completed"] = sender_completed_at is not None
+                phase["receiver_turn_completed_once"] = (
+                    receiver_completed_at is not None
+                    and final_receiver.get("status") in {"idle", "completed"}
+                    and type(final_receiver.get("turn_sequence")) is int
+                    and type(final_receiver.get("turn_completed")) is int
+                    and final_receiver.get("turn_sequence") == receiver_sequence_before + 1
+                    and final_receiver.get("turn_completed") == receiver_sequence_before + 1
+                )
+                receiver_output_body = None
+                receiver_output_http_status = None
+                receiver_output_in_time = False
+                receiver_output_parse_failed = False
+                if receiver_completed_at is not None and receiver_started_at is not None:
+                    try:
+                        receiver_output, receiver_output_in_time = _bounded_phase_get(
+                            requests,
+                            f"{server.url}/terminals/{receiver_id}/output",
+                            deadline=receiver_started_at + MODEL_PHASE_SECONDS,
+                            params={"mode": "last"},
+                        )
+                        receiver_output_http_status = (
+                            receiver_output.status_code if receiver_output is not None else None
+                        )
+                        if (
+                            receiver_output_in_time
+                            and receiver_output is not None
+                            and receiver_output.status_code == 200
+                        ):
+                            try:
+                                receiver_output_body = receiver_output.json()
+                            except Exception:
+                                receiver_output_parse_failed = True
+                                raise
+                            receiver_output_text = (
+                                receiver_output_body.get("output", "")
+                                if isinstance(receiver_output_body, dict)
+                                else ""
+                            )
+                            phase["receiver_ack_exact"] = _receiver_ack_exact(receiver_output_text)
+                    except Exception:
+                        # Keep failures private and report only the fixed ACK gate.
+                        pass
+                phase["receiver_last_observation"] = _receiver_last_observation(
+                    receiver_output_http_status,
+                    receiver_output_body,
+                    receiver_output_in_time,
+                    parse_failed=receiver_output_parse_failed,
+                )
+                receiver_failure_code = _receiver_phase_failure_code(phase)
+                _raise_receiver_phase_failure_if_needed(
+                    phase=phase,
+                    failure_code=receiver_failure_code,
+                    raw_dir=raw_dir,
+                    phase_ordinal=index + 1,
+                    body=receiver_output_body,
+                )
+                _write_private(raw_dir / f"phase-{index + 1}-screen.private", last_viewport)
+                _write_private(
+                    raw_dir / f"phase-{index + 1}-pg.private",
+                    json.dumps(last_rows, default=str, ensure_ascii=False),
+                )
+                if (
+                    phase["sender_model_within_75_seconds"] is not True
+                    or phase["receiver_model_within_75_seconds"] is not True
+                ):
+                    raise GateError(_model_phase_failure_code(phase))
+                api_rows_now = _api_rows(requests, server.url, receiver_id)
+                agui_matches = capture.take_until(time.monotonic() + 1.0)
+                capture.stop()
+                capture_thread_dead = _capture_threads_confirmed_dead([capture])
+                phase["agui_capture_stopped_cleanly"] = _capture_stopped_cleanly(capture)
+                phase["agui_redacted_one_notification"] = agui_matches == [True]
+                if capture_thread_dead:
+                    captures.remove(capture)
+                if not capture_thread_dead:
+                    raise GateError("agui_capture_thread_cleanup_unconfirmed")
+                if not phase["agui_capture_stopped_cleanly"]:
+                    raise GateError("agui_capture_stream_health_failed")
+                phase["one_exact_pg_api_message"] = _phase_contract(
+                    expected_message=message,
+                    sender_id=sender_id,
+                    receiver_id=receiver_id,
+                    pg_rows=last_rows,
+                    api_rows=api_rows_now,
+                    phase_index=index,
+                    last_text=last_text,
+                    terminal=final_terminal,
+                    turn_sequence=sequence,
+                    agui_matches=agui_matches,
+                )
+                if not phase["one_exact_pg_api_message"]:
+                    raise GateError("message_phase_acceptance_mismatch")
+                if not phase["receiver_turn_completed_once"]:
+                    raise GateError("receiver_turn_not_completed_once")
+
+                if index == 0:
+                    pg_row = last_rows[0]
+                    api_row = api_rows_now[0]
+                    first_row_identity = {
+                        key: pg_row[key]
+                        for key in ("id", "sender_id", "receiver_id", "message", "created_at")
+                    }
+                    first_api_identity = {
+                        key: api_row[key]
+                        for key in ("id", "sender_id", "receiver_id", "message", "created_at")
+                    }
+                    metadata_before_restart = _api_metadata_snapshot(
+                        requests, server.url, terminals, group, case.case_id
+                    )
+                    lifecycle_before_restart = _api_lifecycle_snapshot(
+                        requests,
+                        server.url,
+                        terminals,
+                        diagnostic=receipt.setdefault("lifecycle_observations", {}).setdefault(
+                            "before_restart", {}
+                        ),
+                    )
+                    (
+                        durable_receipts_before_restart,
+                        provider_processes_before_restart,
+                    ) = _capture_pre_restart_snapshots(
+                        receipt=receipt,
+                        connect=connect,
+                        target=targets.main,
+                        terminals=terminals,
+                        journey=journey,
+                        socket_path=socket_path,
+                        sid=sid,
+                    )
+                    if not all(provider_processes_before_restart.values()):
+                        raise GateError("native_process_identity_missing_before_restart")
+                    receipt["native_process_pids_before_restart"] = {
+                        role: sorted(item.pid for item in identities)
+                        for role, identities in provider_processes_before_restart.items()
+                    }
+                    receipt["terminal_metadata_before_restart"] = metadata_before_restart
+                    receipt["provider_roots_before_restart"] = root_identity_before
+                    _admit(receipt, "api_restart")
+                    old_api_process, old_api_identity = _capture_api_process(server, journey)
+                    if old_api_identity != api_identity_a:
+                        raise GateError("api_a_identity_changed_before_restart")
+                    server_a = server
+                    api_a_record = api_servers[0]
+                    try:
+                        server_a.stop()
+                    except Exception:
+                        api_a_record["stop_error"] = True
+                        failures.add("api_cleanup_failed")
+                        raise GateError("api_a_stop_failed") from None
+                    if journey._process_identity_alive(old_api_identity):
+                        raise GateError("api_a_process_survived_stop")
+                    api_a_record["stop_confirmed"] = True
+                    receipt["api_a_cleanup"] = True
+                    api_a_cleanup = True
+                    server = None
+                    api_b_launch_attempted = True
+                    server = start_api()
+                    api_servers.append(
+                        {
+                            "role": "api_b",
+                            "server": server,
+                            "identity": None,
+                            "stop_confirmed": False,
+                            "start_returned": True,
+                        }
+                    )
+                    api_b_started = True
+                    api_process, api_identity_after = _capture_api_process(server, journey)
+                    api_identity_b = api_identity_after
+                    if PINNED_PYTHON is None or not _api_worker_invocation_matches(
+                        api_process, server, PINNED_PYTHON
+                    ):
+                        raise GateError("production_api_worker_invocation_mismatch")
+                    receipt["production_api_worker_invocation_verified"] = True
+                    api_servers[-1]["identity"] = api_identity_after
+                    receipt["api_b_url"] = server.url
+                    if api_identity_after.pid == old_api_identity.pid:
+                        raise GateError("api_restart_process_identity_not_changed")
+                    receipt["api_b_pid"] = api_identity_after.pid
+                    receipt["api_b_process_start"] = api_identity_after.start_time
+                    receipt["api_restart_process_changed"] = True
+                    after_fingerprint = message_live._target_fingerprint(
+                        server.database_targets, database_target_type=type(targets.main)
+                    )
+                    receipt["postgres_target_identity_stable"] = (
+                        after_fingerprint == target_fingerprint_before_restart
+                    )
+                    if not receipt["postgres_target_identity_stable"]:
+                        raise GateError("postgres_target_changed_on_api_restart")
+                    api_rows_after_restart = _api_rows(requests, server.url, receiver_id)
+                    pg_rows_after_restart = _pg_rows(connect, targets.main, receiver_id)
+                    if (
+                        len(pg_rows_after_restart) != 1
+                        or len(api_rows_after_restart) != 1
+                        or any(
+                            pg_rows_after_restart[0].get(key) != value
+                            for key, value in first_row_identity.items()
+                        )
+                        or any(
+                            api_rows_after_restart[0].get(key) != value
+                            for key, value in first_api_identity.items()
+                        )
+                    ):
+                        raise GateError("persisted_first_message_identity_changed")
+                    metadata_after_restart = _api_metadata_snapshot(
+                        requests, server.url, terminals, group, case.case_id
+                    )
+                    if metadata_after_restart != metadata_before_restart:
+                        raise GateError("terminal_metadata_changed_on_api_restart")
+                    _wait_restart_readiness(
+                        requests, server.url, terminals, receipt.setdefault("restart_readiness", {})
+                    )
+                    lifecycle_after_restart = _api_lifecycle_snapshot(
+                        requests,
+                        server.url,
+                        terminals,
+                        diagnostic=receipt.setdefault("lifecycle_observations", {}).setdefault(
+                            "after_restart", {}
+                        ),
+                    )
+                    durable_receipts_after_restart = _durable_receipt_snapshot(
+                        connect, targets.main, terminals
+                    )
+                    if durable_receipts_after_restart != durable_receipts_before_restart:
+                        raise GateError("terminal_verified_receipts_changed_on_api_restart")
+                    receipt["terminal_verified_receipts_stable_on_api_restart"] = True
+                    provider_processes_after_restart = {
+                        role: journey._terminal_tagged_processes(
+                            data["id"], socket_path, server_identity=sid
+                        )
+                        for role, data in terminals.items()
+                    }
+                    if provider_processes_after_restart != provider_processes_before_restart:
+                        raise GateError("native_process_identity_changed_on_api_restart")
+                    if any(
+                        not journey._process_identity_alive(item)
+                        for items in provider_processes_after_restart.values()
+                        for item in items
+                    ):
+                        raise GateError("native_process_not_alive_after_api_restart")
+                    roots_after_restart = _native_config_roots(_provider_roots(cao_home))
+                    if roots_after_restart != root_identity_before:
+                        raise GateError("provider_root_identity_changed_on_api_restart")
+                    receipt["terminal_metadata_stable_on_api_restart"] = True
+                    receipt["terminal_lifecycle_stable_on_api_restart"] = True
+                    receipt["native_process_identity_stable_on_api_restart"] = True
+                    receipt["provider_root_identity_stable_on_api_restart"] = True
+                    receipt["first_pg_api_row_stable_on_restart"] = True
+                    receipt["native_process_pids_after_restart"] = {
+                        role: sorted(item.pid for item in identities)
+                        for role, identities in provider_processes_after_restart.items()
+                    }
+                    receipt["terminal_metadata_after_restart"] = metadata_after_restart
+                    receipt["api_worker_restarts"] = 1
+
+            final_pg_rows = _pg_rows(connect, targets.main, receiver_id)
+            final_api_rows = _api_rows(requests, server.url, receiver_id)
+            receipt["two_exact_pg_api_messages"] = _persisted_pair_contract(
+                final_pg_rows,
+                final_api_rows,
                 sender_id=sender_id,
                 receiver_id=receiver_id,
-                pg_rows=last_rows,
-                api_rows=api_rows_now,
-                phase_index=index,
-                last_text=last_text,
-                terminal=final_terminal,
-                turn_sequence=sequence,
-                agui_matches=agui_matches,
             )
-            if not phase["one_exact_pg_api_message"]:
-                raise GateError("message_phase_acceptance_mismatch")
-            if not phase["receiver_turn_completed_once"]:
-                raise GateError("receiver_turn_not_completed_once")
-
-            if index == 0:
-                pg_row = last_rows[0]
-                api_row = api_rows_now[0]
-                first_row_identity = {
-                    key: pg_row[key]
-                    for key in ("id", "sender_id", "receiver_id", "message", "created_at")
-                }
-                first_api_identity = {
-                    key: api_row[key]
-                    for key in ("id", "sender_id", "receiver_id", "message", "created_at")
-                }
-                metadata_before_restart = _api_metadata_snapshot(
-                    requests, server.url, terminals, group, case.case_id
-                )
-                lifecycle_before_restart = _api_lifecycle_snapshot(
-                    requests,
-                    server.url,
-                    terminals,
-                    diagnostic=receipt.setdefault("lifecycle_observations", {}).setdefault(
-                        "before_restart", {}
-                    ),
-                )
-                (
-                    durable_receipts_before_restart,
-                    provider_processes_before_restart,
-                ) = _capture_pre_restart_snapshots(
-                    receipt=receipt,
-                    connect=connect,
-                    target=targets.main,
-                    terminals=terminals,
-                    journey=journey,
-                    socket_path=socket_path,
-                    sid=sid,
-                )
-                if not all(provider_processes_before_restart.values()):
-                    raise GateError("native_process_identity_missing_before_restart")
-                receipt["native_process_pids_before_restart"] = {
-                    role: sorted(item.pid for item in identities)
-                    for role, identities in provider_processes_before_restart.items()
-                }
-                receipt["terminal_metadata_before_restart"] = metadata_before_restart
-                receipt["provider_roots_before_restart"] = root_identity_before
-                _admit(receipt, "api_restart")
-                old_api_process, old_api_identity = _capture_api_process(server, journey)
-                if old_api_identity != api_identity_a:
-                    raise GateError("api_a_identity_changed_before_restart")
-                server_a = server
-                api_a_record = api_servers[0]
-                try:
-                    server_a.stop()
-                except Exception:
-                    api_a_record["stop_error"] = True
-                    failures.add("api_cleanup_failed")
-                    raise GateError("api_a_stop_failed") from None
-                if journey._process_identity_alive(old_api_identity):
-                    raise GateError("api_a_process_survived_stop")
-                api_a_record["stop_confirmed"] = True
-                receipt["api_a_cleanup"] = True
-                api_a_cleanup = True
-                server = None
-                api_b_launch_attempted = True
-                server = start_api()
-                api_servers.append(
-                    {
-                        "role": "api_b",
-                        "server": server,
-                        "identity": None,
-                        "stop_confirmed": False,
-                        "start_returned": True,
-                    }
-                )
-                api_b_started = True
-                api_process, api_identity_after = _capture_api_process(server, journey)
-                api_identity_b = api_identity_after
-                if PINNED_PYTHON is None or not _api_worker_invocation_matches(
-                    api_process, server, PINNED_PYTHON
-                ):
-                    raise GateError("production_api_worker_invocation_mismatch")
-                receipt["production_api_worker_invocation_verified"] = True
-                api_servers[-1]["identity"] = api_identity_after
-                receipt["api_b_url"] = server.url
-                if api_identity_after.pid == old_api_identity.pid:
-                    raise GateError("api_restart_process_identity_not_changed")
-                receipt["api_b_pid"] = api_identity_after.pid
-                receipt["api_b_process_start"] = api_identity_after.start_time
-                receipt["api_restart_process_changed"] = True
-                after_fingerprint = message_live._target_fingerprint(
-                    server.database_targets, database_target_type=type(targets.main)
-                )
-                receipt["postgres_target_identity_stable"] = (
-                    after_fingerprint == target_fingerprint_before_restart
-                )
-                if not receipt["postgres_target_identity_stable"]:
-                    raise GateError("postgres_target_changed_on_api_restart")
-                api_rows_after_restart = _api_rows(requests, server.url, receiver_id)
-                pg_rows_after_restart = _pg_rows(connect, targets.main, receiver_id)
-                if (
-                    len(pg_rows_after_restart) != 1
-                    or len(api_rows_after_restart) != 1
-                    or any(
-                        pg_rows_after_restart[0].get(key) != value
-                        for key, value in first_row_identity.items()
-                    )
-                    or any(
-                        api_rows_after_restart[0].get(key) != value
-                        for key, value in first_api_identity.items()
-                    )
-                ):
-                    raise GateError("persisted_first_message_identity_changed")
-                metadata_after_restart = _api_metadata_snapshot(
-                    requests, server.url, terminals, group, case.case_id
-                )
-                if metadata_after_restart != metadata_before_restart:
-                    raise GateError("terminal_metadata_changed_on_api_restart")
-                _wait_restart_readiness(
-                    requests, server.url, terminals, receipt.setdefault("restart_readiness", {})
-                )
-                lifecycle_after_restart = _api_lifecycle_snapshot(
-                    requests,
-                    server.url,
-                    terminals,
-                    diagnostic=receipt.setdefault("lifecycle_observations", {}).setdefault(
-                        "after_restart", {}
-                    ),
-                )
-                durable_receipts_after_restart = _durable_receipt_snapshot(
-                    connect, targets.main, terminals
-                )
-                if durable_receipts_after_restart != durable_receipts_before_restart:
-                    raise GateError("terminal_verified_receipts_changed_on_api_restart")
-                receipt["terminal_verified_receipts_stable_on_api_restart"] = True
-                provider_processes_after_restart = {
-                    role: journey._terminal_tagged_processes(
-                        data["id"], socket_path, server_identity=sid
-                    )
-                    for role, data in terminals.items()
-                }
-                if provider_processes_after_restart != provider_processes_before_restart:
-                    raise GateError("native_process_identity_changed_on_api_restart")
-                if any(
-                    not journey._process_identity_alive(item)
-                    for items in provider_processes_after_restart.values()
-                    for item in items
-                ):
-                    raise GateError("native_process_not_alive_after_api_restart")
-                roots_after_restart = _native_config_roots(_provider_roots(cao_home))
-                if roots_after_restart != root_identity_before:
-                    raise GateError("provider_root_identity_changed_on_api_restart")
-                receipt["terminal_metadata_stable_on_api_restart"] = True
-                receipt["terminal_lifecycle_stable_on_api_restart"] = True
-                receipt["native_process_identity_stable_on_api_restart"] = True
-                receipt["provider_root_identity_stable_on_api_restart"] = True
-                receipt["first_pg_api_row_stable_on_restart"] = True
-                receipt["native_process_pids_after_restart"] = {
-                    role: sorted(item.pid for item in identities)
-                    for role, identities in provider_processes_after_restart.items()
-                }
-                receipt["terminal_metadata_after_restart"] = metadata_after_restart
-                receipt["api_worker_restarts"] = 1
-
-        final_pg_rows = _pg_rows(connect, targets.main, receiver_id)
-        final_api_rows = _api_rows(requests, server.url, receiver_id)
-        receipt["two_exact_pg_api_messages"] = _persisted_pair_contract(
-            final_pg_rows,
-            final_api_rows,
-            sender_id=sender_id,
-            receiver_id=receiver_id,
-        )
-        if not receipt["two_exact_pg_api_messages"]:
-            raise GateError("final_two_message_pair_mismatch")
-        receipt["both_message_phases_passed"] = len(receipt["phases"]) == 2
-        if not receipt["both_message_phases_passed"]:
-            raise GateError("both_message_phases_required")
+            if not receipt["two_exact_pg_api_messages"]:
+                raise GateError("final_two_message_pair_mismatch")
+            receipt["both_message_phases_passed"] = len(receipt["phases"]) == 2
+            if not receipt["both_message_phases_passed"]:
+                raise GateError("both_message_phases_required")
 
         for role, data in terminals.items():
             owned_processes |= journey._owned_process_snapshot_for_cleanup(
@@ -8123,12 +8567,18 @@ def _run_enabled(
                 if role == "sender"
                 else "receiver_model_request_zero_cao_mcp_tools"
             )
-            receipt[contract_key] = _http_tool_offer_contract(
-                offer_observations[role],
-                expected_nonce=offer_nonces[role],
-                expected_mcp_tool_names=role_expected_mcp_tools[role],
-                tracked_tool_names=_case_http_offer_names(case.case_id),
-                case_id=case.case_id,
+            receipt[contract_key] = (
+                _task_query_passive_offer_contract(
+                    offer_observations[role], expected_nonce=offer_nonces[role]
+                )
+                if case.case_id == TASK_QUERY_CASE_ID and role == "receiver"
+                else _http_tool_offer_contract(
+                    offer_observations[role],
+                    expected_nonce=offer_nonces[role],
+                    expected_mcp_tool_names=role_expected_mcp_tools[role],
+                    tracked_tool_names=_case_http_offer_names(case.case_id),
+                    case_id=case.case_id,
+                )
             )
         receipt["native_model_request_cao_mcp_surfaces_exact"] = (
             receipt[

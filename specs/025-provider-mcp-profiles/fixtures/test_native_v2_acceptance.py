@@ -777,6 +777,7 @@ def test_generic_message_case_has_fixed_exact_profile_and_fixture():
         "collaboration",
         "generic_message",
         "coordination",
+        "task_query",
     )
     assert case.label == "t116-native-v2-generic-message"
     assert case.receipt_schema == "spec025.t116.opencode-v2-generic-message.private.v1"
@@ -4485,6 +4486,7 @@ def test_coordination_case_has_exact_twelve_tools_and_keeps_existing_cases():
         "collaboration",
         "generic_message",
         "coordination",
+        "task_query",
     )
     assert case.sender_catalog == tuple(sorted(TOOL_PROFILES["coordination"]))
     assert len(case.sender_catalog) == 12

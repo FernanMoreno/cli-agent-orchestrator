@@ -1,0 +1,47 @@
+{
+  "schema": "caos.spec025.t214.case.v1",
+  "date": "2026-10-29",
+  "status": "CASE_IMPLEMENTED_NATIVE_PENDING",
+  "source_base_head": "b5e42ca04c413a0b53120a613dffc2ba5fcf54d2",
+  "source_sha256": {
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "af7498fe1b82e95ad27bd0a706ca7d63cfe7f630b8ed453d3f0ad3ec2a95d0b0",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_task_query_case.py": "c761f90a83b99b93c2809ba7f6943734ef94debb5426131e2a282f8d78d69341",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_v2_acceptance.py": "e8c6a985d67aa1a4f93424ff2cfd7cdcc73f69f74beadfc7f8f1c12be12b5084",
+    "specs/025-provider-mcp-profiles/fixtures/native-v2-task-query-acceptance-profiles.json": "1ac32bc45bec5945ec24209092922241e725614691718649d5317db7bbe5a7ca"
+  },
+  "case_id": "task_query",
+  "task_query_seconds_limit": 180,
+  "memory_floor_mib": 6144,
+  "red_tests_failed": 48,
+  "initial_regression": {
+    "passed": 359,
+    "failed": 5,
+    "seconds": 97.7
+  },
+  "final_regression": {
+    "passed": 401,
+    "failed": 0,
+    "subtests_passed": 20,
+    "existing_warnings": 3,
+    "seconds": 107.41
+  },
+  "final_guard_controls": {
+    "passed": 15,
+    "deselected": 52,
+    "seconds": 19.13
+  },
+  "distinct_python_tests": 402,
+  "node_tests_passed": 17,
+  "existing_message_restart_statements_ast_identical": 27,
+  "source_review_go": "684bd67be6a74cd6aa434dabd4c370b2",
+  "initial_source_review_no_go": "584d71c19ed842e1aa0f1e070071a3a2",
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "native_calls": 0,
+  "native_acceptance": false,
+  "existing_baseline_repeated": false,
+  "new_postgres_service_created": false,
+  "global_gates_closed": false
+}

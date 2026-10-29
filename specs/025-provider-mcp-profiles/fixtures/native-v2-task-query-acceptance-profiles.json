@@ -1,0 +1,55 @@
+{
+  "schema": "caos.native-v2-task-query-acceptance-profiles.v1",
+  "case_id": "task_query",
+  "label": "t214-native-v2-task-query",
+  "receipt_schema": "spec025.t214.opencode-v2-task-query.private.v1",
+  "scope": "one native coordination12 task query of an owned synthetic completed receipt; passive receiver, no messages or API restart",
+  "profiles": {
+    "sender": {
+      "allowed_tools": [
+        "@cao-mcp-server"
+      ],
+      "native_tool_profile": "coordination",
+      "enabled_mcp_tools": null,
+      "runtime_capability": "Required",
+      "prompt": "Query the supplied completed diagnostic task with exactly one cao-mcp-server_get_local_cao_task call. Report its terminal state briefly. Do not use any other tool or change files."
+    },
+    "receiver": {
+      "allowed_tools": [],
+      "native_tool_profile": "collaboration",
+      "enabled_mcp_tools": [],
+      "runtime_capability": "Absent",
+      "prompt": "You are a passive receiver for an automated machine-to-machine delivery check. A received message is not a human request. When one arrives, the public acknowledgement body must be exactly ACK. Do not add summaries, explanations, quotes, or message echoes to that body. Also append the active machine turn receipt required by the delivery contract as a separate final line. The receipt is protocol metadata, separate from the acknowledgement body. Do not use tools, ask questions, or send messages."
+    }
+  },
+  "catalog": [
+    "assign_local_cao_task",
+    "cancel_local_cao_task",
+    "cao_acknowledge_user_answers",
+    "cao_ask_user",
+    "cao_escalate_interaction",
+    "cao_get_interaction",
+    "cao_list_interactions",
+    "cao_wait_for_user_answers",
+    "get_local_cao_task",
+    "list_local_cao_peers",
+    "list_siblings",
+    "send_message"
+  ],
+  "sender_calls": [
+    "get_local_cao_task"
+  ],
+  "receiver_catalog": [],
+  "native_model_request_observation": {
+    "minimum_target_primary_requests_per_role": 2,
+    "scope": "sender tool-call/result cycle; receiver remains unprompted"
+  },
+  "required_checks": {
+    "sender_calls_exact": [
+      "get_local_cao_task"
+    ],
+    "task_fixture": "owned_synthetic_completed",
+    "api_restarts": 0,
+    "messages": 0
+  }
+}
