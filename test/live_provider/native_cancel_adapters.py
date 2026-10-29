@@ -20,6 +20,8 @@ class NativeCancelAdapter:
     credential_names: frozenset[str]
     configure: Callable[[Path], None]
     profile_options: str = ""
+    allowed_tools: tuple[str, ...] = ()
+    expected_mcp_tools: tuple[str, ...] = ()
 
 
 def _configure_opencode(home):
@@ -107,3 +109,36 @@ def _configure_claude_inspection(home):
 
 
 CLAUDE_INSPECT = replace(CLAUDE, configure=_configure_claude_inspection)
+
+
+CLAUDE_MCP_OFFER = replace(
+    CLAUDE,
+    allowed_tools=("@cao-mcp-server",),
+    expected_mcp_tools=("mcp__cao-mcp-server__list_siblings",),
+    profile_options=(
+        "permissionMode: default\n"
+        "mcpServers:\n"
+        "  cao-mcp-server:\n"
+        "    command: cao-mcp-server\n"
+        "    cao_tool_profile: collaboration\n"
+        "    enabled_tools: [list_siblings]\n"
+    ),
+)
+
+
+def native_profile_text(name, adapter):
+    return (
+        f"---\nname: {name}\ndescription: Native concurrent cancellation control\n"
+        f"provider: {adapter.provider}\nmodel: {adapter.model}\nrole: developer\n"
+        f"allowedTools: {json.dumps(list(adapter.allowed_tools))}\n"
+        f"{adapter.profile_options}---\n{adapter.primary_instruction}: Follow the user request.\n"
+    )
+
+
+def claude_adapter_for_manifest(manifest):
+    profile_case = manifest.get("profile_case", "")
+    if profile_case == "mcp_offer":
+        assert manifest["case_kind"] == "preflight", "MCP offer is a preflight-only gate"
+        return CLAUDE_MCP_OFFER
+    assert profile_case == "", "unknown native profile case"
+    return CLAUDE_INSPECT if manifest["case_kind"] == "inspect" else CLAUDE

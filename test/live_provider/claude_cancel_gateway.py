@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 from test.live_provider.claude_client_denial import text_stream
-from test.live_provider.native_cancel_adapters import CLAUDE
+from test.live_provider.native_cancel_adapters import CLAUDE, claude_adapter_for_manifest
 from test.live_provider.native_cancel_support import (
     isolated_wrapper,
     receipt_from_request,
@@ -46,11 +46,23 @@ def primary_request(body):
     )
 
 
-def primary_receipt(body):
+def native_tool_names(body):
+    tools = body.get("tools", [])
+    assert isinstance(tools, list), "invalid_native_tool_offer"
+    names = [tool.get("name") for tool in tools if isinstance(tool, dict)]
+    assert len(names) == len(tools) and all(
+        isinstance(name, str) for name in names
+    ), "invalid_native_tool_offer"
+    assert len(names) == len(set(names)), "duplicate_native_tool_offer"
+    return names
+
+
+def primary_receipt(body, *, expected_tools=()):
     assert primary_request(body)
     assert body.get("stream") is True
     assert body.get("model") == CLAUDE.model
-    assert body.get("tools", []) == [], "restricted_profile_offered_tools"
+    names = native_tool_names(body)
+    assert set(names) == set(expected_tools), "restricted_profile_offered_tools"
     return receipt_from_request(body, prompt_prefix=CLAUDE.prompt_prefix)
 
 
@@ -91,13 +103,46 @@ def stream_end():
     )
 
 
+def validate_native_launch(values, expected_mcp_tools=()):
+    assert values[values.index("--model") + 1] == CLAUDE.model
+    assert "--dangerously-skip-permissions" not in values
+    assert values[values.index("--permission-mode") + 1] == "default"
+    assert values.count("--tools") == 1 and values[values.index("--tools") + 1] == ""
+    if expected_mcp_tools:
+        from cli_agent_orchestrator.utils.mcp_readiness import READY_FILE_ENV, READY_TOKEN_ENV
+        from cli_agent_orchestrator.utils.mcp_tool_policy import (
+            MCP_TOOL_FILTER_ENV,
+            MCP_TOOL_PROFILE_ENV,
+        )
+
+        assert "--strict-mcp-config" in values and values.count("--mcp-config") == 1
+        config = json.loads(Path(values[values.index("--mcp-config") + 1]).read_text())[
+            "mcpServers"
+        ]
+        assert set(config) == {"cao-mcp-server"}
+        server = config["cao-mcp-server"]
+        assert server["command"] == sys.executable
+        assert server["args"] == ["-m", "cli_agent_orchestrator.mcp_server.server"]
+        assert server["alwaysLoad"] is True
+        env = server["env"]
+        assert env[MCP_TOOL_PROFILE_ENV] == "collaboration"
+        assert json.loads(env[MCP_TOOL_FILTER_ENV]) == ["list_siblings"]
+        assert env[READY_FILE_ENV] and env[READY_TOKEN_ENV]
+
+
 def wrapper(root, args):
+    manifest = json.loads((Path(root) / "manifest.json").read_text())
+    adapter = claude_adapter_for_manifest(manifest)
+
     def validate(values):
-        assert values[values.index("--model") + 1] == CLAUDE.model
-        assert "--dangerously-skip-permissions" not in values
-        assert values[values.index("--permission-mode") + 1] == "default"
+        validate_native_launch(values, adapter.expected_mcp_tools)
 
     def environment(env):
+        if adapter.expected_mcp_tools:
+            for name in ("MCP_TIMEOUT", "MCP_CONNECT_TIMEOUT_MS"):
+                value = os.environ.get(name)
+                assert isinstance(value, str) and value.isdecimal(), "missing_native_mcp_timeout"
+                env[name] = value
         env.update(
             ANTHROPIC_API_KEY="synthetic-local-control",
             ANTHROPIC_BASE_URL=f"http://127.0.0.1:{PORT}",
@@ -105,6 +150,7 @@ def wrapper(root, args):
             CLAUDE_CONFIG_DIR=str(Path(env["HOME"]) / ".claude"),
             DISABLE_TELEMETRY="1",
             DISABLE_ERROR_REPORTING="1",
+            CAO_NATIVE_EXPECTED_MCP_TOOLS=json.dumps(adapter.expected_mcp_tools),
         )
         return env
 
@@ -116,6 +162,44 @@ def wrapper(root, args):
         prepare_environment=environment,
         validate_args=validate,
     )
+
+
+def probe_mcp_import(args, entry, record):
+    """Probe the configured interpreter/environment inside the real namespace."""
+    started = time.monotonic()
+    record(production_mcp_import_started=True)
+    try:
+        servers = json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())["mcpServers"]
+        server = servers["cao-mcp-server"]
+        probe = subprocess.run(
+            [server["command"], "-c", "import cli_agent_orchestrator.mcp_server.server"],
+            env={**os.environ, **server["env"]},
+            cwd=os.environ["HOME"],
+            capture_output=True,
+            timeout=30,
+        )
+        evidence = {
+            "returncode": probe.returncode,
+            "seconds": time.monotonic() - started,
+            "stderr_sha256": hashlib.sha256(probe.stderr).hexdigest(),
+            "stderr_tail": probe.stderr[-2048:].decode("utf-8", errors="replace"),
+        }
+        # Raw diagnostics remain in the owned0600 private evidence directory.
+        save(entry / "mcp-import-probe.json", evidence)
+        record(production_mcp_masked_import_passed=probe.returncode == 0)
+        assert probe.returncode == 0, "production_mcp_import_failed_in_masked_namespace"
+    except subprocess.TimeoutExpired:
+        record(
+            errors=["production_mcp_import_timeout"],
+            production_mcp_import_seconds=time.monotonic() - started,
+        )
+        raise
+    except Exception:
+        record(
+            errors=["production_mcp_import_failed"],
+            production_mcp_import_seconds=time.monotonic() - started,
+        )
+        raise
 
 
 def backend(args):
@@ -136,6 +220,8 @@ def backend(args):
         tty=list(os.get_terminal_size(0)),
         network_namespace=os.readlink("/proc/self/ns/net"),
     )
+    expected_tools = tuple(json.loads(os.environ.get("CAO_NATIVE_EXPECTED_MCP_TOOLS", "[]")))
+    assert expected_tools in {(), ("mcp__cao-mcp-server__list_siblings",)}
     lock = threading.RLock()
 
     def record(**updates):
@@ -189,6 +275,10 @@ def backend(args):
                 model = body["model"]
                 assert isinstance(model, str)
                 if not primary_request(body):
+                    if expected_tools:
+                        assert set(native_tool_names(body)).issubset(
+                            expected_tools
+                        ), "auxiliary_offer_exceeded_profile"
                     record(auxiliary_requests=ledger.get("auxiliary_requests", 0) + 1)
                     if body.get("stream") is True:
                         self.respond(text_stream("Local control", model=model), "text/event-stream")
@@ -208,11 +298,15 @@ def backend(args):
                             ).encode()
                         )
                     return
-                receipt = primary_receipt(body)
+                receipt = primary_receipt(body, expected_tools=expected_tools)
                 assert ledger["primary_requests"] == 0, "duplicate_native_input"
                 record(
                     primary_requests=1,
                     builtin_tool_count=0,
+                    mcp_tool_names=native_tool_names(body),
+                    tool_schema_sha256=hashlib.sha256(
+                        json.dumps(body.get("tools", []), sort_keys=True).encode()
+                    ).hexdigest(),
                     stream_open=True,
                     receipt_sha256=hashlib.sha256(receipt.encode()).hexdigest(),
                 )
@@ -242,6 +336,8 @@ def backend(args):
                 raise
 
     record()
+    if expected_tools:
+        probe_mcp_import(args, entry, record)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     process = subprocess.Popen(["/tmp/claude-native", *args])

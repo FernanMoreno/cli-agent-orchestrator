@@ -96,3 +96,34 @@ def test_anthropic_partial_stream_stays_open_until_explicit_end():
     assert events[2]["delta"] == {"type": "text_delta", "text": "live progress\n\n"}
     assert events[3]["delta"]["text"] == TOKEN
     assert events[-2]["delta"]["stop_reason"] == "end_turn"
+
+
+MCP_TOOL = "mcp__cao-mcp-server__list_siblings"
+
+
+def test_mcp_offer_is_separate_from_empty_builtin_availability():
+    value = body()
+    value["tools"] = [
+        {"name": MCP_TOOL, "description": "Read siblings", "input_schema": {"type": "object"}}
+    ]
+    assert gateway.primary_receipt(value, expected_tools=(MCP_TOOL,)) == TOKEN
+    with pytest.raises(AssertionError):
+        gateway.primary_receipt(value)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        [],
+        ["Bash"],
+        [MCP_TOOL, "Bash"],
+        [MCP_TOOL, MCP_TOOL],
+        ["mcp__foreign__list_siblings"],
+        ["mcp__cao-mcp-server__send_message"],
+    ],
+)
+def test_mcp_offer_missing_extra_duplicate_or_foreign_is_rejected(names):
+    value = body()
+    value["tools"] = [{"name": name} for name in names]
+    with pytest.raises(AssertionError):
+        gateway.primary_receipt(value, expected_tools=(MCP_TOOL,))

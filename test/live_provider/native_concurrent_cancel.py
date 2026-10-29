@@ -14,6 +14,7 @@ from pathlib import Path
 from test.e2e import test_real_provider_matrix as matrix
 from test.fixtures import owned_tmux
 from test.fixtures.cao_server import _pick_free_port, _start_cao_server
+from test.live_provider.native_cancel_adapters import native_profile_text
 from test.live_provider.native_cancel_support import save, send_turn_once, sha
 from test.live_provider.native_cancel_turn import observe_cancel_turn
 from test.live_provider.native_output_witness import NativeOutputWitness
@@ -194,9 +195,7 @@ def run_native_cancel_case(root, postgres_service, adapter):
         for name in (adapter.profile_prefix + "_a", adapter.profile_prefix + "_b"):
             store = home / ".aws/cli-agent-orchestrator/agent-store"
             store.mkdir(parents=True, exist_ok=True)
-            (store / (name + ".md")).write_text(
-                f"---\nname: {name}\ndescription: Native concurrent cancellation control\nprovider: {adapter.provider}\nmodel: {adapter.model}\nrole: developer\nallowedTools: []\n{adapter.profile_options}---\n{adapter.primary_instruction}: Follow the user request.\n"
-            )
+            (store / (name + ".md")).write_text(native_profile_text(name, adapter))
             response = matrix._request(
                 "POST",
                 server.url + "/agents/profiles/install",
@@ -206,6 +205,20 @@ def run_native_cancel_case(root, postgres_service, adapter):
         state["memory_before_b_mib"] = memory()
         b, session = matrix._create_parent(server, adapter.provider, adapter.profile_prefix + "_b")
         sample()
+        if adapter.expected_mcp_tools:
+            from cli_agent_orchestrator.utils.mcp_readiness import (
+                READY_FILE_ENV,
+                READY_TOKEN_ENV,
+                has_ready_signal,
+            )
+
+            config = json.loads(
+                (home / ".aws/cli-agent-orchestrator/tmp" / (b + ".mcp.json")).read_text()
+            )
+            env = config["mcpServers"]["cao-mcp-server"]["env"]
+            assert has_ready_signal(Path(env[READY_FILE_ENV]), env[READY_TOKEN_ENV])
+            state["production_mcp_client_discovery_ready"] = True
+            state["expected_mcp_tool_names"] = list(adapter.expected_mcp_tools)
         if manifest["case_kind"] == "inspect":
             started_entries = entries(b)
             assert (
