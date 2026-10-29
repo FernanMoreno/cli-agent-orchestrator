@@ -315,7 +315,9 @@ def backend(args):
                 while not (entry / "release").exists():
                     assert time.monotonic() < deadline, "stream_budget_expired"
                     tick = ledger["ticks"] + 1
-                    chunk(f"T220-progress-{tick:04d}\n")
+                    # Mini commits only stable top-level Markdown blocks.
+                    # A single newline keeps one paragraph open until EOF.
+                    chunk(f"T220-progress-{tick:04d}\n\n")
                     record(ticks=tick, last_progress=time.monotonic())
                     time.sleep(0.5)
                 chunk("\nT220 finished\n" + receipt + "\n")
