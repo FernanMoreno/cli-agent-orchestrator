@@ -1,5 +1,14 @@
 # Claude Code: análisis y pendientes
 
+**2026-10-29 · T228: ejecución MCP y permiso discovery comprobados con Claude nativo.**
+Con `discovery`, `list_siblings` ejecuta las dos lecturas reales de API/PostgreSQL;
+sin ese permiso, el servidor deniega tras leer el permiso y no consulta hermanos.
+Casos130,63s/124,85s, ambos con resultado final verificado y limpieza/PostgreSQL0-0.
+140 pruebas y64 controles finales solapados. Se usó un permiso temporal del cliente
+para esa única herramienta; aprobación por defecto, auth API y matrices amplias
+siguen separadas. El primer fallo de formato117,10s se conserva como fallido.
+[Resultados y límites](../specs/025-provider-mcp-profiles/validation-t228.md).
+
 **2026-10-29 · T227: oferta MCP nativa verificada con herramientas nativas desactivadas.**
 Claude2.1.303 descubre el servidor MCP de producción y ofrece exactamente
 `mcp__cao-mcp-server__list_siblings`;0 herramientas nativas, recibo final verificado.

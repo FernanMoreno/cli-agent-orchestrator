@@ -1,0 +1,169 @@
+{
+  "schema": "caos.spec025.t228.native-mcp-operation.v1",
+  "date": "2026-10-29",
+  "status": "PASS_BOUNDED_NATIVE_DISCOVERY_OPERATION_AND_MARKER_AUTHORIZATION",
+  "source_head": "74df3baa4184acb21a77090878a09660805ec964",
+  "source_sha256": {
+    "test/live_provider/native_read_bridge.py": "3c9f4862138dd94367f3b450e4c762f31c5869c86d92a8c9a9fea672dd56dd3a",
+    "test/live_provider/test_native_read_bridge.py": "dc3ebbaaef4b659ca87eab550074240154ace50722bf29f40e519b6ffb975dfb",
+    "test/live_provider/native_cancel_adapters.py": "161870cfcab6a953a08d6288991909ebc0bd144d67841ab7bd8a946709240d55",
+    "test/live_provider/native_cancel_support.py": "71d30ca67d5073d029b1f1fc6ead62e5fade7d67a1451f0cf4dd55ed05b80ddd",
+    "test/live_provider/native_concurrent_cancel.py": "303f0c05ed380ab25cfd77ab764e51f75c0f95cdab3ed869346030856b310196",
+    "test/live_provider/claude_cancel_gateway.py": "1a80926adbd466fd52b300b4c004a667edd7e44c3dc3e7811e8484359e21c921",
+    "test/live_provider/test_native_mcp_offer_profile.py": "deb4964544bffb4e7dfa6f8d5b65ea10ea60692be283d9dc75c3e59cde76ddbc"
+  },
+  "native_binary": {
+    "version": "Claude Code 2.1.303",
+    "sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450"
+  },
+  "cases": {
+    "authorized": {
+      "passed": true,
+      "seconds": 130.63,
+      "source_pins": 1891,
+      "executed_source_archive_sha256": "effae168102d1dd1866859d22ed9739d88d35505e5a03f050a2fd03b6c7c7084",
+      "executed_runner_sha256": "1f4944f6040990c7f022ae08d5e290cdb8d4d4700680b9cf81437c38715a46d2",
+      "actual_native_tool_name": "mcp__cao-mcp-server__list_siblings",
+      "builtin_tools_offered": 0,
+      "primary_requests": 1,
+      "correlated_tool_result_requests": 1,
+      "native_tool_use_and_result_correlated": true,
+      "business_success": true,
+      "siblings": [],
+      "discovery_marker_present": true,
+      "persisted_nonempty_unique_group": true,
+      "native_client_permission": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "native_permission_mode": "default",
+      "real_api_gets": {
+        "own_terminal": 1,
+        "own_siblings": 1
+      },
+      "api_statuses": [
+        200,
+        200
+      ],
+      "native_final_turn_state": "verified",
+      "prefinish_fresh_output_bytes": 12082,
+      "minimum_recorded_memory_mib": 7466,
+      "cleanup": {
+        "read_bridge_retired": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "tmux_cleanup": true,
+        "home_removed": true
+      },
+      "postgres_after": {
+        "borrower_connections": 0,
+        "private_databases": 0,
+        "same_held_container": true
+      },
+      "source_preserved": true,
+      "operational_wrapper_reclosed": true
+    },
+    "denied": {
+      "passed": true,
+      "seconds": 124.85,
+      "source_pins": 1891,
+      "executed_source_archive_sha256": "effae168102d1dd1866859d22ed9739d88d35505e5a03f050a2fd03b6c7c7084",
+      "executed_runner_sha256": "89cd79e5f9c1603024e19d5df3b671b786cce65a742b67d35d14c6ccc6a49fa1",
+      "actual_native_tool_name": "mcp__cao-mcp-server__list_siblings",
+      "builtin_tools_offered": 0,
+      "primary_requests": 1,
+      "correlated_tool_result_requests": 1,
+      "native_tool_use_and_result_correlated": true,
+      "business_success": false,
+      "siblings": null,
+      "discovery_marker_present": false,
+      "persisted_nonempty_unique_group": true,
+      "native_client_permission": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "native_permission_mode": "default",
+      "real_api_gets": {
+        "own_terminal": 1,
+        "own_siblings": 0
+      },
+      "api_statuses": [
+        200
+      ],
+      "native_final_turn_state": "verified",
+      "prefinish_fresh_output_bytes": 12364,
+      "minimum_recorded_memory_mib": 7367,
+      "cleanup": {
+        "read_bridge_retired": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "tmux_cleanup": true,
+        "home_removed": true
+      },
+      "postgres_after": {
+        "borrower_connections": 0,
+        "private_databases": 0,
+        "same_held_container": true
+      },
+      "source_preserved": true,
+      "operational_wrapper_reclosed": true,
+      "native_business_denial": "discovery_marker_not_granted"
+    }
+  },
+  "historical_attempts": {
+    "authorized_r1": {
+      "status": "FAILED_NATIVE_TOOL_RESULT_FORMAT",
+      "source_head": "c177924946d5d02a1422d370042a9edc251d142c",
+      "source_preserved": true,
+      "cause": "native tool_result.content string contains JSON plus exact total_tokens system-reminder; original strict JSON parser rejects ExtraData",
+      "no_final_receipt_acceptance": true,
+      "cleanup": {
+        "read_bridge_retired": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "tmux_cleanup": true,
+        "home_removed": true
+      },
+      "executed_source_archive_sha256": "1ced3414527216e07c58446461bacd81564d99b4647894c0181baaf3a3230f39",
+      "seconds": 117.1,
+      "overall_passed": false
+    },
+    "denied_r1": {
+      "executed": false,
+      "claimed": false,
+      "status": "CLOSED_UNCLAIMED_SUPERSEDED_BEFORE_FORMAT_FIX"
+    }
+  },
+  "original_budgets": {
+    "memory_floor_mib": 6144,
+    "native_seconds": 180,
+    "progress_observation_seconds": 5
+  },
+  "verification": {
+    "initial_controls_passed": 101,
+    "expanded_controls_passed": 140,
+    "format_reproduction_red_failures": 1,
+    "format_final_controls_passed": 64,
+    "format_final_controls_overlap_expanded": true,
+    "architecture_kept": 5,
+    "architecture_broken": 0,
+    "style": "Black/isort/diff PASS",
+    "claude_read_reviews": [
+      "5dd58b2a374e4b289d78e2956e8e8227",
+      "e329b718845c4981a5505252eac0a6ac",
+      "e5e9488479ed443fa45e48a0499a1248"
+    ],
+    "actionable_findings_corrected_and_rechecked": true,
+    "production_source_changed": false,
+    "obsidian_operation": "save-20261029-caos-t228-native-operation-authorization",
+    "obsidian_strict_lint_issues": 0
+  },
+  "limits": [
+    "Actual pinned native CLI and production MCP/API/PostgreSQL; Anthropic model HTTP is synthetic, no external inference or served-model attestation",
+    "One temporary explicit native per-tool --allowedTools grant in both cases, permissionMode default; unmodified production native-client approval is not accepted",
+    "The owned API fixture has authentication disabled: acceptance concerns the production MCP discovery marker, not bearer/scopes/tenant isolation",
+    "Authorized discovery returns an expected empty set in a unique persisted nonempty group; seeded nonempty/cross-session/depth/provider/profile/backend/global matrices remain open",
+    "Finite test-only Unix relay permits only the own-caller metadata/siblings GETs, no body/query/write/foreign path, and carries no database credentials",
+    "Native total_tokens reminder is a pinned transport suffix only; no arbitrary prose/JSON substring recovery or model JSON mandate",
+    "Original native failure remains failed; its archived executed bytes are unchanged and its staged denied descriptor was never executed"
+  ],
+  "private_root": "/home/felni/.cache/caos-t228-native-mcp-operation-20261029"
+}
