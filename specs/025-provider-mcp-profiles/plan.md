@@ -1,5 +1,46 @@
 # Plan: provider MCP profiles
 
+## T211 · FIFO cancellation and disconnected ownership
+
+First extend the existing T182 composition fixture into the actual FIFO branch:
+separate real named pipes/readers for A/B, callback/event barriers at stop and
+reattach, cancellation of A's awaiting caller while its shielded job remains
+owned, B transport/receipt progress before releasing A, and strict failure/stale
+generation controls. Preserve real PostgreSQL advisory dispatch ownership and
+original settlement/publication order. No runtime correction without a reproduced
+behavior defect. Use deterministic events rather than delays as readiness.
+
+The actual real-FIFO reproduction confirmed post-reset OLD publication; the
+first real-PostgreSQL FIFO composition controls passed5cases and failed reader
+retirement uncertainty (cancellation released despite an unretired reader).
+Correction uses one bounded current/pending reader nonce per terminal, advanced
+buffer epoch under monitor ownership and fresh FIFO/decoder after acknowledged
+retirement. Replays carry the identity from before their callback, never the
+replacement's identity. Preserve watchdog callbacks across failed retries and
+remove pending metadata on final cleanup; no global queue-drain barrier.
+
+Code review identified two composition defects in the first patch: reconstruction
+must install the newly tagged reader identity before reattachment and direct
+seed; the original owned pane reset/native-child transition must precede fresh
+capture creation, so a late watchdog cannot attach an old live producer to it.
+Do not take a session lifecycle lock under dispatch: creation/restoration already
+use the inverse order. Restoration intentionally clears stale status/capture
+state and reseeds from the proven current pane. An unavailable provider remains
+an unavailable observation target and participates in existing recovery backoff.
+
+The turn-model regression exposed a real distinction: the timer reads the latest
+screen when it fires, while an in-flight screen observation must retain its
+snapshot epoch. Do not pin a timer to the older chunk's scheduling epoch. Exact
+HEAD model baseline passes both seeds; the corrected code passes without
+changing model iterations, seeds or EARLY/SLOW/STUCK assertions.
+
+Then prepare one disabled native derivative of T183, with actual socket
+connection loss and the same two-terminal proof. Review and close-import preflight
+it before any native/services activation; do not infer native success from the
+composition controls or manufacture disconnect by cancelling only a Python task.
+Graphify's existing recovery/FIFO nodes guide source inspection; do not rebuild
+the unrelated dirty graph. Serial tests use one verified held PostgreSQL owner.
+
 ## T210 · stop the borrower before its parent
 
 Claude's connected stdio cleanup has fixed100/400ms escalation before closing

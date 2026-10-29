@@ -1,0 +1,53 @@
+{
+  "schema": "caos.spec025.t211.component.v1",
+  "status": "COMPONENT_PASS_NATIVE_PENDING",
+  "source_base_head": "54c021781b53b5e6b7f571fd320cc53f3ed33009",
+  "real_fifo_old_bytes_after_reset_reproduced": true,
+  "postgres_uncertain_reader_retirement_reproduced": true,
+  "source_modules_changed": [
+    "fifo_reader",
+    "status_monitor",
+    "turn_recovery_service",
+    "terminal_service"
+  ],
+  "current_reader_state_bounded": true,
+  "global_output_queue_drain_added": false,
+  "legacy_initial_output_payload_unchanged": true,
+  "fenced_replacement_output_identity_checked": true,
+  "restored_capture_seed_identity_checked": true,
+  "owned_pane_reset_precedes_replacement_capture": true,
+  "raw_history_claimed_fenced": false,
+  "regression_before_minor_provider_notification": {
+    "passed": 301,
+    "warnings": 2,
+    "seconds": 746.58
+  },
+  "post_consistency_and_import_style_checks": {
+    "passed": 55,
+    "warnings": 2,
+    "seconds": 103.58
+  },
+  "claude_loop_model_criteria_or_iterations_changed": false,
+  "head_model_baseline": {
+    "passed": 2,
+    "seconds": 83.78
+  },
+  "corrected_model_selection": {
+    "passed": 2,
+    "other_expected_or_fixture_failures_retained": 3,
+    "seconds": 123.43
+  },
+  "core_source_typecheck_modules_passed": 3,
+  "broader_source_typecheck_legacy_errors": 17,
+  "legacy_error_multiset_matches_head": true,
+  "global_typecheck_pass_claimed": false,
+  "composition_kept": 5,
+  "composition_broken": 0,
+  "coverage_configuration_or_thresholds_changed": false,
+  "peer_review_verdict": "GO",
+  "native_codex_case_executed": false,
+  "native_control_descriptors_enabled": false,
+  "native_full_cx09_or_t013_accepted": false,
+  "other_provider_native_or_global_accepted": false,
+  "database_schema_or_tool_grants_changed": false
+}

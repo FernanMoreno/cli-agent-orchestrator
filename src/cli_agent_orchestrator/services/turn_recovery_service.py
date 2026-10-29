@@ -23,6 +23,7 @@ from cli_agent_orchestrator.providers.base import (
 )
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.services.event_bus import bus
+from cli_agent_orchestrator.services.fifo_reader import fifo_manager
 from cli_agent_orchestrator.services.status_monitor import status_monitor
 from cli_agent_orchestrator.services.terminal_service import ensure_terminal_is_not_work_owned
 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
@@ -185,6 +186,7 @@ async def _cancel_locked(terminal_id: str, generation: str) -> dict:
     backend = get_backend()
     provider = provider_manager.get_provider(terminal_id)
     try:
+        assert provider is not None
         await asyncio.to_thread(
             backend.reset_window,
             metadata["tmux_session"],
@@ -192,22 +194,45 @@ async def _cancel_locked(terminal_id: str, generation: str) -> dict:
             terminal_id=terminal_id,
         )
         await asyncio.to_thread(transition_native_child, terminal_id, "cancelled")
-        status_monitor.reset_buffer(terminal_id)
-        # respawn-pane can detach the old output pipe. Reattach its existing
-        # FIFO rather than create a second reader or lose the durable log.
-        if not backend.supports_event_inbox():
-            fifo_path = FIFO_DIR / f"{terminal_id}.fifo"
-            if fifo_path.exists():
-                await asyncio.to_thread(
-                    backend.stop_pipe_pane, metadata["tmux_session"], metadata["tmux_window"]
-                )
-                await asyncio.to_thread(
-                    backend.pipe_pane,
-                    metadata["tmux_session"],
-                    metadata["tmux_window"],
-                    str(fifo_path),
-                )
-        assert provider is not None
+        fifo_path = FIFO_DIR / f"{terminal_id}.fifo"
+        capture_identity = None
+        uses_event_inbox = backend.supports_event_inbox()
+        if not uses_event_inbox:
+            capture_identity = await asyncio.to_thread(
+                fifo_manager.prepare_reader_restart, terminal_id
+            )
+            if capture_identity is None:
+                raise RuntimeError("owned FIFO reader is unavailable for cancellation")
+
+        if not uses_event_inbox:
+            assert capture_identity is not None
+            # Install the fence before stopping the pipe or draining its reader:
+            # queued old packets and detections already in flight cannot cross
+            # the cancellation boundary, even if drain needs reconciliation.
+            status_monitor.reset_buffer(
+                terminal_id, provider=provider, capture_identity=capture_identity
+            )
+            await asyncio.to_thread(
+                backend.stop_pipe_pane, metadata["tmux_session"], metadata["tmux_window"]
+            )
+            restarted = await asyncio.to_thread(
+                fifo_manager.restart_reader, terminal_id, capture_identity
+            )
+            if restarted != capture_identity:
+                raise RuntimeError("owned FIFO reader could not be retired and replaced")
+
+            await asyncio.to_thread(
+                backend.pipe_pane,
+                metadata["tmux_session"],
+                metadata["tmux_window"],
+                str(fifo_path),
+            )
+            if not await asyncio.to_thread(
+                fifo_manager.activate_reader_restart, terminal_id, capture_identity
+            ):
+                raise RuntimeError("replacement FIFO reader could not be activated")
+        else:
+            status_monitor.reset_buffer(terminal_id, provider=provider)
         setattr(provider, "_initialized", False)
         with cancelled_turn_initialization(
             provider, terminal_id, metadata["tmux_session"], metadata["tmux_window"], generation

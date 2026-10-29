@@ -7,10 +7,12 @@ import codecs
 import errno
 import logging
 import os
+import secrets
 import select
 import stat
 import threading
 import time
+from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
 from cli_agent_orchestrator.constants import (
@@ -55,6 +57,19 @@ _COALESCE_MAX_BYTES = 64 * 1024
 # fakes. terminal_service wires the real backend calls at create_reader time.
 PaneProbe = Callable[[], str]  # returns the live pane content (tmux capture-pane tail)
 RearmPipe = Callable[[], None]  # re-attaches pipe-pane (stop then start, NOT a bare toggle)
+
+
+@dataclass(frozen=True)
+class _PendingReaderRestart:
+    """One terminal's fenced reader replacement, retained across failed drains."""
+
+    capture_identity: str
+    old_capture_identity: str
+    old_stop_flag: threading.Event
+    old_thread: threading.Thread
+    pane_probe: Optional[PaneProbe]
+    rearm: Optional[RearmPipe]
+    created: bool = False
 
 
 def _ensure_fifo(fifo_path) -> None:
@@ -132,6 +147,9 @@ class FifoManager:
     def __init__(self):
         self._readers: Dict[str, threading.Event] = {}  # terminal_id -> stop flag
         self._threads: Dict[str, threading.Thread] = {}
+        self._capture_ids: Dict[str, str] = {}
+        self._tagged_captures: set[str] = set()
+        self._pending_restarts: Dict[str, _PendingReaderRestart] = {}
         self._lock = threading.Lock()
 
         # ---- pipe-pane liveness watchdog state (issue #388) ----
@@ -201,10 +219,180 @@ class FifoManager:
                 and not stop_flag.is_set()
             )
 
+    def current_capture_identity(self, terminal_id: str) -> Optional[str]:
+        """Return the nonce for the currently owned reader, if one is active."""
+        with self._lock:
+            stop_flag = self._readers.get(terminal_id)
+            capture_identity = self._capture_ids.get(terminal_id)
+            if stop_flag is None or stop_flag.is_set():
+                return None
+            return capture_identity
+
+    def is_current_capture(self, terminal_id: str, capture_identity: object) -> bool:
+        """Check a queued event against the current reader in O(1), without history."""
+        if not isinstance(capture_identity, str):
+            return False
+        with self._lock:
+            stop_flag = self._readers.get(terminal_id)
+            return (
+                stop_flag is not None
+                and not stop_flag.is_set()
+                and self._capture_ids.get(terminal_id) == capture_identity
+            )
+
+    def prepare_reader_restart(self, terminal_id: str) -> Optional[str]:
+        """Reserve one replacement identity and retain callbacks for drain retries.
+
+        A missing live reader is not authority to create a replacement. Every
+        cancellation attempt gets a fresh nonce, while drain retries within that
+        attempt retain the exact old reader and callback authority.
+        """
+        with self._lock:
+            pending = self._pending_restarts.get(terminal_id)
+            stop_flag = self._readers.get(terminal_id)
+            thread = self._threads.get(terminal_id)
+            current_capture = self._capture_ids.get(terminal_id)
+            if pending is None:
+                if (
+                    stop_flag is None
+                    or stop_flag.is_set()
+                    or thread is None
+                    or not thread.is_alive()
+                    or current_capture is None
+                ):
+                    return None
+                old_stop_flag = stop_flag
+                old_thread = thread
+                old_capture_identity = current_capture
+                pane_probe = self._pane_probe.get(terminal_id)
+                rearm = self._rearm.get(terminal_id)
+            elif pending.created:
+                # A previous cancel attempt may have attached its pipe before a
+                # later readiness/CAS failure. Treat that reader as the old
+                # generation for this retry, and rotate both its decoder and ID.
+                if (
+                    stop_flag is None
+                    or stop_flag.is_set()
+                    or thread is None
+                    or not thread.is_alive()
+                    or current_capture != pending.capture_identity
+                ):
+                    return None
+                old_stop_flag = stop_flag
+                old_thread = thread
+                old_capture_identity = current_capture
+                pane_probe = pending.pane_probe
+                rearm = pending.rearm
+            else:
+                old_stop_flag = pending.old_stop_flag
+                old_thread = pending.old_thread
+                old_capture_identity = pending.old_capture_identity
+                pane_probe = pending.pane_probe
+                rearm = pending.rearm
+                old_reader_still_tracked = (
+                    stop_flag is old_stop_flag
+                    and thread is old_thread
+                    and current_capture in {old_capture_identity, None}
+                )
+                old_reader_retired = (
+                    stop_flag is None
+                    and thread is None
+                    and current_capture is None
+                    and old_stop_flag.is_set()
+                    and not old_thread.is_alive()
+                )
+                if not (old_reader_still_tracked or old_reader_retired):
+                    return None
+            self._pending_restarts[terminal_id] = _PendingReaderRestart(
+                capture_identity=secrets.token_hex(16),
+                old_capture_identity=old_capture_identity,
+                old_stop_flag=old_stop_flag,
+                old_thread=old_thread,
+                pane_probe=pane_probe,
+                rearm=rearm,
+            )
+            return self._pending_restarts[terminal_id].capture_identity
+
+    def restart_reader(self, terminal_id: str, capture_identity: str) -> Optional[str]:
+        """Drain and replace a prepared reader; a failed stop keeps its retry state."""
+        with self._lock:
+            pending = self._pending_restarts.get(terminal_id)
+            if pending is None or pending.capture_identity != capture_identity:
+                return None
+            if pending.created:
+                if self._capture_ids.get(terminal_id) == capture_identity:
+                    return capture_identity
+                return None
+            current_stop = self._readers.get(terminal_id)
+            current_thread = self._threads.get(terminal_id)
+            current_capture = self._capture_ids.get(terminal_id)
+            old_reader_still_tracked = (
+                current_stop is pending.old_stop_flag
+                and current_thread is pending.old_thread
+                and current_capture in {pending.old_capture_identity, None}
+            )
+            old_reader_retired = (
+                current_stop is None
+                and current_thread is None
+                and current_capture is None
+                and pending.old_stop_flag.is_set()
+                and not pending.old_thread.is_alive()
+            )
+            if not (old_reader_still_tracked or old_reader_retired):
+                return None
+
+        if not self.stop_reader(terminal_id, preserve_restart=True):
+            return None
+
+        self.create_reader(
+            terminal_id,
+            pane_probe=pending.pane_probe,
+            rearm=pending.rearm,
+            _capture_identity=capture_identity,
+        )
+        with self._lock:
+            if self._capture_ids.get(terminal_id) != capture_identity:
+                return None
+            latest = self._pending_restarts.get(terminal_id)
+            if latest is not None and latest.capture_identity == capture_identity:
+                self._pending_restarts[terminal_id] = _PendingReaderRestart(
+                    capture_identity=latest.capture_identity,
+                    old_capture_identity=latest.old_capture_identity,
+                    old_stop_flag=latest.old_stop_flag,
+                    old_thread=latest.old_thread,
+                    pane_probe=latest.pane_probe,
+                    rearm=latest.rearm,
+                    created=True,
+                )
+        return capture_identity
+
+    def activate_reader_restart(self, terminal_id: str, capture_identity: str) -> bool:
+        """Enable the replacement reader's watchdog after its new pipe is attached."""
+        with self._lock:
+            pending = self._pending_restarts.get(terminal_id)
+            stop_flag = self._readers.get(terminal_id)
+            thread = self._threads.get(terminal_id)
+            if (
+                pending is None
+                or pending.capture_identity != capture_identity
+                or not pending.created
+                or self._capture_ids.get(terminal_id) != capture_identity
+                or stop_flag is None
+                or stop_flag.is_set()
+                or thread is None
+                or not thread.is_alive()
+            ):
+                return False
+            self._pending_restarts.pop(terminal_id, None)
+            enrolled = terminal_id in self._pane_probe and terminal_id in self._rearm
+        if enrolled:
+            self._ensure_watchdog()
+        return True
+
     def stop_all_readers(self) -> bool:
         """Drain this process's output readers without stopping native agents."""
         with self._lock:
-            terminal_ids = list(self._readers)
+            terminal_ids = sorted(set(self._readers) | set(self._pending_restarts))
         results = [self.stop_reader(terminal_id) for terminal_id in terminal_ids]
         return all(results)
 
@@ -213,13 +401,18 @@ class FifoManager:
         terminal_id: str,
         pane_probe: Optional[PaneProbe] = None,
         rearm: Optional[RearmPipe] = None,
+        *,
+        _capture_identity: Optional[str] = None,
+        fence_output: bool = False,
     ) -> None:
         """Create FIFO and start reader thread.
 
         ``pane_probe``/``rearm`` are optional and only supplied by pipe-pane
         (tmux) callers. When both are given, the terminal is enrolled in the
         liveness watchdog (issue #388). Callers that omit them (or backends
-        without pipe-pane) get exactly the old behavior — no watchdog.
+        without pipe-pane) get exactly the old behavior — no watchdog. Recovery
+        callers may request ``fence_output`` so queued output has a fresh
+        identity that can be installed as the monitor's admission fence.
         """
         fifo_path = FIFO_DIR / f"{terminal_id}.fifo"
 
@@ -228,18 +421,34 @@ class FifoManager:
         with self._lock:
             if terminal_id in self._readers:
                 return
+            pending = self._pending_restarts.get(terminal_id)
+            if _capture_identity is not None and (
+                pending is None or pending.capture_identity != _capture_identity
+            ):
+                return
+            if pending is not None and pending.capture_identity != _capture_identity:
+                return
 
             _ensure_fifo(fifo_path)
 
             stop_flag = threading.Event()
+            tagged_capture = _capture_identity is not None or fence_output
+            capture_identity = (
+                _capture_identity if _capture_identity is not None else secrets.token_hex(16)
+            )
             thread = threading.Thread(
                 target=self._reader_loop,
-                args=(terminal_id, fifo_path, stop_flag),
+                args=(terminal_id, fifo_path, stop_flag, capture_identity, tagged_capture),
                 daemon=True,
                 name=f"fifo-{terminal_id}",
             )
             self._readers[terminal_id] = stop_flag
             self._threads[terminal_id] = thread
+            self._capture_ids[terminal_id] = capture_identity
+            if tagged_capture:
+                self._tagged_captures.add(terminal_id)
+            else:
+                self._tagged_captures.discard(terminal_id)
             # Seed the liveness clock BEFORE pipe-pane starts so the first
             # watchdog check has a baseline; the reader bumps it on real data.
             now = time.monotonic()
@@ -256,7 +465,7 @@ class FifoManager:
 
         logger.info("Started FIFO reader for terminal %s", terminal_id)
 
-    def stop_reader(self, terminal_id: str) -> bool:
+    def stop_reader(self, terminal_id: str, *, preserve_restart: bool = False) -> bool:
         """Stop the reader thread (if running) and delete the FIFO file.
 
         Returns True only when the tracked reader has actually exited and the
@@ -278,10 +487,15 @@ class FifoManager:
             thread = self._threads.get(terminal_id)
             if stop_flag is not None:
                 stop_flag.set()
-            # Drop watchdog bookkeeping so a re-created terminal starts clean and
-            # the watchdog stops probing a gone pane.
-            self._pane_probe.pop(terminal_id, None)
-            self._rearm.pop(terminal_id, None)
+            # Invalidate every queued packet from this reader immediately. A
+            # cancellation restart retains only its replacement callbacks in
+            # _pending_restarts; the stopped reader is never re-enabled.
+            self._capture_ids.pop(terminal_id, None)
+            self._tagged_captures.discard(terminal_id)
+            if not preserve_restart:
+                self._pending_restarts.pop(terminal_id, None)
+                self._pane_probe.pop(terminal_id, None)
+                self._rearm.pop(terminal_id, None)
             self._liveness.pop(terminal_id, None)
             self._last_data_at.pop(terminal_id, None)
             self._rearm_failures.pop(terminal_id, None)
@@ -335,6 +549,9 @@ class FifoManager:
             if complete:
                 self._readers.pop(terminal_id, None)
                 self._threads.pop(terminal_id, None)
+                if not preserve_restart:
+                    self._pane_probe.pop(terminal_id, None)
+                    self._rearm.pop(terminal_id, None)
 
             # Unlink even for an untracked stale FIFO or a pending stop. Keep
             # this under the creation lock so a new reader cannot claim the
@@ -349,7 +566,14 @@ class FifoManager:
 
         return complete
 
-    def _reader_loop(self, terminal_id: str, fifo_path, stop_flag: threading.Event) -> None:
+    def _reader_loop(
+        self,
+        terminal_id: str,
+        fifo_path,
+        stop_flag: threading.Event,
+        capture_identity: Optional[str] = None,
+        tagged_capture: bool = False,
+    ) -> None:
         """Read chunks from FIFO and publish to the event bus.
 
         Never blocks in a FIFO ``open()`` (issue #382): the previous design
@@ -387,6 +611,8 @@ class FifoManager:
         the FIFO — the watchdog only cares whether the FIFO delivered data
         in a window, not whether/when that data was published.
         """
+        if capture_identity is None:
+            capture_identity = secrets.token_hex(16)
         topic = f"terminal.{terminal_id}.output"
         read_fd = -1
         keepalive_fd = -1
@@ -451,7 +677,10 @@ class FifoManager:
                 ):
                     text = decoder.decode(pending)
                     if text:
-                        bus.publish(topic, {"data": text})
+                        payload = {"data": text}
+                        if tagged_capture:
+                            payload["capture_identity"] = capture_identity
+                        bus.publish(topic, payload)
                     pending.clear()
         except Exception as e:
             if not stop_flag.is_set():
@@ -462,7 +691,10 @@ class FifoManager:
             try:
                 text = decoder.decode(pending, final=True)
                 if text:
-                    bus.publish(topic, {"data": text})
+                    payload = {"data": text}
+                    if tagged_capture:
+                        payload["capture_identity"] = capture_identity
+                    bus.publish(topic, payload)
             except Exception:
                 pass
             for fd in (read_fd, keepalive_fd):
@@ -552,10 +784,21 @@ class FifoManager:
         because divergence requires a healthy baseline to diverge FROM, and a
         pipe that's been dead since t=0 never gets one. See module docstring.
         """
-        probe = self._pane_probe.get(terminal_id)
-        rearm = self._rearm.get(terminal_id)
-        if probe is None or rearm is None:
-            return
+        # Pin the reader generation together with the callbacks before either
+        # slow operation. A completed probe/rearm must never borrow the nonce
+        # of a replacement reader.
+        with self._lock:
+            probe = self._pane_probe.get(terminal_id)
+            rearm = self._rearm.get(terminal_id)
+            capture_identity = self._capture_ids.get(terminal_id)
+            tagged_capture = terminal_id in self._tagged_captures
+            if (
+                probe is None
+                or rearm is None
+                or terminal_id in self._pending_restarts
+                or (terminal_id in self._readers and capture_identity is None)
+            ):
+                return
 
         # probe() is a slow tmux `capture-pane` call — deliberately made
         # without holding self._lock so it never blocks stop_reader() (or
@@ -575,7 +818,11 @@ class FifoManager:
             with self._lock:
                 # stop_reader() may have unenrolled this terminal while probe()
                 # was in flight; don't resurrect state for a terminal that's gone.
-                if terminal_id not in self._pane_probe:
+                if (
+                    terminal_id not in self._pane_probe
+                    or terminal_id in self._pending_restarts
+                    or self._capture_ids.get(terminal_id) != capture_identity
+                ):
                     return
                 failures = self._probe_failures.get(terminal_id, 0) + 1
                 if failures >= PIPE_LIVENESS_MAX_PROBE_FAILURES:
@@ -619,7 +866,11 @@ class FifoManager:
             # gone — _watchdog_loop only ever iterates _pane_probe, so a
             # resurrected entry in _liveness/_last_data_at is never revisited
             # and never cleaned up, leaking slowly across create/stop churn.
-            if terminal_id not in self._pane_probe:
+            if (
+                terminal_id not in self._pane_probe
+                or terminal_id in self._pending_restarts
+                or self._capture_ids.get(terminal_id) != capture_identity
+            ):
                 return
             # probe() succeeded — the session is reachable again, so clear any
             # accumulated probe-failure strikes (harness-control#845): a brief
@@ -751,10 +1002,24 @@ class FifoManager:
         if not do_rearm:
             return
 
-        self._rearm_stalled_pipe(terminal_id, content, rearm, cold_start=cold_start)
+        self._rearm_stalled_pipe(
+            terminal_id,
+            content,
+            rearm,
+            cold_start=cold_start,
+            capture_identity=capture_identity,
+            tagged_capture=tagged_capture,
+        )
 
     def _rearm_stalled_pipe(
-        self, terminal_id: str, content: str, rearm: RearmPipe, *, cold_start: bool
+        self,
+        terminal_id: str,
+        content: str,
+        rearm: RearmPipe,
+        *,
+        cold_start: bool,
+        capture_identity: Optional[str] = None,
+        tagged_capture: bool = False,
     ) -> None:
         """Re-arm a confirmed-stalled pipe-pane forwarder and replay the live
         pane snapshot into the pipeline, shared by both stall checks above —
@@ -793,12 +1058,26 @@ class FifoManager:
                 else "stalled (pane advanced, no FIFO data)"
             ),
         )
+        # The probe can finish after cancellation began. Recheck its pinned
+        # identity immediately before the callback, and never let a late replay
+        # borrow the replacement reader's identity after the callback returns.
+        with self._lock:
+            if (
+                terminal_id not in self._pane_probe
+                or terminal_id in self._pending_restarts
+                or self._capture_ids.get(terminal_id) != capture_identity
+            ):
+                return
         try:
             rearm()
         except Exception:
             logger.exception("failed to re-arm pipe-pane for terminal %s", terminal_id)
             with self._lock:
-                if terminal_id not in self._pane_probe:
+                if (
+                    terminal_id not in self._pane_probe
+                    or terminal_id in self._pending_restarts
+                    or self._capture_ids.get(terminal_id) != capture_identity
+                ):
                     return
                 failures = self._rearm_failures.get(terminal_id, 0) + 1
                 self._rearm_failures[terminal_id] = failures
@@ -830,12 +1109,19 @@ class FifoManager:
 
         replay = content.replace("\n", "\r\n")
         with self._lock:
-            if terminal_id not in self._pane_probe:
+            if (
+                terminal_id not in self._pane_probe
+                or terminal_id in self._pending_restarts
+                or self._capture_ids.get(terminal_id) != capture_identity
+            ):
                 return
             self._rearm_failures.pop(terminal_id, None)
             self._last_data_at[terminal_id] = time.monotonic()
 
-        bus.publish(f"terminal.{terminal_id}.output", {"data": replay})
+        payload = {"data": replay}
+        if tagged_capture and capture_identity is not None:
+            payload["capture_identity"] = capture_identity
+        bus.publish(f"terminal.{terminal_id}.output", payload)
 
 
 # Module-level singleton

@@ -33,6 +33,7 @@ def test_existing_provider_output_is_observed_without_launch_or_resend(
     monkeypatch.setattr("cli_agent_orchestrator.services.fifo_reader.FIFO_DIR", tmp_path / "fifo")
     monkeypatch.setattr(ts, "FIFO_DIR", tmp_path / "fifo")
     monkeypatch.setattr(ts, "fifo_manager", fifo)
+    monkeypatch.setattr("cli_agent_orchestrator.services.fifo_reader.fifo_manager", fifo)
     monkeypatch.setattr(ts, "status_monitor", monitor)
     monkeypatch.setattr(ts, "provider_manager", manager)
     monkeypatch.setattr("cli_agent_orchestrator.services.status_monitor.provider_manager", manager)

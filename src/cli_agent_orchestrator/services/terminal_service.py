@@ -4806,7 +4806,9 @@ def restore_terminal_observation(terminal_id: str) -> bool:
         window_name = metadata["tmux_window"]
         if not backend.terminal_observation_target_matches(terminal_id, session_name, window_name):
             return False
-        provider_manager.get_provider(terminal_id)  # restores dialect and receipt fence
+        provider = provider_manager.get_provider(terminal_id)  # restores dialect and receipt fence
+        if provider is None:
+            return False
         fifo_path = str(FIFO_DIR / f"{terminal_id}.fifo")
 
         def assert_target() -> None:
@@ -4833,15 +4835,25 @@ def restore_terminal_observation(terminal_id: str) -> bool:
         try:
             if not fifo_manager.stop_reader(terminal_id):
                 return False
-            fifo_manager.create_reader(terminal_id, pane_probe=probe, rearm=rearm)
+            fifo_manager.create_reader(
+                terminal_id, pane_probe=probe, rearm=rearm, fence_output=True
+            )
             assert_target()
+            capture_identity = fifo_manager.current_capture_identity(terminal_id)
+            if capture_identity is None:
+                raise RuntimeError("replacement FIFO reader has no capture identity")
+            status_monitor.reset_buffer(
+                terminal_id, provider=provider, capture_identity=capture_identity
+            )
             backend.stop_pipe_pane(session_name, window_name)
             backend.pipe_pane(session_name, window_name, fifo_path)
             snapshot = backend.get_history(session_name, window_name, tail_lines=5000)
             # A direct seed avoids losing an event before the lifespan's bus
             # subscriber is ready. CRLF preserves pyte's column positioning.
             status_monitor._process_chunk(
-                terminal_id, snapshot.replace("\r\n", "\n").replace("\n", "\r\n")
+                terminal_id,
+                snapshot.replace("\r\n", "\n").replace("\n", "\r\n"),
+                capture_identity=capture_identity,
             )
         except BaseException:
             fifo_manager.stop_reader(terminal_id)

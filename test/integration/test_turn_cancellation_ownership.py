@@ -1,7 +1,10 @@
 """Recovery composition with real PostgreSQL; CLI/reset readiness are controlled."""
 
 import asyncio
+import os
+import queue
 import threading
+from pathlib import Path
 from test.postgres.orm import configured_orm_engine
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -71,7 +74,16 @@ async def harness(monkeypatch):
             h.events.append((tid, "initializing"))
             assert db.get_terminal_turn_recovery(tid)["state"] == "cancelling"
             assert db.get_native_child_for_terminal(tid)["state"] == "cancelled"
-            h.monitor.reset_buffer.assert_any_call(tid)
+            if h.backend.supports_event_inbox():
+                h.monitor.reset_buffer.assert_any_call(tid, provider=provider)
+            else:
+                resets = [
+                    call for call in h.monitor.reset_buffer.call_args_list if call.args == (tid,)
+                ]
+                assert len(resets) == 1
+                assert resets[0].kwargs["provider"] is provider
+                assert isinstance(resets[0].kwargs["capture_identity"], str)
+                assert resets[0].kwargs["capture_identity"]
             if tid == h.blocked:
                 h.ready_entered.set()
                 await h.ready_release.wait()
@@ -333,3 +345,185 @@ async def test_blocked_reset_does_not_serialize_an_unrelated_terminal(harness):
     h.reset_release.set()
     assert (await first)["state"] == "cancelled"
     assert h.publish.call_count == 2
+
+
+@pytest_asyncio.fixture
+async def fifo_harness(harness, monkeypatch, tmp_path):
+    """Real per-terminal FIFOs; reset/readiness remain controlled, never a native CLI."""
+    from cli_agent_orchestrator.services import fifo_reader as fifo
+
+    h = harness
+    h.other = h.create("5678abcd")
+    h.backend.supports_event_inbox.return_value = False
+    monkeypatch.setattr(fifo, "FIFO_DIR", tmp_path)
+    monkeypatch.setattr(recovery, "FIFO_DIR", tmp_path)
+    manager = fifo.FifoManager()
+    monkeypatch.setattr(fifo, "fifo_manager", manager)
+    monkeypatch.setattr(recovery, "fifo_manager", manager, raising=False)
+    h.fifo = manager
+    h.pipe_entered = threading.Event()
+    h.pipe_release = threading.Event()
+    h.pipe_release.set()
+    h.pipe_stage = None
+    h.pipe_failure = None
+    received = {tid: queue.Queue() for tid in (h.tid, h.other)}
+    ready = {tid: threading.Event() for tid in received}
+    original_open = fifo._open_fifo
+    original_stop = manager.stop_reader
+    original_create = manager.create_reader
+
+    def create_reader(tid, *args, **kwargs):
+        ready[tid].clear()
+        return original_create(tid, *args, **kwargs)
+
+    monkeypatch.setattr(manager, "create_reader", create_reader)
+
+    def opened(path, flags):
+        fd = original_open(path, flags)
+        if flags & os.O_WRONLY:
+            ready[Path(path).stem].set()
+        return fd
+
+    def output(topic, payload):
+        tid = topic.split(".")[1]
+        received[tid].put(dict(payload))
+
+    monkeypatch.setattr(fifo, "_open_fifo", opened)
+    monkeypatch.setattr(fifo, "bus", SimpleNamespace(publish=output))
+    for tid in received:
+        manager.create_reader(tid)
+        assert await asyncio.to_thread(ready[tid].wait, 10)
+
+    def pipe_boundary(stage, tid):
+        assert db.get_terminal_turn_recovery(tid)["state"] == "cancelling"
+        h.events.append((tid, stage))
+        if tid == h.tid and stage == h.pipe_stage:
+            h.pipe_entered.set()
+            assert h.pipe_release.wait(10), "FIFO boundary not released"
+        if tid == h.tid and stage == h.pipe_failure:
+            raise RuntimeError("owned FIFO attachment uncertain")
+
+    def detach(session, tid):
+        assert session == "session"
+        pipe_boundary("detach", tid)
+
+    def attach(session, tid, path):
+        assert session == "session" and path == str(tmp_path / f"{tid}.fifo")
+        pipe_boundary("attach", tid)
+        assert ready[tid].wait(10)
+        fd = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            os.write(fd, (tid + ":replacement\n").encode())
+        finally:
+            os.close(fd)
+
+    h.backend.stop_pipe_pane.side_effect = detach
+    h.backend.pipe_pane.side_effect = attach
+
+    async def received_replacement(tid):
+        payload = await asyncio.to_thread(received[tid].get, True, 10)
+        assert payload["data"] == tid + ":replacement\n"
+        resets = [call for call in h.monitor.reset_buffer.call_args_list if call.args == (tid,)]
+        assert len(resets) == 1
+        assert payload["capture_identity"] == resets[0].kwargs["capture_identity"]
+        assert received[tid].empty()
+
+    h.received_replacement = received_replacement
+    try:
+        yield h
+    finally:
+        h.pipe_release.set()
+        jobs = list(recovery._cancel_jobs)
+        if jobs:
+            await asyncio.wait_for(asyncio.gather(*jobs, return_exceptions=True), 15)
+        for tid in received:
+            assert await asyncio.to_thread(original_stop, tid)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["detach", "attach"])
+async def test_fifo_disconnected_caller_keeps_ownership_while_other_terminal_progresses(
+    fifo_harness, stage
+):
+    h = fifo_harness
+    h.pipe_stage = stage
+    h.pipe_release.clear()
+    caller = asyncio.create_task(recovery.cancel_turn(h.tid, GEN))
+    assert await asyncio.to_thread(h.pipe_entered.wait, 10)
+    owner = next(lock.owner for lock in h.locks if lock.tid == h.tid)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert not owner.done()
+    assert_fenced(h)
+    h.providers[h.tid].initialize.assert_not_awaited()
+    assert (await asyncio.wait_for(recovery.cancel_turn(h.other, GEN), 10))["state"] == "cancelled"
+    await h.received_replacement(h.other)
+    other_receipt = dict(db.get_native_child_for_terminal(h.other))
+    assert not owner.done() and h.held
+    h.pipe_release.set()
+    assert (await asyncio.wait_for(owner, 10))["state"] == "cancelled"
+    await h.received_replacement(h.tid)
+    assert db.get_native_child_for_terminal(h.other) == other_receipt
+    assert h.publish.call_count == 2
+    assert not h.held
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["detach", "attach"])
+async def test_fifo_attachment_failure_retains_fence_and_does_not_stop_sibling(fifo_harness, stage):
+    h = fifo_harness
+    h.pipe_failure = stage
+    with pytest.raises(RuntimeError, match="FIFO attachment uncertain"):
+        await recovery.cancel_turn(h.tid, GEN)
+    assert_fenced(h)
+    h.providers[h.tid].initialize.assert_not_awaited()
+    h.providers[h.tid].mark_turn_receipt_cancelled.assert_not_called()
+    assert (await asyncio.wait_for(recovery.cancel_turn(h.other, GEN), 10))["state"] == "cancelled"
+    await h.received_replacement(h.other)
+    h.monitor.publish_receipt_reconciliation.assert_called_once_with(h.tid)
+
+
+@pytest.mark.asyncio
+async def test_fifo_reader_retirement_uncertainty_prevents_receipt_release(
+    fifo_harness, monkeypatch
+):
+    h = fifo_harness
+    original_stop = h.fifo.stop_reader
+    monkeypatch.setattr(
+        h.fifo,
+        "stop_reader",
+        lambda tid, **kwargs: False if tid == h.tid else original_stop(tid, **kwargs),
+    )
+    with pytest.raises(RuntimeError):
+        await recovery.cancel_turn(h.tid, GEN)
+    assert_fenced(h)
+    h.providers[h.tid].initialize.assert_not_awaited()
+    assert not any(tid == h.tid and stage == "attach" for tid, stage in h.events)
+    assert (await asyncio.wait_for(recovery.cancel_turn(h.other, GEN), 10))["state"] == "cancelled"
+    await h.received_replacement(h.other)
+
+
+@pytest.mark.asyncio
+async def test_fifo_foreign_generation_cannot_mutate_pipe_or_reader(fifo_harness):
+    h = fifo_harness
+    with pytest.raises(recovery.TurnRecoveryConflict):
+        await recovery.cancel_turn(h.tid, NEXT_GEN)
+    h.backend.reset_window.assert_not_called()
+    h.backend.stop_pipe_pane.assert_not_called()
+    h.backend.pipe_pane.assert_not_called()
+    assert db.get_terminal_turn_recovery(h.tid)["state"] == "pending"
+    assert h.fifo.has_reader(h.tid) and h.fifo.has_reader(h.other)
+
+
+@pytest.mark.asyncio
+async def test_fifo_missing_reader_does_not_turn_unknown_capture_into_ready(fifo_harness):
+    h = fifo_harness
+    assert await asyncio.to_thread(h.fifo.stop_reader, h.tid)
+    with pytest.raises(RuntimeError, match="owned FIFO reader is unavailable"):
+        await recovery.cancel_turn(h.tid, GEN)
+    assert_fenced(h)
+    h.providers[h.tid].initialize.assert_not_awaited()
+    h.providers[h.tid].mark_turn_receipt_cancelled.assert_not_called()
+    assert (await asyncio.wait_for(recovery.cancel_turn(h.other, GEN), 10))["state"] == "cancelled"
+    await h.received_replacement(h.other)

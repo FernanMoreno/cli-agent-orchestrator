@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from cli_agent_orchestrator.providers.base import BaseProvider
 
 logger = logging.getLogger(__name__)
+_MISSING_CAPTURE_IDENTITY = object()
 
 # Statuses that represent a stable "ready" state — the agent has finished
 # producing output and is waiting for further input. Once latched, the
@@ -160,6 +161,10 @@ class StatusMonitor:
         # overlap alone cannot distinguish a fresh, byte-identical turn from a
         # stale screen redraw.
         self._buffer_epochs: Dict[str, int] = {}
+        # Presence means a cancellation restart has opted this terminal into
+        # strict FIFO capture checks. ``None`` deliberately fences every event
+        # until the reserved replacement reader is created.
+        self._fifo_capture_fences: Dict[str, Optional[str]] = {}
         self._last_status: Dict[str, TerminalStatus] = {}
         # Generation in which PROCESSING was last established from provider
         # output/screen evidence. A cached PROCESSING latch can survive
@@ -335,11 +340,23 @@ class StatusMonitor:
             try:
                 event = await queue.get()
                 terminal_id = terminal_id_from_topic(event["topic"])
-                await asyncio.to_thread(self._process_chunk, terminal_id, event["data"]["data"])
+                payload = event["data"]
+                await asyncio.to_thread(
+                    self._process_chunk,
+                    terminal_id,
+                    payload["data"],
+                    capture_identity=payload.get("capture_identity", _MISSING_CAPTURE_IDENTITY),
+                )
             except Exception as e:
                 logger.exception(f"Error in StatusMonitor: {e}")
 
-    def _process_chunk(self, terminal_id: str, chunk: str) -> None:
+    def _process_chunk(
+        self,
+        terminal_id: str,
+        chunk: str,
+        *,
+        capture_identity: object = _MISSING_CAPTURE_IDENTITY,
+    ) -> None:
         """Append chunk to the rolling buffer and (re)detect status.
 
         Two detection paths share one latch/publish backend (_apply_detection):
@@ -352,6 +369,12 @@ class StatusMonitor:
           resumed) and at quiescence (output stopped) — see
           _schedule_screen_detection.
         """
+        # Fast rejection before provider lookup; repeat under the append lock
+        # below because a replacement can begin while this lookup is running.
+        with self._lock:
+            if not self._accept_fifo_capture_locked(terminal_id, capture_identity):
+                return
+
         provider = provider_manager.get_provider(terminal_id)
         screen_capable = provider is not None and getattr(
             provider, "supports_screen_detection", False
@@ -360,6 +383,8 @@ class StatusMonitor:
         state_buffer_max = get_server_settings()["state_buffer_max"]
 
         with self._lock:
+            if not self._accept_fifo_capture_locked(terminal_id, capture_identity):
+                return
             buffer = self._buffers.get(terminal_id, "") + chunk
             recorder = getattr(provider, "record_status_chunk", None)
             if callable(recorder):
@@ -426,6 +451,23 @@ class StatusMonitor:
             return
 
         self._schedule_screen_detection(terminal_id, provider)
+
+    def _accept_fifo_capture_locked(self, terminal_id: str, capture_identity: object) -> bool:
+        """Admit legacy events unless a terminal has an active restart fence."""
+        if not isinstance(capture_identity, str):
+            return terminal_id not in self._fifo_capture_fences
+        if (
+            terminal_id in self._fifo_capture_fences
+            and capture_identity != self._fifo_capture_fences[terminal_id]
+        ):
+            return False
+        from cli_agent_orchestrator.services.fifo_reader import fifo_manager
+
+        return fifo_manager.is_current_capture(terminal_id, capture_identity)
+
+    def _is_current_buffer_epoch(self, terminal_id: str, epoch: int) -> bool:
+        with self._lock:
+            return self._buffer_epochs.get(terminal_id, 0) == epoch
 
     def _apply_detection(
         self,
@@ -948,6 +990,8 @@ class StatusMonitor:
         mid-burst, which is what eliminates the flaps naive per-chunk rendered
         detection produces.
         """
+        with self._lock:
+            buffer_epoch = self._buffer_epochs.get(terminal_id, 0)
         loop = self._loop or self._running_loop()
         if loop is None:
             # No event loop (unit tests / offline replay): detect immediately
@@ -957,12 +1001,14 @@ class StatusMonitor:
                 terminal_id,
                 self._detect_screen(terminal_id, provider),
                 provider=provider,
+                buffer_epoch=buffer_epoch,
                 observed_turn=turn,
                 observed_started=started,
             )
             return
 
         with self._lock:
+            buffer_epoch = self._buffer_epochs.get(terminal_id, 0)
             was_bursting = self._bursting.get(terminal_id, False)
             self._bursting[terminal_id] = True
             handle = self._quiesce_handle.pop(terminal_id, None)
@@ -979,12 +1025,15 @@ class StatusMonitor:
                 self._detect_screen(terminal_id, provider),
                 provider=provider,
                 settled=False,
+                buffer_epoch=buffer_epoch,
                 observed_turn=turn,
                 observed_started=started,
             )
         else:
-            self._midburst_processing_probe(terminal_id, provider)
+            self._midburst_processing_probe(terminal_id, provider, buffer_epoch=buffer_epoch)
 
+        # A timer reads the latest screen when it fires. Pin the observation
+        # epoch in the callback, not the epoch of the chunk that scheduled it.
         self._arm_quiesce_timer(loop, terminal_id, self._on_screen_quiescent, provider)
 
     def _observe_native_interaction(
@@ -1200,7 +1249,9 @@ class StatusMonitor:
                 if self._native_observation_pins.get(terminal_id) == current_pin:
                     self._native_observation_pins.pop(terminal_id, None)
 
-    def _midburst_processing_probe(self, terminal_id: str, provider) -> None:
+    def _midburst_processing_probe(
+        self, terminal_id: str, provider, *, buffer_epoch: Optional[int] = None
+    ) -> None:
         """Catch a busy turn whose TUI never goes quiet.
 
         A spinner redrawn every second keeps the terminal bursting for the whole
@@ -1260,16 +1311,26 @@ class StatusMonitor:
             # only ever applies PROCESSING, which the settled guard does not gate —
             # but stated explicitly so the flag stays honest about the frame.
             self._apply_detection(
-                terminal_id, TerminalStatus.PROCESSING, settled=False, observed_turn=turn
+                terminal_id,
+                TerminalStatus.PROCESSING,
+                settled=False,
+                buffer_epoch=buffer_epoch,
+                observed_turn=turn,
             )
 
-    def _on_screen_quiescent(self, terminal_id: str, provider) -> None:
+    def _on_screen_quiescent(
+        self, terminal_id: str, provider, buffer_epoch: Optional[int] = None
+    ) -> None:
         """Quiescence timer fired: output stopped, so the screen has settled.
 
         Fires on the loop; offload the (potentially blocking) screen detection
         to a worker thread so the loop stays free.
         """
         with self._lock:
+            current_epoch = self._buffer_epochs.get(terminal_id, 0)
+            if buffer_epoch is not None and buffer_epoch != current_epoch:
+                return
+            buffer_epoch = current_epoch
             self._bursting[terminal_id] = False
             self._quiesce_handle.pop(terminal_id, None)
 
@@ -1282,16 +1343,18 @@ class StatusMonitor:
                 terminal_id,
                 detected,
                 provider=provider,
+                buffer_epoch=buffer_epoch,
                 observed_turn=turn,
                 observed_started=started,
             )
-            await asyncio.to_thread(
-                self._observe_native_interaction,
-                terminal_id,
-                provider,
-                detected,
-                visible_screen,
-            )
+            if self._is_current_buffer_epoch(terminal_id, buffer_epoch):
+                await asyncio.to_thread(
+                    self._observe_native_interaction,
+                    terminal_id,
+                    provider,
+                    detected,
+                    visible_screen,
+                )
 
         loop = self._loop or self._running_loop()
         if loop is None:
@@ -1301,10 +1364,12 @@ class StatusMonitor:
                 terminal_id,
                 detected,
                 provider=provider,
+                buffer_epoch=buffer_epoch,
                 observed_turn=turn,
                 observed_started=started,
             )
-            self._observe_native_interaction(terminal_id, provider, detected, visible_screen)
+            if self._is_current_buffer_epoch(terminal_id, buffer_epoch):
+                self._observe_native_interaction(terminal_id, provider, detected, visible_screen)
         else:
             self._spawn_tracked(loop, _detect_and_apply())
 
@@ -1477,13 +1542,14 @@ class StatusMonitor:
                 buffer_epoch=epoch,
                 observed_started=started_at_read,
             )
-            await asyncio.to_thread(
-                self._observe_native_interaction,
-                terminal_id,
-                quiesce_provider,
-                detected,
-                visible_screen,
-            )
+            if self._is_current_buffer_epoch(terminal_id, epoch):
+                await asyncio.to_thread(
+                    self._observe_native_interaction,
+                    terminal_id,
+                    quiesce_provider,
+                    detected,
+                    visible_screen,
+                )
 
         loop = self._loop or self._running_loop()
         if loop is None:
@@ -1497,9 +1563,10 @@ class StatusMonitor:
                 buffer_epoch=epoch,
                 observed_started=started_at_read,
             )
-            self._observe_native_interaction(
-                terminal_id, quiesce_provider, detected, visible_screen
-            )
+            if self._is_current_buffer_epoch(terminal_id, epoch):
+                self._observe_native_interaction(
+                    terminal_id, quiesce_provider, detected, visible_screen
+                )
         else:
             self._spawn_tracked(loop, _detect_and_apply())
 
@@ -1849,6 +1916,7 @@ class StatusMonitor:
         with self._lock:
             self._buffers.pop(terminal_id, None)
             self._buffer_epochs.pop(terminal_id, None)
+            self._fifo_capture_fences.pop(terminal_id, None)
             self._last_status.pop(terminal_id, None)
             self._native_observation_pins.pop(terminal_id, None)
             self._processing_generation.pop(terminal_id, None)
@@ -1881,17 +1949,33 @@ class StatusMonitor:
             handle = self._quiesce_handle.pop(terminal_id, None)
         self._cancel_quiesce_handle(handle)
 
-    def reset_buffer(self, terminal_id: str) -> None:
+    def reset_buffer(
+        self,
+        terminal_id: str,
+        provider=None,
+        *,
+        capture_identity: object = _MISSING_CAPTURE_IDENTITY,
+    ) -> None:
         """Clear the rolling buffer + last-known status WITHOUT forgetting the
         terminal.
 
         Used when a provider relaunches a different CLI mode on the SAME
         ``terminal_id`` (e.g. Kiro's TUI -> ``--legacy-ui`` fallback). Without
         this, the retry re-derives status from a buffer still full of stale bytes
-        from the failed first attempt and can spuriously time out.
+        from the failed first attempt and can spuriously time out. Cancellation
+        supplies a reserved FIFO identity before draining the old reader, fencing
+        queued old and untagged events. The epoch bump invalidates detections
+        already running against the old buffer; a supplied provider is notified
+        in this same reentrant-lock critical section.
         """
         with self._lock:
+            if capture_identity is not _MISSING_CAPTURE_IDENTITY:
+                self._fifo_capture_fences[terminal_id] = (
+                    capture_identity if isinstance(capture_identity, str) else None
+                )
             self._buffers[terminal_id] = ""
+            epoch = self._buffer_epochs.get(terminal_id, 0) + 1
+            self._buffer_epochs[terminal_id] = epoch
             self._evidence_mark.pop(terminal_id, None)
             self._last_status.pop(terminal_id, None)
             self._native_observation_pins.pop(terminal_id, None)
@@ -1906,11 +1990,13 @@ class StatusMonitor:
             self._buffer_changed_at.pop(terminal_id, None)
             self._pending_stale_capture.pop(terminal_id, None)
             self._confirmed_stale_capture_commit.pop(terminal_id, None)
-            self._capture_generation.pop(terminal_id, None)
+            self._capture_generation[terminal_id] = self._capture_generation.get(terminal_id, 0) + 1
             # Turn counters are NOT reset: this is one terminal relaunching its CLI
             # in a different mode during init, and a caller may already be holding a
             # turn number for it. Restarting the count would make that number match
             # a different turn.
+            if provider is not None:
+                provider.notify_status_buffer_reset(epoch)
             handle = self._quiesce_handle.pop(terminal_id, None)
         self._cancel_quiesce_handle(handle)
 

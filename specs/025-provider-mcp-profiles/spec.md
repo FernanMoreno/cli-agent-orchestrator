@@ -1,5 +1,32 @@
 # Provider MCP profiles and current acceptance
 
+## Disconnected cancellation through FIFO · T211
+
+FR189/SC173: Validate the currently unaccepted FIFO branch of generation-bound
+cancellation with deterministic detach/reattach barriers, a disconnected caller
+and an unrelated terminal that continues independently. Use actual private
+named pipes/readers and verified PostgreSQL ownership in composition controls;
+keep backend reset/readiness controlled and label that limit explicitly.
+Retain cancellation authority through reattachment/readiness and final durable
+CAS. Failures must retain the reconciliation fence; stale generations must
+produce no reset/pipe mutation. Never resend the interrupted prompt.
+
+The real-FIFO reproduction confirms OLD output can be published after buffer
+reset while the same reader/inode is reused. Fence replacement output with a
+bounded identity for the current reader: retire the old reader successfully,
+create a fresh FIFO/decoder, preserve watchdog callbacks and reject queued old
+or untagged packets for the fenced replacement before status/evidence effects.
+Advance the status-buffer epoch atomically to invalidate detections already in
+flight. Preserve legacy unmarked readers/backends; never add cross-terminal
+consumer-drain waits or per-turn history to solve one reader's lifetime.
+
+Before native acceptance, separately bind the installed Codex package, actual
+HTTP disconnect, terminal/process generations, private config/dummy credentials,
+loopback-only provider, real FIFO ownership and sibling progress. Keep180s,
+6144MiB, operator-login isolation and exact retirement criteria. Offline FIFO
+and PostgreSQL results do not establish native-client or all-terminal acceptance.
+Do not repeat partial quota: T179/T181 already cover it in their scopes.
+
 ## Owned MCP pre-stop before CLI retirement · T210
 
 FR188/SC172: Correct production owner ordering: before ordinary Claude terminal
