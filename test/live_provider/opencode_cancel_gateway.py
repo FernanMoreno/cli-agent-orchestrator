@@ -159,6 +159,12 @@ def wrapper(root, args):
             if key not in {"OPENCODE_AUTH_CONTENT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_API_KEY"}:
                 env[key] = value
     env["OPENCODE_API_KEY"] = "synthetic-local-control"
+    # Mini defaults to hiding tools and buffers assistant text in that mode.
+    # Observe live text through its supported DISPLAY setting; agent/model
+    # permissions stay in the unchanged CAO-generated configuration.
+    cli = json.loads(env.get("OPENCODE_CLI_CONFIG_CONTENT", "{}"))
+    cli.setdefault("mini", {})["tools"] = "show"
+    env["OPENCODE_CLI_CONFIG_CONTENT"] = json.dumps(cli)
     os.execve("/usr/bin/bwrap", command, env)
 
 
@@ -177,6 +183,9 @@ def backend(args):
         "binary_sha256": sha("/tmp/opencode-native"),
         "tty": list(os.get_terminal_size(0)),
         "errors": [],
+        "mini_tools_display": json.loads(os.environ["OPENCODE_CLI_CONFIG_CONTENT"])["mini"][
+            "tools"
+        ],
     }
     lock = threading.RLock()
 
@@ -261,7 +270,7 @@ def backend(args):
                 assert body["model"] == "glm-5.3-flash", "unexpected_primary_model"
                 assert ledger["primary_requests"] == 0, "duplicate_native_input"
                 names = sorted(t["function"]["name"] for t in body.get("tools", []))
-                assert not any("cao" in name.lower() for name in names), "unexpected_mcp_offer"
+                assert not names, "display_setting_must_not_expand_model_tools"
                 record(
                     primary_requests=1,
                     builtin_tool_count=len(names),
