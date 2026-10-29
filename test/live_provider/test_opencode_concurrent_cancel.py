@@ -316,6 +316,13 @@ def test_native_cancel_a_while_b_continues(postgres_service):
         matrix._delete_session(server, session)
         state["case_passed"] = True
     finally:
+        # Keep the first failure and its raw capture even when initialization
+        # failed before we could sample a native session.
+        if not (state.get("case_passed") or state.get("preflight_passed")):
+            for capture in (home / ".aws/cli-agent-orchestrator/logs/terminal").glob("*.log"):
+                archived = root / ("failed-" + capture.name)
+                shutil.copyfile(capture, archived)
+                archived.chmod(0o600)
         save(root / "case-result.json", state)
         if server is not None:
             server.stop()
@@ -328,6 +335,10 @@ def test_native_cancel_a_while_b_continues(postgres_service):
             owner_stopped=api_process is None or api_process.poll() is not None,
         )
         assert state["tmux_cleanup"]
+        native_records = [
+            json.loads(path.read_text())
+            for path in (root / "observations").glob("*/*/wrapper.json")
+        ]
         for record in native_records:
             fd = None
             if not retired(record["pid"], (record["uid"], record["birth"])):
@@ -337,10 +348,15 @@ def test_native_cancel_a_while_b_continues(postgres_service):
                     assert select.select([fd], [], [], 5)[0], "owned_wrapper_still_alive"
                 finally:
                     os.close(fd)
-        state["observed_processes_retired"] = all(
+        state["observed_processes_retired"] = bool(processes) and all(
             retired(pid, identity) for pid, identity in processes.items()
         )
-        assert state["observed_processes_retired"] and processes
+        state["wrapper_processes_retired"] = bool(native_records) and all(
+            retired(record["pid"], (record["uid"], record["birth"])) for record in native_records
+        )
+        assert state["wrapper_processes_retired"] or not native_records
+        if state.get("case_passed") or state.get("preflight_passed"):
+            assert state["observed_processes_retired"] and state["wrapper_processes_retired"]
         shutil.rmtree(home)
         state["home_removed"] = not home.exists()
         save(root / "case-result.json", state)

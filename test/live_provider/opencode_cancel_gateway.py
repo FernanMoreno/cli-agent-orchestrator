@@ -128,7 +128,7 @@ def wrapper(root, args):
         "/tmp/gateway.py",
         "--ro-bind",
         str(binary),
-        "/tmp/opencode",
+        "/tmp/opencode-native",
         "--proc",
         "/proc",
         "--dev",
@@ -167,7 +167,7 @@ def backend(args):
         "stream_open": False,
         "loopback_only": True,
         "operator_home_masked": True,
-        "binary_sha256": sha("/tmp/opencode"),
+        "binary_sha256": sha("/tmp/opencode-native"),
         "tty": list(os.get_terminal_size(0)),
         "errors": [],
     }
@@ -297,7 +297,7 @@ def backend(args):
         config_source_sha256=sha(config_path), network_namespace=os.readlink("/proc/self/ns/net")
     )
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    process = subprocess.Popen(["/tmp/opencode", *args])
+    process = subprocess.Popen(["/tmp/opencode-native", *args])
     try:
         raise SystemExit(process.wait())
     finally:
