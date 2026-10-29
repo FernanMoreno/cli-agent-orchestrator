@@ -1,5 +1,14 @@
 # Codex: análisis y pendientes
 
+**2026-10-29 · T223/T224: recorrido común y corrección de permisos Claude.**
+Un único controlador/sandbox valida cancelación; adaptadores nativos separados.
+Claude con `allowedTools:[]` ofrecía18 herramientas nuevas: corregido con selección
+positiva del mapeo común, oferta real0 y442 pruebas aprobadas. Preflight57,11s PASS.
+Cancelación A26,46s y continuidad B verificadas por componentes; la prueba completa
+sigue FALLIDA porque no se verifica el recibo final largo de B. No se cierra T223.
+[Resultados y límites](../specs/025-provider-mcp-profiles/validation-t223.md),
+[permisos](../specs/025-provider-mcp-profiles/validation-t224.md).
+
 **2026-10-29 · T222: descubrimiento de receptores con memoria cliente acotada.**
 Los dos sondeos usan un cursor PostgreSQL por bloques de128 filas y alimentan
 las cuatro entregas acotadas, conservando filtros y orden. Pruebas reales de

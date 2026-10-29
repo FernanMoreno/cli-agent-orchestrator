@@ -4,6 +4,8 @@ import re
 import time
 from test.e2e import test_real_provider_matrix as matrix
 
+from cli_agent_orchestrator.models.provider import ProviderType
+
 
 def observe_cancel_turn(
     server,
@@ -16,7 +18,7 @@ def observe_cancel_turn(
     after_cancel,
     provider="codex",
 ):
-    assert provider in {"codex", "opencode_cli"}
+    ProviderType(provider)  # Validate identity, not a hardcoded acceptance/capability allowlist.
     assert re.fullmatch(r"[0-9a-f]{32}", generation)
     url = server.url + "/terminals/" + terminal_id
     metadata = matrix._request("GET", url)

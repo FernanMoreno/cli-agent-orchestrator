@@ -1,0 +1,150 @@
+{
+  "schema": "caos.spec025.t223.shared-native-cancel.v1",
+  "date": "2026-10-29",
+  "status": "PARTIAL_NATIVE_FINAL_RECEIPT_PENDING",
+  "source_base_head": "a4367c9b21b9ea6796662d4c40fedfb45e53ae00",
+  "source_sha256": {
+    "test/live_provider/claude_cancel_gateway.py": "91852de2746b036e3d82a7e5ea3c2b42db11b8dd3b16442ac1f9ced20a05f8a6",
+    "test/live_provider/native_cancel_adapters.py": "04174166b0f9b382bcafba6576676ee17689818c910349058c263fe693d4d803",
+    "test/live_provider/native_cancel_support.py": "f1dc89ea13aa201a630d432f9dbc63afd0bc4b7634da56f9b8481fd2345f39cd",
+    "test/live_provider/native_cancel_turn.py": "c09121bacb034d4114b14fdf493aed6fb074afb377ca7ef3c5b4fe3ff5603c0c",
+    "test/live_provider/native_concurrent_cancel.py": "32c7221895ce6c9a795590dc991c3485ae3b46e642f0234456d1cc335c8e1bbf",
+    "test/live_provider/opencode_cancel_gateway.py": "2bf7e4feebe5926be842340dea0afa05725fb2bbd1bae5bb15cda11040513e29",
+    "test/live_provider/test_claude_cancel_gateway.py": "094833c63c023285b03035fe524d3fdf9bd6ced69aa2a22de649c6f937e4afa3",
+    "test/live_provider/test_claude_concurrent_cancel.py": "f4912fd21b856a1efaa5777393318df8c234fb687a450d62b928bef311ef0091",
+    "test/live_provider/test_native_cancel_support.py": "b96e5bb6674c079a40b4ac74f9f6c186a135647fa0a06b987eaf102a5e24ccb9",
+    "test/live_provider/test_native_cancel_turn.py": "788397b80be8772f8135bcb5b7c5786e5de7119e492187f72234d3c2bd5d0446",
+    "test/live_provider/test_opencode_cancel_gateway.py": "7759f9e679ea1bd71ec999bce427efd331e12bacd57608b8c98eb84bd5dc04a2",
+    "test/live_provider/test_opencode_concurrent_cancel.py": "786743131e651c9df458630b2a2a97b31409e01b3cbf79d226aaed177a43feb3",
+    "test/live_provider/native_output_witness.py": "4c2fa99dcdc76111ecb95c8e6f59843d7220b2c3041ca3fbe10dfd319a674611",
+    "test/live_provider/test_native_output_witness.py": "a9ff1c918fc22689b92a9aba632c76ffc4940641f2ba588d0d1dc4ff47bd3e71",
+    "test/providers/test_claude_cancel_restart.py": "c2a3ec5b7ea4653bd4e807fd8794f1e1794404c0d604e03a277f0873e3ad1c5c",
+    "test/providers/test_claude_positive_tools.py": "2b66d28d38b72f7aba67535027f0986dd5732b57a160320e79e6bafb59c2c1ba",
+    "src/cli_agent_orchestrator/providers/claude_code.py": "d7c539b6fe03279dbf022ce265d0987fedf9675a839bf53ef989499cafbf42dc"
+  },
+  "native_binary": {
+    "version": "Claude Code2.1.303",
+    "sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450"
+  },
+  "runtime_change": "T224 positive native builtin availability; cancellation service unchanged",
+  "preflight": {
+    "attempt": "r3",
+    "passed": true,
+    "seconds": 57.11,
+    "native_tools_offered": 0,
+    "primary_requests": 1,
+    "admission_previous_sequence": 3,
+    "admission_sequence": 4,
+    "live_output_bytes": 10902,
+    "own_final_turn_verified": true,
+    "cleanup": true,
+    "postgres_borrowers_and_databases_after": [
+      0,
+      0
+    ]
+  },
+  "concurrent": {
+    "attempt": "r2",
+    "passed": false,
+    "seconds": 284.01,
+    "source_pins": 1882,
+    "cancellation": {
+      "schema": "caos.managed-native-cancel.v1",
+      "terminal_id": "b8c03fd7",
+      "cancel_http_status": 200,
+      "cancel_seconds": 26.458,
+      "stale_generation_http_status": 409,
+      "same_generation_cancelled": true,
+      "receipt_state": "cancelled",
+      "same_child_join_verified": true,
+      "cleanup_preserved_verdict": true,
+      "parent_alive_after_child_delete": true,
+      "before_and_after_owned_witnesses_returned": true
+    },
+    "b_same_generation": true,
+    "b_same_fifo": true,
+    "b_process_alive_during_cancel": true,
+    "b_fresh_output_bytes": 26527,
+    "b_output_witnesses": [
+      {
+        "terminal_id": "d033f440",
+        "start_byte": 11165,
+        "end_byte": 37692,
+        "new_bytes": 26527,
+        "semantic_marker": "T223-progress-0056",
+        "production_compositor": true,
+        "marker_absent_before_boundary": true
+      }
+    ],
+    "a_replacement_requests": 0,
+    "a_original_retired": true,
+    "b_backend_finished": true,
+    "b_own_final_turn_verified": false,
+    "remaining_boundary": "assistant head lost under TUI redraw; full raw-mode tmux history replay has no extractable assistant head",
+    "cleanup": {
+      "observed_processes_retired": true,
+      "wrapper_processes_retired": true,
+      "tmux_cleanup": true,
+      "home_removed": true
+    },
+    "postgres_borrowers_and_databases_after": [
+      0,
+      0
+    ]
+  },
+  "retained_failures": [
+    {
+      "attempt": "preflight-r1",
+      "seconds": 57.45,
+      "classification": "actual restricted native tool offer leak;18unmapped builtins;T224 corrects it"
+    },
+    {
+      "attempt": "preflight-r2",
+      "seconds": 62.63,
+      "classification": "harness absolute sequence1 assumption;actualnativeoffer0;strictprevious+1 now tested"
+    },
+    {
+      "attempt": "concurrent-r1",
+      "seconds": 104.44,
+      "classification": "harness raw-literal progress does not reconstruct ANSI cursor patches;originalFAILpreserved"
+    }
+  ],
+  "verification": {
+    "initial_harness": {
+      "passed": 156,
+      "skipped_native": 2,
+      "seconds": 50.59
+    },
+    "product_regression": {
+      "passed": 442,
+      "seconds": 269.37,
+      "warnings": 2
+    },
+    "post_admission_controls": {
+      "passed": 122,
+      "seconds": 42.13
+    },
+    "final_compositor_controls": {
+      "passed": 131,
+      "seconds": 52.6,
+      "warnings": 2
+    },
+    "mypy_source_files": 1,
+    "mypy_issues": 0,
+    "composition_kept": 5,
+    "composition_broken": 0,
+    "reviews": [
+      "b2897e7cce7e493090a0c43ffcc7cbbf",
+      "bfd731f9db014a10bae28ceca4c2b8f0",
+      "3d2ce87fc2b842ca969c3548a158926f"
+    ]
+  },
+  "scope_limits": [
+    "Controlled synthetic loopback Anthropic response; no external inference/operator credentials",
+    "No global Claude cancellation acceptance until B own final receipt verifies",
+    "Native MCP offer afterpositive builtinselection remains separate",
+    "No global T013 capacity or other native/backend/profile acceptance",
+    "Failed attempts and their immutable source/executed archives remain failed"
+  ],
+  "private_root": "/home/felni/.cache/caos-t223-shared-native-cancel-20261029"
+}

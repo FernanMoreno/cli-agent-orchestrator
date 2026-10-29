@@ -1,0 +1,40 @@
+{
+  "schema": "caos.spec025.t224.native-builtin-availability.v1",
+  "date": "2026-10-29",
+  "status": "PASS_NATIVE_BUILTIN_AVAILABILITY_MCP_MATRIX_PENDING",
+  "source_base_head": "a4367c9b21b9ea6796662d4c40fedfb45e53ae00",
+  "source_sha256": {
+    "src/cli_agent_orchestrator/providers/claude_code.py": "d7c539b6fe03279dbf022ce265d0987fedf9675a839bf53ef989499cafbf42dc",
+    "test/providers/test_claude_positive_tools.py": "2b66d28d38b72f7aba67535027f0986dd5732b57a160320e79e6bafb59c2c1ba"
+  },
+  "reproduction": {
+    "native_version": "2.1.303",
+    "explicit_allowed_tools": [],
+    "unexpected_builtin_offer_count": 18,
+    "first_wrong_boundary": "finite get_disallowed_tools universe cannot exclude new native names"
+  },
+  "correction": {
+    "common_cao_mapping": "get_allowed_tools",
+    "native_availability_flag": "--tools",
+    "empty_argv_preserved": true,
+    "none_and_star_unchanged": true,
+    "legacy_disallowed_tools_preserved": true,
+    "mcp_config_and_filter_compilation_preserved": true
+  },
+  "verification": {
+    "actual_empty_native_offer": 0,
+    "preflight_r3_seconds": 57.11,
+    "own_final_receipt_verified": true,
+    "product_regression_passed": 442,
+    "mypy_issues": 0,
+    "composition_kept": 5,
+    "composition_broken": 0,
+    "claude_review": "3d2ce87fc2b842ca969c3548a158926f"
+  },
+  "limits": [
+    "Actual native offer proof is scoped to the empty builtin grant on2.1.303",
+    "MCP-bearing native compatibility and broader provider/profile matrix are not inferred",
+    "T223 concurrent final B receipt remains pending; this fix does not solve renderer attribution"
+  ],
+  "private_root": "/home/felni/.cache/caos-t223-shared-native-cancel-20261029"
+}

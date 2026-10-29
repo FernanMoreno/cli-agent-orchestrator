@@ -731,8 +731,17 @@ class ClaudeCodeProvider(BaseProvider):
         # Treat a present-but-empty list as deny-all (same as Grok). A falsy
         # check used to skip the flags entirely for allowed_tools=[].
         if self._allowed_tools is not None and "*" not in self._allowed_tools:
-            from cli_agent_orchestrator.utils.tool_mapping import get_disallowed_tools
+            from cli_agent_orchestrator.utils.tool_mapping import (
+                get_allowed_tools,
+                get_disallowed_tools,
+            )
 
+            # A finite denylist misses tools introduced by a newer native CLI.
+            # Positively select built-ins from the shared CAO capability mapping;
+            # preserve an empty argv value for deny-all. MCP server/filter policy
+            # remains separate from this native built-in availability control.
+            allowed_native = get_allowed_tools("claude_code", self._allowed_tools)
+            command_parts.extend(["--tools", ",".join(allowed_native)])
             disallowed = get_disallowed_tools("claude_code", self._allowed_tools)
             for tool in disallowed:
                 command_parts.extend(["--disallowedTools", tool])

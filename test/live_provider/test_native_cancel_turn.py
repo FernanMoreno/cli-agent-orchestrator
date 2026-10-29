@@ -9,7 +9,7 @@ pytestmark = pytest.mark.offline_database
 GEN = "a" * 32
 
 
-@pytest.mark.parametrize("provider", ["codex", "opencode_cli"])
+@pytest.mark.parametrize("provider", ["codex", "opencode_cli", "claude_code"])
 @pytest.mark.parametrize(
     "mutation",
     [

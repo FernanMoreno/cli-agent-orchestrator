@@ -12,39 +12,19 @@ import re
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from pathlib import Path
+from test.live_provider.native_cancel_support import (
+    isolated_wrapper,
+    receipt_from_request,
+    save,
+    sha,
+)
 
 MODEL = "opencode-go/glm-5.3-flash"
 PORT = 43871  # Separate network namespace for every native process.
 PRIMARY_INSTRUCTION = "T220_NATIVE_PRIMARY_INSTRUCTION"
-
-
-def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def save(path, value):
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\n")
-    temporary.chmod(0o600)
-    temporary.replace(path)
-
-
-def receipt_from_request(body):
-    """Bind the receipt to the last user message, never system/assistant text."""
-    users = [m for m in body["messages"] if m.get("role") == "user"]
-    assert users
-    text = users[-1]["content"]
-    if isinstance(text, list):
-        text = "\n".join(p["text"] for p in text if p.get("type") == "text")
-    assert isinstance(text, str)
-    receipts = set(re.findall(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", text))
-    assert len(receipts) == 1
-    assert "T220 controlled native turn" in text
-    return receipts.pop()
 
 
 def primary_request(body):
@@ -68,104 +48,34 @@ def primary_request(body):
 
 
 def wrapper(root, args):
-    root = Path(root).resolve(strict=True)
-    manifest = json.loads((root / "manifest.json").read_text())
-    binary = Path(manifest["binary"])
-    assert sha(binary) == manifest["binary_sha256"]
-    if args == ["--version"]:
-        os.execv(str(binary), [str(binary), *args])
-    assert args[:2] == ["mini", "--standalone"]
-    assert args[args.index("--model") + 1] == MODEL
-    home = Path(os.environ["HOME"]).resolve(strict=True)
-    assert home.is_relative_to(root / "case")
-    tid = os.environ["CAO_TERMINAL_ID"]
-    assert re.fullmatch(r"[a-f0-9]{8}", tid)
-    attempts = root / "observations" / tid
-    attempts.mkdir(parents=True, mode=0o700, exist_ok=True)
-    assert len(list(attempts.glob("attempt-*"))) < 2
-    entry = Path(tempfile.mkdtemp(prefix="attempt-", dir=attempts))
-    fields = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()
-    save(
-        entry / "wrapper.json",
-        {"pid": os.getpid(), "birth": fields[19], "uid": os.getuid(), "terminal_id": tid},
+    def validate(values):
+        assert values[:2] == ["mini", "--standalone"]
+        assert values[values.index("--model") + 1] == MODEL
+
+    def environment(env):
+        for key, value in os.environ.items():
+            if key.startswith("OPENCODE_") or key.startswith("XDG_"):
+                if key not in {
+                    "OPENCODE_AUTH_CONTENT",
+                    "OPENCODE_CONFIG_CONTENT",
+                    "OPENCODE_API_KEY",
+                }:
+                    env[key] = value
+        env["OPENCODE_API_KEY"] = "synthetic-local-control"
+        # Diagnostic display only; model/server permissions remain unchanged.
+        cli = json.loads(env.get("OPENCODE_CLI_CONFIG_CONTENT", "{}"))
+        cli.setdefault("mini", {})["tools"] = "show"
+        env["OPENCODE_CLI_CONFIG_CONTENT"] = json.dumps(cli)
+        return env
+
+    isolated_wrapper(
+        root,
+        args,
+        gateway=__file__,
+        native_path="/tmp/opencode-native",
+        prepare_environment=environment,
+        validate_args=validate,
     )
-    gateway = Path(__file__).resolve()
-    assert sha(gateway) == manifest["gateway_sha256"]
-    # Native subprocess sees the private HOME, but cannot see database secrets.
-    masks = []
-    for key in ("CAO_DATABASE_CONFIG_FILE",):
-        if os.environ.get(key) and Path(os.environ[key]).is_file():
-            masks += ["--ro-bind", "/dev/null", os.environ[key]]
-    if (home / ".cao-postgres").exists():
-        masks += ["--tmpfs", str(home / ".cao-postgres")]
-    command = [
-        "bwrap",
-        "--unshare-all",
-        "--die-with-parent",
-        "--uid",
-        "0",
-        "--gid",
-        "0",
-        "--cap-add",
-        "CAP_NET_ADMIN",
-        "--ro-bind",
-        "/",
-        "/",
-        "--tmpfs",
-        "/mnt/c",
-        "--ro-bind",
-        manifest["repo"],
-        manifest["repo"],
-        "--tmpfs",
-        "/home/felni",
-        "--ro-bind",
-        "/home/felni/.local/share/uv/python",
-        "/home/felni/.local/share/uv/python",
-        "--bind",
-        str(home),
-        str(home),
-        *masks,
-        "--tmpfs",
-        "/tmp",
-        "--bind",
-        str(entry),
-        "/tmp/evidence",
-        "--ro-bind",
-        str(gateway),
-        "/tmp/gateway.py",
-        "--ro-bind",
-        str(binary),
-        "/tmp/opencode-native",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--chdir",
-        str(home),
-        "--",
-        sys.executable,
-        "/tmp/gateway.py",
-        "backend",
-        *args,
-    ]
-    env = {
-        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
-        "HOME": str(home),
-        "LANG": "C.UTF-8",
-        "TERM": os.environ.get("TERM", "xterm-256color"),
-    }
-    for key, value in os.environ.items():
-        if key.startswith("OPENCODE_") or key.startswith("XDG_"):
-            if key not in {"OPENCODE_AUTH_CONTENT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_API_KEY"}:
-                env[key] = value
-    env["OPENCODE_API_KEY"] = "synthetic-local-control"
-    # Mini defaults to hiding tools and buffers assistant text in that mode.
-    # Observe live text through its supported DISPLAY setting; agent/model
-    # permissions stay in the unchanged CAO-generated configuration.
-    cli = json.loads(env.get("OPENCODE_CLI_CONFIG_CONTENT", "{}"))
-    cli.setdefault("mini", {})["tools"] = "show"
-    env["OPENCODE_CLI_CONFIG_CONTENT"] = json.dumps(cli)
-    os.execve("/usr/bin/bwrap", command, env)
 
 
 def backend(args):
