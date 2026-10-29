@@ -1,0 +1,188 @@
+{
+  "date": "2026-10-29",
+  "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+  "status": "PASS_BOUNDED_NATIVE_ACCEPTANCE",
+  "provider": "claude_code",
+  "binary_version": "2.1.303",
+  "binary_sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450",
+  "real_path": [
+    "pinned native Claude CLI",
+    "production CAO MCP stdio child",
+    "owned API",
+    "existing PostgreSQL"
+  ],
+  "model_endpoint": "controlled loopback Anthropic; no external inference or operator login",
+  "original_limits": {
+    "memory_floor_mib": 6144,
+    "turn_deadline_seconds": 180,
+    "progress_deadline_seconds": 5
+  },
+  "source_and_execution_archived": true,
+  "same_postgres_retained_zero_borrowers_zero_databases_after_each": true,
+  "regression_evidence": {
+    "discovery_controls": "92 PASS including real API/PostgreSQL fixture",
+    "expanded_run": "278 PASS/7 FAIL; failed test assumptions retained",
+    "corrected_controls": "10 PASS",
+    "final_stdio": "13 PASS",
+    "expanded_and_corrected_distinct_cases": 285,
+    "counts_overlap_do_not_sum": true,
+    "fixed_private_test_assumptions": [
+      "Python3.13 HTTP422 reason is Unprocessable Content",
+      "MCP structured_content is the structured transport contract; SDK data may be Root dataclass"
+    ]
+  },
+  "architecture": "5 contracts kept,0 broken",
+  "reviews": [
+    "4b6460345b1d44ffacd4f2bc5fde04f4",
+    "dbcebb72e89545f3a686650dd9671ce6",
+    "74cbe6c0132747d19b0a9ec6bca7828f"
+  ],
+  "historical_preflight": {
+    "cross_session_r1": "FAILED before API/native on dead old readiness owner; cause of old process death unknown",
+    "remaining_r1": "unclaimed closed descriptors superseded; not executed",
+    "correction": "reuse-only coordinator validates live PID birth/state and same healthy service, no container restart",
+    "zombie_and_fresh_root_admission_controls": "PASS"
+  },
+  "schema": "caos.t231.acceptance.v1",
+  "cases": {
+    "catalog-interaction-r2": {
+      "passed": true,
+      "pytest_seconds": 102.95,
+      "controller_seconds": 125.195,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "fba62ae8fa3cfb5a22d6cc138fac725d17174cc2434dbe7b48bb4051217e0946",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 3,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__cao_acknowledge_user_answers",
+        "mcp__cao-mcp-server__cao_ask_user",
+        "mcp__cao-mcp-server__cao_wait_for_user_answers"
+      ],
+      "minimum_recorded_memory_mib": 11056,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 11957,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "profile": "interaction"
+    },
+    "catalog-collaboration-r2": {
+      "passed": true,
+      "pytest_seconds": 104.49,
+      "controller_seconds": 129.823,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "0ab3289cee819cdc3d9f4f3921282b9f76571f859f7993c889dd08e881718688",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 8,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__cao_acknowledge_user_answers",
+        "mcp__cao-mcp-server__cao_ask_user",
+        "mcp__cao-mcp-server__cao_escalate_interaction",
+        "mcp__cao-mcp-server__cao_get_interaction",
+        "mcp__cao-mcp-server__cao_list_interactions",
+        "mcp__cao-mcp-server__cao_wait_for_user_answers",
+        "mcp__cao-mcp-server__list_siblings",
+        "mcp__cao-mcp-server__send_message"
+      ],
+      "minimum_recorded_memory_mib": 11063,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 12378,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "profile": "collaboration"
+    },
+    "catalog-coordination-r2": {
+      "passed": true,
+      "pytest_seconds": 105.2,
+      "controller_seconds": 125.946,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "09c58348fc0e0682115fc24d09f0b47452b5a9d9c9e1d2c88fc7d9c6c7d8de36",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 12,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__assign_local_cao_task",
+        "mcp__cao-mcp-server__cancel_local_cao_task",
+        "mcp__cao-mcp-server__cao_acknowledge_user_answers",
+        "mcp__cao-mcp-server__cao_ask_user",
+        "mcp__cao-mcp-server__cao_escalate_interaction",
+        "mcp__cao-mcp-server__cao_get_interaction",
+        "mcp__cao-mcp-server__cao_list_interactions",
+        "mcp__cao-mcp-server__cao_wait_for_user_answers",
+        "mcp__cao-mcp-server__get_local_cao_task",
+        "mcp__cao-mcp-server__list_local_cao_peers",
+        "mcp__cao-mcp-server__list_siblings",
+        "mcp__cao-mcp-server__send_message"
+      ],
+      "minimum_recorded_memory_mib": 9417,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 11977,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "profile": "coordination"
+    }
+  },
+  "scope": [
+    "actual full profile native offers3/8/12 with0builtins",
+    "production stdio full/partial/empty filters and representative direct unknown/outside profile calls/resources/prompts denied",
+    "catalog offer does not establish operation authority; missing discovery/interaction/local coordination authority remains denied"
+  ],
+  "not_accepted": [
+    "all offered operations successful",
+    "other providers/binaries/backends",
+    "global T007/T011 gates",
+    "external cao.work.message from generic send_message"
+  ]
+}

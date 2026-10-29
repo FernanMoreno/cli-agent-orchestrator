@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-29",
+  "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+  "status": "PREPARED_EXTERNAL_RETRY_MEMORY_BLOCKED",
+  "current_external_acceptance": false,
+  "prior_external_acceptance": {
+    "source_head": "7f6cdff012462900402a4d020ed110334cfc5b26",
+    "receipt": "validation-t132-work-message.json",
+    "equivalence": "validation-t135-work-source-equivalence.json",
+    "retains_exact_old_scope": true
+  },
+  "current_source_reconciliation": {
+    "pinned_repository_paths": 46,
+    "tracked_launchers": 2,
+    "drift_from_accepted_slice": [
+      "src/cli_agent_orchestrator/api/main.py",
+      "src/cli_agent_orchestrator/clients/database.py"
+    ],
+    "work_service_repository_routes_unchanged": true,
+    "fresh_execution_required": true
+  },
+  "current_regression": {
+    "passed": 191,
+    "warnings": 5,
+    "seconds": 405.76,
+    "real_postgres": true
+  },
+  "first_current_external_execution": {
+    "status": "FAILED",
+    "code": "fresh_job_message_count_exceeded_expected_phase",
+    "seconds": 206.691,
+    "failed_receipt_sha256": "8bfdd7d7661de04650824a117a12adb5e531e455a810bccaefd3b7a5b738c581",
+    "source_archive_sha256": "9ebf52d3a2f2db331644aa6eee7e68ee2732ee9aeafc3e5784e1ffedfd889d57",
+    "confirmed_own_sql": {
+      "message_rows": 2,
+      "sent_events": 2,
+      "ack_events": 2,
+      "one_message_per_A_B": true,
+      "duplicate_messages": false
+    },
+    "first_incorrect_boundary": "private strict live intermediate observer raced already completed real ACK B",
+    "prior_phases": "lost response A, API restart, A replay and receiver/sender generation2 progressed",
+    "old_failed_receipt_preserved": true
+  },
+  "exact_current_failed_resource_compensation": {
+    "status": "APPLIED_AFTER_INDEPENDENT_PROOFS",
+    "database_count": 3,
+    "role_count": 6,
+    "owned_attempt_artifact_sets_absent": 4,
+    "api_and_runner_groups_absent": true,
+    "nonce_comments_owners_and_zero_sessions_verified": true,
+    "private_credential_copies_removed": true,
+    "same_postgres_retained": true,
+    "remaining_private_databases": 0,
+    "remaining_work_roles": 0,
+    "receipt_sha256": "5d4d4356e68c592695233ee8260f301d599f2baa63fc029bdb284dfdaf6df146",
+    "historical_jobs_untouched": true
+  },
+  "private_harness_correction": {
+    "original_runner_functions_AST_unchanged": 72,
+    "original_count_predicates_AST_unchanged": true,
+    "only_changed_original_runner_function": "run_acceptance",
+    "private_source_test_files_pinned": 11,
+    "strict_intermediate": {
+      "rows": 2,
+      "sent": 2,
+      "acks": 1,
+      "B_acknowledged_at": null
+    },
+    "strict_final": {
+      "rows": 2,
+      "sent": 2,
+      "acks": 2
+    },
+    "barrier": "exact owned receiver generation/message pending/release;15s bounded; no DB transaction/global mutex during wait; release before API teardown",
+    "upstream": "real original exactly once, real return/authority error preserved",
+    "barrier_failure": "diagnostic fails; upstream ACK not forged or suppressed",
+    "C_worker_and_image_unchanged": true,
+    "tests": {
+      "initial_RED": "10 failed/1 passed",
+      "review_RED": "4 failed/14 passed",
+      "final_distinct_passed": 35,
+      "final_seconds": 31.82,
+      "post_isort_controller_overlap_passed": 6
+    },
+    "reviews": [
+      "16425f737f494731929c370744a5b9df",
+      "4908fbac78d242e497d852bdf3d81f50",
+      "49d0113e9ac24a3b8c7c35e687ef2aa7"
+    ],
+    "final_review": "No hook blockers; inherited parent-hook risk addressed by checked absence of all CAO_T024_ACCEPTANCE_* before launch; runner main clears inherited environment",
+    "closed_imports_selfchecks_runtime_source_admission": "PASS",
+    "executed_archive_sha256": "4a8a08630fb7f07837b8bb3cf5fdb7056a4f5bfbe08f4faaeaebc8e8c8d36017",
+    "executed_driver_sha256": "98f5c0a9618d7f584a825d924bd54f1c889272beeaf9a1fb00a5ddf0ee55524a"
+  },
+  "memory_admission": {
+    "required_mib": 6144,
+    "status": "REFUSED_BEFORE_CLAIM_OR_SERVICES",
+    "retry_waiting_for_memory": false,
+    "limits_unchanged": true,
+    "disposition": "closed unclaimed; foreign process pause question pending; fresh live reuse coordinator/current-head pins required before any retry"
+  },
+  "not_accepted": [
+    "current external Work journey until fresh execution passes",
+    "Work inferred from generic send_message",
+    "all native providers/backends",
+    "global T007/T011 gates",
+    "Spec024 T017/T018 full suites"
+  ],
+  "schema": "caos.t232.validation.v1",
+  "reuse_coordinator": "retired after0borrowers0DB0workroles; existing container retained"
+}

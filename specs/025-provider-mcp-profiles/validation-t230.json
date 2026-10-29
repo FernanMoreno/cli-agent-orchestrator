@@ -1,0 +1,313 @@
+{
+  "date": "2026-10-29",
+  "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+  "status": "PASS_BOUNDED_NATIVE_ACCEPTANCE",
+  "provider": "claude_code",
+  "binary_version": "2.1.303",
+  "binary_sha256": "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450",
+  "real_path": [
+    "pinned native Claude CLI",
+    "production CAO MCP stdio child",
+    "owned API",
+    "existing PostgreSQL"
+  ],
+  "model_endpoint": "controlled loopback Anthropic; no external inference or operator login",
+  "original_limits": {
+    "memory_floor_mib": 6144,
+    "turn_deadline_seconds": 180,
+    "progress_deadline_seconds": 5
+  },
+  "source_and_execution_archived": true,
+  "same_postgres_retained_zero_borrowers_zero_databases_after_each": true,
+  "regression_evidence": {
+    "discovery_controls": "92 PASS including real API/PostgreSQL fixture",
+    "expanded_run": "278 PASS/7 FAIL; failed test assumptions retained",
+    "corrected_controls": "10 PASS",
+    "final_stdio": "13 PASS",
+    "expanded_and_corrected_distinct_cases": 285,
+    "counts_overlap_do_not_sum": true,
+    "fixed_private_test_assumptions": [
+      "Python3.13 HTTP422 reason is Unprocessable Content",
+      "MCP structured_content is the structured transport contract; SDK data may be Root dataclass"
+    ]
+  },
+  "architecture": "5 contracts kept,0 broken",
+  "reviews": [
+    "4b6460345b1d44ffacd4f2bc5fde04f4",
+    "dbcebb72e89545f3a686650dd9671ce6",
+    "74cbe6c0132747d19b0a9ec6bca7828f"
+  ],
+  "historical_preflight": {
+    "cross_session_r1": "FAILED before API/native on dead old readiness owner; cause of old process death unknown",
+    "remaining_r1": "unclaimed closed descriptors superseded; not executed",
+    "correction": "reuse-only coordinator validates live PID birth/state and same healthy service, no container restart",
+    "zombie_and_fresh_root_admission_controls": "PASS"
+  },
+  "schema": "caos.t230.acceptance.v1",
+  "cases": {
+    "cross-session-r2": {
+      "passed": true,
+      "pytest_seconds": 120.33,
+      "controller_seconds": 150.252,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "80ab8b8fb65150c27683b7abbb0ea3be51c126601bcb647fabd21e959f2368ab",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 1,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "minimum_recorded_memory_mib": 10690,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 12869,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "variant": "cross_session",
+      "scripted_literal_tool_input": {
+        "cross_session": true
+      },
+      "actual_native_tool_use_and_result_correlated": true,
+      "business_success": true,
+      "expected_peer_count": 2,
+      "api_statuses": [
+        200,
+        200
+      ],
+      "actual_api_native_rows_equal": true,
+      "expectation_sha256": "c4b7e85aa1a87923a4748f6250b60384d6a7a616ba8ad9bd0488eff4c434954c",
+      "read_bridge_retired": true,
+      "fixture_sessions_retired": true
+    },
+    "depth-one-r2": {
+      "passed": true,
+      "pytest_seconds": 136.77,
+      "controller_seconds": 158.053,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "91f41afa5d2f942e8a939aec36af333fc134661fee41e556932119cca92da41d",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 1,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "minimum_recorded_memory_mib": 10777,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 11969,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "variant": "depth_one",
+      "scripted_literal_tool_input": {
+        "depth": 1
+      },
+      "actual_native_tool_use_and_result_correlated": true,
+      "business_success": true,
+      "expected_peer_count": 2,
+      "api_statuses": [
+        200,
+        200
+      ],
+      "actual_api_native_rows_equal": true,
+      "expectation_sha256": "a4a6e486dc913374c0ceb20b62cc0f41b7bdb297520955a4d97db0385ea90c4a",
+      "read_bridge_retired": true,
+      "fixture_sessions_retired": true
+    },
+    "depth-clamp-r2": {
+      "passed": true,
+      "pytest_seconds": 121.63,
+      "controller_seconds": 143.077,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "948eed0dc92eeaef21d6fdbd99f4bb1ca0730235bac26649f495e93af1df2523",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 1,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "minimum_recorded_memory_mib": 10632,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 12399,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "variant": "depth_clamp",
+      "scripted_literal_tool_input": {
+        "depth": 999
+      },
+      "actual_native_tool_use_and_result_correlated": true,
+      "business_success": true,
+      "expected_peer_count": 1,
+      "api_statuses": [
+        200,
+        200
+      ],
+      "actual_api_native_rows_equal": true,
+      "expectation_sha256": "32947565d73b557b6d0be74b78e427ce7cc1d467cc8c4988d78a3effd919e2e7",
+      "read_bridge_retired": true,
+      "fixture_sessions_retired": true
+    },
+    "depth-zero-r2": {
+      "passed": true,
+      "pytest_seconds": 119.9,
+      "controller_seconds": 143.801,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "205eef3318ec096ad10e936d3e98bf062a973f2b61492399280855f690d10cca",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 1,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "minimum_recorded_memory_mib": 10102,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 12156,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "variant": "depth_zero",
+      "scripted_literal_tool_input": {
+        "depth": 0
+      },
+      "actual_native_tool_use_and_result_correlated": true,
+      "business_success": false,
+      "expected_peer_count": null,
+      "api_statuses": [
+        200,
+        422
+      ],
+      "actual_api_native_rows_equal": false,
+      "expectation_sha256": "c39728b3f22e391cb3c0d728d28d5ee6bf821c26b890172bf019a65248cb916c",
+      "read_bridge_retired": true,
+      "fixture_sessions_retired": true
+    },
+    "marker-denied-r2": {
+      "passed": true,
+      "pytest_seconds": 113.81,
+      "controller_seconds": 135.411,
+      "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+      "source_pins": 1898,
+      "executed_runner_sha256": "684797dcf6b7e393c3958693f8e5bde0cd1b65d0e05aac8a0fcd5dcedb1679de",
+      "executed_source_archive_sha256": "dd937a7e1aeff50807f9396a5164321319b6a74c9000e99b7e43fb9327850bf1",
+      "native_tools_offered": 1,
+      "builtin_tools_offered": 0,
+      "offered_tools": [
+        "mcp__cao-mcp-server__list_siblings"
+      ],
+      "minimum_recorded_memory_mib": 8618,
+      "final_turn_state": "verified",
+      "fresh_prefinish_bytes": 13269,
+      "source_preserved": true,
+      "wrapper_reclosed": true,
+      "cleanup": {
+        "tmux_cleanup": true,
+        "observed_processes_retired": true,
+        "wrapper_processes_retired": true,
+        "home_removed": true
+      },
+      "postgres_before": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "postgres_after": {
+        "clients": 0,
+        "databases": 0,
+        "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+      },
+      "variant": "marker_denied",
+      "scripted_literal_tool_input": {
+        "cross_session": true
+      },
+      "actual_native_tool_use_and_result_correlated": true,
+      "business_success": false,
+      "expected_peer_count": null,
+      "api_statuses": [
+        200
+      ],
+      "actual_api_native_rows_equal": false,
+      "expectation_sha256": "85be9cd42033df65f985c7679e93cd5e5986c3793ebbeaff286a998502e58b46",
+      "read_bridge_retired": true,
+      "fixture_sessions_retired": true
+    }
+  },
+  "scope": [
+    "gateway-scripted literal tool arguments with correlated actual native tool_use/result",
+    "cross_session2 independent expected peers",
+    "depth1 two expected peers",
+    "depth999 clamps to own full organizational prefix and returns1",
+    "depth0 actual HTTP422",
+    "missing discovery marker denies before siblings HTTP",
+    "own final verified and complete extra/main/bridge/process/wrapper/tmux/private HOME cleanup"
+  ],
+  "not_accepted": [
+    "cross_session as separate security grant",
+    "groups as security tenancy boundaries",
+    "default native-client approval or bearer/scopes",
+    "peer LLM inference or global capacity"
+  ]
+}

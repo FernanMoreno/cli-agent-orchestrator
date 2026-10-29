@@ -113,6 +113,9 @@ Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics
 
+- A PostgreSQL readiness file is not a live ownership witness. Before borrowing, verify the coordinator PID, recorded process birth and non-zombie state, plus exact container identity and SQL readiness. A dead coordinator does not authorize restarting or replacing a healthy shared container; establish a separate reuse-only coordinator and preserve historical ownership records.
+- A strict intermediate SQL/event snapshot can race a correct fast ACK. Reproduce the original observer failure before changing it; use a narrowly owned, bounded pending/release barrier outside database transactions and global locks. Release before teardown, preserve the real upstream call/reply and all original intermediate/final counts, and fail the diagnostic on barrier failure. Never add sleeps, accept later counts as the intermediate phase, or repair ledger rows.
+
 - Pin complete native runtime packages, not only their main executable. Codex0.164 resolves its Code Mode host relative to the installed package/executable; a loose copied binary can pass version/catalog/direct-MCP controls and still fail when the model first invokes Code Mode. Verify independently frozen metadata, helper/resource inventory, hashes and layout before credential staging; exercise the real helper handshake without a model before a model/tool retry. Do not disable Code Mode or enlarge permissions to hide missing assets.
 - Reuse the production terminal-escape parser for raw status patterns and a rendered pane for screen claims. A new greedy OSC regex can erase a real footer, and a quiet gap during `loading` is not startup completion. Replay the actual captured bytes offline before another native run; account bootstrap may require network even when no model turn is requested.
 
