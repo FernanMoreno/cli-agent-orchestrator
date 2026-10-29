@@ -531,3 +531,6 @@ T230/T231: cinco controles nativos de descubrimiento y catálogos completos3/8/1
 
 
 T232/T233 pendientes de aceptación externa actual:191regresionesWork/PostgreSQL y35controles de barrera privada pasan. El primer intento falló por carrera del observador ante un ACK correcto; SQL confirma2filas/2envíos/2ACK, sin duplicado. Recibo fallido conservado y recursos propios limpiados con prueba exacta. El nuevo intento no arrancó por memoria<6144MiB; descriptor cerrado, coordinador retirado y mismoPG intacto. No cierra Work por send_message ni gates globales. [Diagnóstico y criterio pendiente](../specs/025-provider-mcp-profiles/validation-t233.md).
+
+
+T232/T233 cerrados en el alcance externo probado (2026-10-30, fuenteafc35283): cao.work.message real pasa en196.45s; A/respuesta perdida/replay/reinicio/G2/B/ACK, intermedio2/2/1 y final2/2/2 exactos.46fuentes/11archivos privados verificados; cuatro intentos retirados,3DB/6roles/copias propias eliminados, mismoPG0clientes/0DB/0roles.191pruebasWork y35controles previos conservan validez por igualdad de bytes; no nueva ejecución de esas suites. Fallo de carrera y rechazo por memoria históricos permanecen. No cierra gates globales ni otros proveedores/backends. [Aceptación y límites](../specs/025-provider-mcp-profiles/validation-t232.md).

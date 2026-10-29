@@ -1,8 +1,8 @@
 {
-  "date": "2026-10-29",
-  "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
-  "status": "PREPARED_EXTERNAL_RETRY_MEMORY_BLOCKED",
-  "current_external_acceptance": false,
+  "date": "2026-10-30",
+  "source_head": "afc35283e4f615f660d03b0af38c3d3c162edced",
+  "status": "PASS_BOUNDED_CURRENT_EXTERNAL_ACCEPTANCE",
+  "current_external_acceptance": true,
   "prior_external_acceptance": {
     "source_head": "7f6cdff012462900402a4d020ed110334cfc5b26",
     "receipt": "validation-t132-work-message.json",
@@ -40,7 +40,9 @@
     },
     "first_incorrect_boundary": "private strict live intermediate observer raced already completed real ACK B",
     "prior_phases": "lost response A, API restart, A replay and receiver/sender generation2 progressed",
-    "old_failed_receipt_preserved": true
+    "old_failed_receipt_preserved": true,
+    "date": "2026-10-29",
+    "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc"
   },
   "exact_current_failed_resource_compensation": {
     "status": "APPLIED_AFTER_INDEPENDENT_PROOFS",
@@ -89,24 +91,102 @@
       "49d0113e9ac24a3b8c7c35e687ef2aa7"
     ],
     "final_review": "No hook blockers; inherited parent-hook risk addressed by checked absence of all CAO_T024_ACCEPTANCE_* before launch; runner main clears inherited environment",
-    "closed_imports_selfchecks_runtime_source_admission": "PASS",
-    "executed_archive_sha256": "4a8a08630fb7f07837b8bb3cf5fdb7056a4f5bfbe08f4faaeaebc8e8c8d36017",
-    "executed_driver_sha256": "98f5c0a9618d7f584a825d924bd54f1c889272beeaf9a1fb00a5ddf0ee55524a"
+    "closed_imports_selfchecks_runtime_source_admission": "PASS after fresh current-head pinning",
+    "executed_archive_sha256": "1285fd51b6ff328de940ec3706a0208ec8fa8142b3bd4596efe00a98d46e766a",
+    "executed_driver_sha256": "61721d59c1a620ca5d06fc5d0c56fb5f13a49057bc7dceb62d5de66a06ddfc5d"
   },
   "memory_admission": {
     "required_mib": 6144,
-    "status": "REFUSED_BEFORE_CLAIM_OR_SERVICES",
-    "retry_waiting_for_memory": false,
-    "limits_unchanged": true,
-    "disposition": "closed unclaimed; foreign process pause question pending; fresh live reuse coordinator/current-head pins required before any retry"
+    "status": "PASS_BEFORE_ACTUAL_EXECUTION",
+    "actual_before_mib": 11921,
+    "runner_preflight_mib": 11817,
+    "original_limits_unchanged": true,
+    "prior_20261029_refusal_retained": true
   },
   "not_accepted": [
-    "current external Work journey until fresh execution passes",
-    "Work inferred from generic send_message",
     "all native providers/backends",
     "global T007/T011 gates",
-    "Spec024 T017/T018 full suites"
+    "Spec024 T017/T018 full suites",
+    "cao.work.message inferred from generic send_message",
+    "uncontrolled external model inference"
   ],
   "schema": "caos.t232.validation.v1",
-  "reuse_coordinator": "retired after0borrowers0DB0workroles; existing container retained"
+  "reuse_coordinator": "fresh reuse-only coordinator retired after actual successful borrower completion and independent0clients0DB0workroles proof; same container retained",
+  "retained_regression_scope": {
+    "source_head": "8ac1dc42085dd91f66c2f887634a649693957cdc",
+    "191_Work_regressions_and35_private_controls_retained": true,
+    "new_invocation_claimed": false,
+    "current46_repository_and11_private_files_byte_identical_to_reviewed_candidate": true
+  },
+  "actual_current_external_execution": {
+    "schema": "caos.t232-t233.independent-external-audit.v1",
+    "status": "PASS_BOUNDED_CURRENT_EXTERNAL_ACCEPTANCE",
+    "source_head": "afc35283e4f615f660d03b0af38c3d3c162edced",
+    "actual_receipt_sha256": "e2e65388b98563a22e7445e95de48632716967ff67c574cb60165f70ca141992",
+    "actual_controller_ledger_sha256": "e31a3186e00d6a792aca3371772fa0d145906d5d0524c03cc895710a59fc999c",
+    "executed_archive_sha256": "1285fd51b6ff328de940ec3706a0208ec8fa8142b3bd4596efe00a98d46e766a",
+    "actual_runner_seconds": 196.45,
+    "controller_seconds": 217.626,
+    "memory_before_mib": 11921,
+    "runner_preflight_memory_mib": 11817,
+    "repository_source_paths": 46,
+    "private_source_test_files": 11,
+    "all_pinned_bytes_and_zip_entries_exact": true,
+    "strict_intermediate": [
+      2,
+      2,
+      1
+    ],
+    "strict_final": [
+      2,
+      2,
+      2
+    ],
+    "B_unacknowledged_at_intermediate": true,
+    "actual_owned_barrier_waiting_release_receipt_identity_match": true,
+    "barrier_failure_marker_absent": true,
+    "actual_send_hook_events": 3,
+    "generation2_ACKs": 2,
+    "own_API_and_runner_process_groups_absent": true,
+    "four_attempt_container_artifact_sets_absent": true,
+    "three_owned_databases_six_roles_removed": true,
+    "own_private_credential_copies_removed": true,
+    "provider_credentials_absent_from_children": true,
+    "body_free_redaction_checks_pass": true,
+    "operational_manifest_reclosed": true,
+    "postgres_after": {
+      "clients": 0,
+      "databases": 0,
+      "work_roles": 0,
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+    },
+    "phase_names": [
+      "all_messages_acknowledged_and_workers_exited",
+      "api_a_live_pair_before_send_a",
+      "api_a_send_a",
+      "api_a_shutdown_reconcile",
+      "api_b_live_send_b",
+      "api_b_replay_a_and_live_pair_before_b",
+      "api_b_replayed_a_from_pre_send_cursor",
+      "message_a_still_one_after_cleanup",
+      "owned_old_attempts_and_proxy_reconciled",
+      "receiver_generation_2_admitted",
+      "replacement_receiver_acked_a_before_sender_replacement",
+      "sender_generation_2_admitted"
+    ]
+  },
+  "prior_closed_unclaimed_candidate_driver_sha256": "98f5c0a9618d7f584a825d924bd54f1c889272beeaf9a1fb00a5ddf0ee55524a",
+  "actual_acceptance_review": {
+    "job_id": "55a1dd21db6e4b8285e636a17fe64708",
+    "mode": "read",
+    "status": "completed",
+    "verdict": "supports bounded T232/T233 closure; no concrete inconsistency",
+    "scope": "cross-file evidence consistency; physical and SQL facts independently checked by lead audit",
+    "independent_audit_source_sha256": "3e09eeec2697af51243bbbf0a05d904eb1a2f2f268b4a37ff1f9f7da4240f351"
+  },
+  "actual_worker_metadata": {
+    "work_image_id": "sha256:e70becb7eb929a5900a8778ecc86b44c4516c64afae0dbbde289a5d168fa3fbc",
+    "worker_source_sha256": "50b1862543c10895fddc0cee6ac6dd1b337369d1fdbe9933cb25440a7d71a531",
+    "runner_sha256": "70c50cb567eaca8eea279775bbf180503e7b055859d748629871b980a75f6a5e"
+  }
 }
