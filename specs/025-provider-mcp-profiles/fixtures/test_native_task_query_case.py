@@ -101,11 +101,35 @@ def test_task_query_result_refuses_extra_or_incomplete_operations():
     assert runner._task_query_result_contract(sender) is False
 
 
-@pytest.mark.parametrize("stale_generation", [False, True])
-def test_query_controller_submits_once_and_requires_a_new_durable_turn(
-    tmp_path, monkeypatch, stale_generation
-):
+def _exercise_query_controller(tmp_path, monkeypatch, stale_generation, target_change):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    from dataclasses import replace
+
+    from cli_agent_orchestrator.clients.postgres.config import DatabaseTarget
     from cli_agent_orchestrator.services import local_peer_service
+
+    monkeypatch.syspath_prepend(str(runner.REPO / "test/live_provider"))
+    from test.live_provider.message_api_restart_live import _target_fingerprint
+
+    target = DatabaseTarget(
+        host="127.0.0.1",
+        port=5432,
+        database="fixture",
+        user="fixture",
+        schema="fixture",
+        store_id="11111111-1111-4111-8111-111111111111",
+        secret_file=tmp_path / "unused.secret",
+        sslmode="disable",
+    )
+    targets = SimpleNamespace(main=target, auth=target, peer=target)
+    foreign = SimpleNamespace(main=replace(target, database="foreign"), auth=target, peer=target)
+    server = SimpleNamespace(url="http://127.0.0.1", database_targets=targets)
+    fingerprint = _target_fingerprint(targets, database_target_type=type(target))
+    invalid = SimpleNamespace(main=object(), auth=target, peer=target)
+    if target_change == "before":
+        server.database_targets = foreign
+    elif target_change == "invalid_before":
+        server.database_targets = invalid
 
     clock = [0.0]
     monkeypatch.setattr(
@@ -169,6 +193,11 @@ def test_query_controller_submits_once_and_requires_a_new_durable_turn(
             assert url.endswith("/terminals/a1b2c3d4/input")
             assert json.loads(binding.read_text())["task_id"] == stored["task_id"]
             posts.append(kwargs["params"])
+            clock[0] += 0.01
+            if target_change == "after":
+                server.database_targets = foreign
+            elif target_change == "invalid_after":
+                server.database_targets = invalid
             return {"success": True, "turn_sequence": 1}
         if url.endswith("/terminals/a1b2c3d4"):
             return {
@@ -180,33 +209,70 @@ def test_query_controller_submits_once_and_requires_a_new_durable_turn(
         return {"turn_sequence": 0, "turn_completed": 0, "status": "completed"}
 
     monkeypatch.setattr(runner, "_api_json", api)
-    receipt = {}
+    receipt = {"postgres_target_fingerprint_sha256": fingerprint}
+    if target_change == "missing_expected":
+        receipt.clear()
     options = dict(
         receipt=receipt,
         requests=None,
-        server=SimpleNamespace(url="http://127.0.0.1"),
+        server=server,
         terminals={"sender": {"id": "a1b2c3d4"}, "receiver": {"id": "e5f6a7b8"}},
         connect=connect,
-        target=None,
+        target=target,
         working_directory=tmp_path,
         binding_path=binding,
         nonce="b" * 32,
         principal=SimpleNamespace(id="fixture-principal"),
     )
-    if stale_generation:
+    if target_change:
+        stage = "before" if target_change == "before" else "during"
+        code = (
+            "task_query_postgres_targets_invalid"
+            if target_change in {"invalid_before", "invalid_after", "missing_expected"}
+            else f"postgres_target_changed_{stage}_task_query"
+        )
+        with pytest.raises(runner.GateError, match=code):
+            runner._run_task_query(**options)
+        assert receipt["postgres_target_identity_stable"] is False
+    elif stale_generation:
         with pytest.raises(runner.GateError, match="task_query_model_deadline_expired"):
             runner._run_task_query(**options)
         assert "task_query_turn_verified" not in receipt
+        assert receipt["postgres_target_identity_stable"] is False
     else:
         runner._run_task_query(**options)
         assert receipt["task_query_turn_verified"] is True
         assert receipt["task_query_receiver_unprompted"] is True
         assert receipt["task_query_no_messages"] is True
-    assert len(posts) == 1
+        assert receipt["postgres_target_identity_stable"] is True
+    no_effects = target_change in {"before", "invalid_before", "missing_expected"}
+    assert len(posts) == (0 if no_effects else 1)
+    if no_effects:
+        assert stored == {}
+    return receipt
+
+
+@pytest.mark.parametrize(
+    "stale_generation,target_change",
+    [
+        (False, None),
+        (True, None),
+        (False, "before"),
+        (False, "after"),
+        (False, "invalid_before"),
+        (False, "invalid_after"),
+        (False, "missing_expected"),
+    ],
+)
+def test_query_controller_submits_once_and_requires_a_new_durable_turn(
+    tmp_path, monkeypatch, stale_generation, target_change
+):
+    _exercise_query_controller(tmp_path, monkeypatch, stale_generation, target_change)
 
 
 @pytest.fixture
-def task_receipt(monkeypatch):
+def task_receipt(monkeypatch, tmp_path):
+    emitted = _exercise_query_controller(tmp_path / "consumer-emission", monkeypatch, False, None)
     case = runner._case_definition(CASE)
     pins = {
         "EXPECTED_HEAD": "1" * 40,
@@ -234,7 +300,9 @@ def task_receipt(monkeypatch):
     }
     monkeypatch.setattr(runner, "RUN_MANIFEST", manifest)
     receipt = {
-        runner._case_receipt_key(key, CASE): True for key in runner._REQUIRED_TRUE_RECEIPT_FIELDS
+        runner._case_receipt_key(key, CASE): True
+        for key in runner._REQUIRED_TRUE_RECEIPT_FIELDS
+        if key != "postgres_target_identity_stable"
     }
     receipt.update(
         {
@@ -327,6 +395,8 @@ def task_receipt(monkeypatch):
             "mcp_tool_observation_status": "unobserved",
         },
     }
+    assert runner._acceptance_contract(receipt, CASE) is False
+    receipt["postgres_target_identity_stable"] = emitted["postgres_target_identity_stable"]
     assert runner._acceptance_contract(receipt, CASE) is True
     return receipt
 
@@ -338,6 +408,8 @@ def task_receipt(monkeypatch):
         ("task_query_turn_verified", False),
         ("task_query_receiver_unprompted", False),
         ("task_query_no_messages", False),
+        ("postgres_target_identity_stable", False),
+        ("postgres_target_identity_stable", None),
         ("api_b_launch_attempted", True),
         ("api_server_record_count", 2),
         ("sender_capability_source_owner_kind", "unverified"),
@@ -408,3 +480,8 @@ def test_passive_offer_requires_the_actual_complete_zero_request_reader(tmp_path
     bad = copy.deepcopy(actual)
     bad["tool_name_counts"][next(iter(bad["tool_name_counts"]))] = 1
     assert runner._task_query_passive_offer_contract(bad, expected_nonce="b" * 32) is False
+
+
+def test_task_acceptance_refuses_deleted_target_witness(task_receipt):
+    task_receipt.pop("postgres_target_identity_stable")
+    assert runner._acceptance_contract(task_receipt, CASE) is False

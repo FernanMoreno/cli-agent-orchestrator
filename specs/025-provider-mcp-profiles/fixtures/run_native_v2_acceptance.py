@@ -6571,10 +6571,27 @@ def _run_task_query(
     principal,
 ):
     """One native query; completed fixture is synthetic, not executed work."""
+    from test.live_provider import message_api_restart_live as message_live
     from uuid import uuid4
 
     from cli_agent_orchestrator.services.local_peer_service import project_binding
 
+    expected_target = receipt.get("postgres_target_fingerprint_sha256")
+    receipt["postgres_target_identity_stable"] = False
+    if type(expected_target) is not str or re.fullmatch(r"[0-9a-f]{64}", expected_target) is None:
+        raise GateError("task_query_postgres_targets_invalid")
+
+    def observe_target(stage):
+        try:
+            actual = message_live._target_fingerprint(
+                server.database_targets, database_target_type=type(target)
+            )
+        except message_live.AcceptanceFailure:
+            raise GateError("task_query_postgres_targets_invalid") from None
+        if actual != expected_target:
+            raise GateError("postgres_target_changed_" + stage + "_task_query")
+
+    observe_target("before")
     sender_id = terminals["sender"]["id"]
     receiver_id = terminals["receiver"]["id"]
     context_deadline = time.monotonic() + OBSERVER_GRACE_SECONDS
@@ -6718,6 +6735,9 @@ def _run_task_query(
     ) and not _api_rows(requests, server.url, receiver_id)
     if not receipt["task_query_receiver_unprompted"] or not receipt["task_query_no_messages"]:
         raise GateError("task_query_unrelated_activity_observed")
+
+    observe_target("during")
+    receipt["postgres_target_identity_stable"] = True
 
 
 def _run_enabled(

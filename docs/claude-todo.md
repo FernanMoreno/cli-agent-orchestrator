@@ -1,5 +1,12 @@
 # Claude Code: análisis y pendientes
 
+T214 R4: consulta real, comparación nativa, recibo durable y limpieza PASS,
+pero recibo final FALSE por testigo de estabilidad PG no emitido. Se conserva.
+T218 corrige el productor sin retirar el requisito; 231 pruebas PASS y revisión
+Claude sin bloqueos. El consumidor usa evidencia emitida, sin precargarla.
+[R4](../specs/025-provider-mcp-profiles/validation-t214-native-r4.md) ·
+[T218](../specs/025-provider-mcp-profiles/validation-t218-component.md).
+
 T214 R3 FALLIDA: apareció código en línea además de negrita; limpieza correcta
 y lanzador cerrado. T217 añade su proyección estructurada reversible manteniendo
 el contenido literal: 380 pruebas Python y ocho reproducciones reales PASS,

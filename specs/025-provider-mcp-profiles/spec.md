@@ -1,5 +1,9 @@
 # Provider MCP profiles and current acceptance
 
+## Task-query target identity witness · T218
+
+FR195/SC179: The task-query branch must emit the same required PostgreSQL target-stability witness as its final predicate consumes. Compare the current API main/auth/peer target fingerprint with the initial owned snapshot both before the query and after verified completion. Refuse mismatch or unavailable identity; never exclude the existing requirement, fabricate a historical witness or alter accepted message/restart branches.
+
 ## Native inline-code render equivalence · T217
 
 FR194/SC178: Preserve T214 R3 failed and T216 component evidence. Its four

@@ -1,0 +1,48 @@
+{
+  "schema": "caos.spec025.t218.component.v1",
+  "date": "2026-10-29",
+  "status": "COMPONENT_PASS_NATIVE_ACCEPTANCE_PENDING",
+  "source_base_head": "8f4d2dc7414614c022f30148e45459b703ecf99a",
+  "red": {
+    "failed": 1,
+    "passed": 1,
+    "deselected": 65,
+    "seconds": 38.37,
+    "first_incorrect_boundary": "actual task controller omits required target-stability witness"
+  },
+  "initial_regression": {
+    "passed": 225,
+    "failed": 0,
+    "seconds": 97.02
+  },
+  "final_regression": {
+    "passed": 231,
+    "failed": 0,
+    "warnings": 3,
+    "seconds": 98.34
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "review_go": "1f937de8899042a8adc26db24b1f5469",
+  "required_field_removed": false,
+  "counterfactual_used_as_evidence": false,
+  "original_r4_receipt_preserved": true,
+  "before_effects_and_after_turn_probes": true,
+  "actual_controller_emission_consumed_by_final_predicate_test": true,
+  "new_callable_or_runtime_argument": false,
+  "original_message_restart_branch_changed": false,
+  "native_query_seconds": 180,
+  "memory_floor_mib": 6144,
+  "global_acceptance_claimed": false,
+  "source_sha256": {
+    "specs/025-provider-mcp-profiles/fixtures/run_native_v2_acceptance.py": "b1ee4ccee40fa65edeb8ca6070e25112e55f4816e108ab09e5b91c062003bdd9",
+    "specs/025-provider-mcp-profiles/fixtures/test_native_task_query_case.py": "a38e0ca5614b75b08680aab9833e2b764a44311e899392fa37557fb50f01d602"
+  },
+  "final_formatted_controller_check": {
+    "passed": 7,
+    "deselected": 68,
+    "seconds": 31.44
+  }
+}

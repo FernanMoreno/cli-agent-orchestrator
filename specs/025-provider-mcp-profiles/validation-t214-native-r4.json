@@ -1,0 +1,77 @@
+{
+  "native_t214_accepted": false,
+  "native_error_code": null,
+  "elapsed_seconds": 148.416,
+  "task_query_seconds": 9.403991512954235,
+  "task_query_turn_verified": true,
+  "owned_cleanup_passed": true,
+  "execution_descriptors_reclosed": true,
+  "executed_archive_unchanged": true,
+  "held_postgres_identity_verified": true,
+  "client_borrowers": 0,
+  "private_databases": 0,
+  "raw_text_published": false,
+  "schema": "caos.spec025.t214.native-r4.v1",
+  "date": "2026-10-29",
+  "status": "FINAL_GATE_FALSE_MISSING_TARGET_WITNESS",
+  "source_head": "8f4d2dc7414614c022f30148e45459b703ecf99a",
+  "source_pins": 600,
+  "admission_mib": 9482,
+  "memory_minimum_sampled_mib": 8379,
+  "task_query_limit_seconds": 180,
+  "memory_floor_mib": 6144,
+  "observer_seal_seconds": 0.201,
+  "native_catalog_and_calls_exact": true,
+  "native_model_request_surfaces_exact": true,
+  "native_guard_outcomes": {
+    "started": 1,
+    "passed": 1
+  },
+  "durable_cas_outcomes": {
+    "started": 1,
+    "settled": 1
+  },
+  "capture_seal": {
+    "version": 1,
+    "count": 2,
+    "failed": false,
+    "overflow": false
+  },
+  "final_predicate_boundary": {
+    "original_acceptance": false,
+    "counterfactual_one_field_only_passes": true,
+    "missing_required_fields": [
+      "postgres_target_identity_stable"
+    ],
+    "failed_clause_count": 1,
+    "failed_clauses": [
+      "all((receipt.get(key) is True for key in required + ('task_fixture_owned_preflight_passed', 'task_query_turn_verified', 'task_query_receiver_unprompted', 'task_query_no_messages')))"
+    ],
+    "counterfactual_not_execution_evidence": true,
+    "original_receipt_unchanged": true
+  },
+  "synthetic_task_fixture_not_executed_work": true,
+  "global_acceptance_claimed": false,
+  "sealed_render_replay": {
+    "sealed_pairs": 1,
+    "literal_equal": false,
+    "structured_projection_equal": true,
+    "native_chars": 218,
+    "rendered_chars": 212,
+    "block_tokens": [
+      "paragraph_open",
+      "inline",
+      "paragraph_close"
+    ],
+    "inline_tokens": [
+      [
+        "text",
+        "strong_open",
+        "text",
+        "strong_close",
+        "text"
+      ]
+    ],
+    "raw_text_published": false
+  }
+}

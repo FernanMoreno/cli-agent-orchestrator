@@ -1,5 +1,9 @@
 # Plan: provider MCP profiles
 
+## T218 · close the task-query producer/consumer witness gap
+
+R4 completed the real query, render guard, durable CAS, exact offers and normal cleanup. Its final predicate failed solely because postgres_target_identity_stable is produced only by the restart branch. Keep the original false receipt; add before/after target observations to the task controller using the existing fingerprint helper, test emitted evidence against the actual final consumer, review and repin before one new execution.
+
 ## T217 · preserve literal content inside recognized inline code
 
 R3 failed with normal cleanup and four complete sealed pairs. Unlike R2, its
