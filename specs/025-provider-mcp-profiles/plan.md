@@ -41,6 +41,11 @@ composition controls or manufacture disconnect by cancelling only a Python task.
 Graphify's existing recovery/FIFO nodes guide source inspection; do not rebuild
 the unrelated dirty graph. Serial tests use one verified held PostgreSQL owner.
 
+Native closeout: sourcebe5bf0a4/R2 passes106.33s with actual disconnected HTTP
+caller and B still active, normal owner/session/process cleanup. R1 duplicate
+watch-close FAIL is preserved; the minimal correction keeps all predicates.
+T211 closes only this bounded scenario; fullCX09/T013 remain open.
+
 ## T210 · stop the borrower before its parent
 
 Claude's connected stdio cleanup has fixed100/400ms escalation before closing

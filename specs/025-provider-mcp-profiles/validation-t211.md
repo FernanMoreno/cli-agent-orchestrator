@@ -1,7 +1,7 @@
 # T211 — FIFO ownership through cancellation
 
-Status: component correction PASS; source-bound native HTTP-disconnect control
-remains pending. CX-09/T013 and global acceptance remain open. T179/T181 already
+Status: component correction PASS and native R2 scoped PASS on be5bf0a4.
+Full CX-09/T013 and global acceptance remain open. T179/T181 already
 cover managed partial quota; that scenario was not repeated.
 
 ## Reproduced boundary
@@ -87,3 +87,41 @@ Graphify's existing recovery/FIFO/monitor nodes and257incident edges were
 consulted and verified against source. The unrelated dirty generated graph was
 preserved; no refresh or copying of generated facts into the vault. Public
 component projection: [validation-t211-component.json](validation-t211-component.json).
+
+
+## Source-bound native R2 acceptance
+
+Codex0.164.0 runs as two real native tmux clients against isolated synthetic
+loopback SSE, with all43runtime assets frozen and admitted, real Code Mode host
+hello/open/shutdown/exit/group-retirement control, then actual native config/empty
+MCP catalog/220x50 active-request admission. No operator credential staging or
+real provider inference is claimed. Main source be5bf0a4 is bound by1798source
+and11private inputs;180s phases and6144MiB floor remain unchanged.
+
+R2 passes1native case in106.33s, min9338MiB: stale generation409; actual HTTP
+socket closes while A is held after positive FIFO writer replacement; the
+shielded cancellation continues to a ready replacement with zero prompt resend.
+B verifies200/pending at its same generation, emits200new log bytes after
+disconnection through the production output-range route, and retains its pane,
+process attempt and native receipt. ASGI disconnect observation and B task
+completion are explicitly not claimed.
+
+Normal session deletion, API stop without forced kill,22observed native
+identities/3wrappers retired, exact private home/tmux-root absence, SQL borrowers0
+and private databases0 pass. An independent closure verifies actual absence and
+process identities. PostgreSQL's held owner then exits and its exact container
+is absent; unrelated containers and dirty Graphify files are preserved.
+
+Preserve the failures: first admission called a Path-only hash helper with
+string __file__, failing before any native client. Actual closed admission now
+executes that boundary before arming. Native R1 proved the behavioral predicates
+but failed EBADF: a second heartbeat-watch close occurred before session deletion.
+Its FAIL remains unchanged. Root separately retired only its proven owned
+resources; fresh R2 removes only the duplicate close, with independent GO and
+unchanged acceptance predicates. Initial empty ledgers wait for a request and
+active heartbeat snapshots are archived at observation time rather than compared
+as immutable after shutdown.
+
+T211's explicit scope is accepted. Full CX-09/T013, other providers, Work/tool
+authority, all-profile isolation and global acceptance remain separate.
+Public native projection: [validation-t211-native-r2.json](validation-t211-native-r2.json).
