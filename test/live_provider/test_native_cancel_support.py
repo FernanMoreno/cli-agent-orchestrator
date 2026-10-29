@@ -14,7 +14,7 @@ pytestmark = pytest.mark.offline_database
     [
         (
             claude_cancel_gateway,
-            ["--model", "claude-sonnet-4-6", "--permission-mode", "default"],
+            ["--model", "claude-sonnet-4-6", "--permission-mode", "default", "--tools", ""],
             "/tmp/claude-native",
         ),
         (
@@ -40,6 +40,7 @@ def test_both_adapters_use_same_ordered_masks_and_explicit_child_environment(
         json.dumps(
             {
                 "repo": repo,
+                "case_kind": "preflight",
                 "binary": str(binary),
                 "binary_sha256": sha(binary),
                 "gateway_sha256": sha(module.__file__),

@@ -52,6 +52,13 @@ def run_native_cancel_case(root, postgres_service, adapter):
     )
     assert all(sha(repo / name) == digest for name, digest in manifest["source_sha256"].items())
     assert sha(manifest["binary"]) == manifest["binary_sha256"]
+    if adapter.scoped_discovery:
+        mock_bin = repo / "test/providers/fixtures/bin"
+        assert {p.name for p in mock_bin.iterdir()} == {"mock_cli"}
+        assert (
+            sha(mock_bin / "mock_cli")
+            == manifest["source_sha256"]["test/providers/fixtures/bin/mock_cli"]
+        )
     home = root / "case" / "home"
     home.mkdir(mode=0o700, parents=True)
     state = {
@@ -62,6 +69,7 @@ def run_native_cancel_case(root, postgres_service, adapter):
     socket_path = socket_root / f"tmux-{os.getuid()}" / "default"
     server = None
     read_bridge = None
+    discovery_fixture = None
     processes = {}
     sessions = set()
     native_records = []
@@ -187,7 +195,14 @@ def run_native_cancel_case(root, postgres_service, adapter):
                 "TMUX": "",
                 "TMUX_TMPDIR": str(socket_root),
                 "TMPDIR": str(socket_root),
-                "PATH": str(root / "bin") + ":/usr/local/bin:/usr/bin:/bin",
+                "PATH": str(root / "bin")
+                + ":"
+                + (
+                    str(repo / "test/providers/fixtures/bin") + ":"
+                    if adapter.scoped_discovery
+                    else ""
+                )
+                + "/usr/local/bin:/usr/bin:/bin",
                 **adapter.environment,
                 **(
                     {"CAO_NATIVE_READ_SOCKET": str(socket_root / "read.sock")}
@@ -219,7 +234,7 @@ def run_native_cancel_case(root, postgres_service, adapter):
         sample()
         if read_bridge is not None:
             read_bridge.bind_caller(b)
-            group = ["t228", b]
+            group = ["t229" if adapter.scoped_discovery else "t228", b]
             updated = request("PATCH", b, "/group", json={"group": group})
             assert updated["group"] == group and updated["allowed_tools"] == list(
                 adapter.allowed_tools
@@ -240,6 +255,12 @@ def run_native_cancel_case(root, postgres_service, adapter):
             assert has_ready_signal(Path(env[READY_FILE_ENV]), env[READY_TOKEN_ENV])
             state["production_mcp_client_discovery_ready"] = True
             state["expected_mcp_tool_names"] = list(adapter.expected_mcp_tools)
+        if adapter.scoped_discovery:
+            from test.live_provider.native_discovery_fixture import OwnedDiscoveryFixture
+
+            discovery_fixture = OwnedDiscoveryFixture(server, home, session, b, group, sample)
+            state["scoped_discovery_fixture"] = discovery_fixture.setup()
+            save(root / "case-result.json", state)
         if manifest["case_kind"] == "inspect":
             started_entries = entries(b)
             assert (
@@ -319,6 +340,28 @@ def run_native_cancel_case(root, postgres_service, adapter):
 
             state["b_final_turn"] = wait(preflight_finished)
             assert ledger(entry_b)["finished"] and ledger(entry_b)["primary_requests"] == 1
+            if discovery_fixture is not None:
+                discovery_fixture.assert_live()
+                data = ledger(entry_b)
+                assert data["discovery_expectation_sha256"] == discovery_fixture.digest
+                assert data["tool_result"]["success"] is True
+                from test.live_provider.native_read_bridge import validate_discovery_rows
+
+                validate_discovery_rows(
+                    data["tool_result"]["siblings"], discovery_fixture.expectation
+                )
+                assert len(read_bridge.response_bodies) == len(read_bridge.rows) == 2
+                assert read_bridge.rows[-1]["path"] == f"/terminals/{b}/siblings"
+                assert read_bridge.rows[-1]["status"] == 200
+                api_body = read_bridge.response_bodies[-1]
+                assert hashlib.sha256(api_body).hexdigest() == read_bridge.rows[-1]["body_sha256"]
+                api_rows = json.loads(api_body)
+                validate_discovery_rows(api_rows, discovery_fixture.expectation)
+                assert api_rows == data["tool_result"]["siblings"]
+                state["scoped_api_native_rows_equal"] = True
+                state["scoped_discovery_verified"] = True
+                discovery_fixture.cleanup()
+                state["scoped_fixture_sessions_retired"] = True
             matrix._delete_session(server, session)
             if read_bridge is not None:
                 data = ledger(entry_b)
@@ -465,6 +508,14 @@ def run_native_cancel_case(root, postgres_service, adapter):
             else:
                 state["read_bridge_requests"] = [dict(row) for row in read_bridge.rows]
                 state["read_bridge_attempts"] = [dict(row) for row in read_bridge.attempts]
+        fixture_cleanup_error = None
+        if discovery_fixture is not None:
+            try:
+                discovery_fixture.cleanup()
+                state["scoped_fixture_sessions_retired"] = True
+            except BaseException as error:
+                fixture_cleanup_error = error
+                state["scoped_fixture_sessions_retired"] = False
         if server is not None:
             try:
                 if session is not None:
@@ -511,3 +562,5 @@ def run_native_cancel_case(root, postgres_service, adapter):
         save(root / "case-result.json", state)
         if bridge_cleanup_error is not None and original_error is None:
             raise bridge_cleanup_error
+        if fixture_cleanup_error is not None and original_error is None:
+            raise fixture_cleanup_error

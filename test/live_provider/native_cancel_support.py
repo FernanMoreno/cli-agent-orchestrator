@@ -66,7 +66,11 @@ def isolated_wrapper(root, args, *, gateway, native_path, prepare_environment, v
     if (home / ".cao-postgres").exists():
         masks += ["--tmpfs", str(home / ".cao-postgres")]
     bridge_mount = []
-    if manifest.get("profile_case") in {"mcp_execute_authorized", "mcp_execute_denied"}:
+    if manifest.get("profile_case") in {
+        "mcp_execute_authorized",
+        "mcp_execute_denied",
+        "mcp_discovery_scoped",
+    }:
         from test.live_provider.native_read_bridge import NATIVE_SOCKET
 
         state = json.loads((root / "case-result.json").read_text())

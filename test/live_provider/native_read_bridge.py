@@ -40,7 +40,104 @@ def _pairs(pairs):
     return value
 
 
-def native_operation_result(body, call_id, mode):
+DISCOVERY_EXPECTATION = ".native-discovery-expectation.json"
+
+
+def validate_discovery_expectation(value, caller):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema", "caller_id", "expected", "excluded_ids"}
+        or value.get("schema") != "caos.native-discovery-fixture.v1"
+        or not isinstance(caller, str)
+        or re.fullmatch(r"[0-9a-f]{8}", caller) is None
+        or value.get("caller_id") != caller
+    ):
+        raise ValueError("discovery_expectation_identity")
+    expected, excluded = value["expected"], value["excluded_ids"]
+    if (
+        not isinstance(expected, list)
+        or len(expected) != 1
+        or not isinstance(excluded, list)
+        or len(excluded) != 3
+    ):
+        raise ValueError("discovery_expectation_cardinality")
+    if (
+        any(
+            not isinstance(tid, str) or re.fullmatch(r"[0-9a-f]{8}", tid) is None
+            for tid in excluded
+        )
+        or len(set(excluded)) != 3
+        or caller not in excluded
+    ):
+        raise ValueError("discovery_expectation_exclusions")
+    row = expected[0]
+    if (
+        not isinstance(row, dict)
+        or set(row) != {"id", "group", "metadata"}
+        or not isinstance(row["id"], str)
+        or re.fullmatch(r"[0-9a-f]{8}", row["id"]) is None
+        or row["id"] in excluded
+        or not isinstance(row["group"], list)
+        or not 1 <= len(row["group"]) <= 16
+        or any(not isinstance(part, str) or not part for part in row["group"])
+        or not isinstance(row["metadata"], dict)
+    ):
+        raise ValueError("discovery_expectation_peer")
+    return value
+
+
+def read_discovery_expectation(path, caller):
+    """Read only an owner-produced bounded atomic fixture, never a result oracle."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_nlink != 1
+            or info.st_size > 4096
+        ):
+            raise ValueError("discovery_expectation_file")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            raw = source.read(4097)
+        if not raw or len(raw) > 4096:
+            raise ValueError("discovery_expectation_size")
+        value = validate_discovery_expectation(json.loads(raw, object_pairs_hook=_pairs), caller)
+        return value, hashlib.sha256(raw).hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def validate_discovery_rows(rows, expectation):
+    from cli_agent_orchestrator.models.terminal import TerminalStatus
+
+    validate_discovery_expectation(expectation, expectation.get("caller_id"))
+    expected = {row["id"]: row for row in expectation["expected"]}
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        raise ValueError("discovery_result_cardinality")
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"id", "group", "metadata", "status"}:
+            raise ValueError("discovery_result_shape")
+        tid = row["id"]
+        if (
+            not isinstance(tid, str)
+            or tid not in expected
+            or tid in seen
+            or tid in expectation["excluded_ids"]
+        ):
+            raise ValueError("discovery_result_membership")
+        if {key: row[key] for key in ("id", "group", "metadata")} != expected[tid]:
+            raise ValueError("discovery_result_payload")
+        if not isinstance(row["status"], str) or row["status"] not in {
+            item.value for item in TerminalStatus
+        }:
+            raise ValueError("discovery_result_status")
+        seen.add(tid)
+
+
+def native_operation_result(body, call_id, mode, *, expectation=None):
     """Read only a single correlated native tool_result; never prose success."""
     found = []
     for message in body.get("messages", []):
@@ -84,7 +181,11 @@ def native_operation_result(body, call_id, mode):
     if not isinstance(result, dict):
         raise ValueError("tool_result_object")
     if mode == "authorized":
-        if result.get("success") is not True or result.get("siblings") != []:
+        if result.get("success") is not True:
+            raise ValueError("expected_authorized_discovery")
+        if expectation is not None:
+            validate_discovery_rows(result.get("siblings"), expectation)
+        elif result.get("siblings") != []:
             raise ValueError("expected_empty_authorized_discovery")
     elif mode == "denied":
         if (
@@ -129,6 +230,7 @@ class OwnedReadBridge:
         self.api_url = api_url
         self.terminal_id = None
         self.rows = []
+        self.response_bodies = []
         self.attempts = []
         self.thread = None
         self.server = None
@@ -164,6 +266,7 @@ class OwnedReadBridge:
                 if len(body) > MAX_BODY:
                     raise ValueError("read_bridge_response_limit")
                 status = response.status_code
+        self.response_bodies.append(body)
         self.rows.append(
             {
                 "method": "GET",

@@ -129,6 +129,7 @@ def test_bridge_uses_real_unix_transport_and_retires_owned_socket(tmp_path, monk
         result = request({"method": "GET", "path": f"/terminals/{TID}"})
         assert result["status"] == 200
         assert base64.b64decode(result["body"]) == b'{"allowed_tools":["discovery"]}'
+        assert broker.response_bodies == [base64.b64decode(result["body"])]
         assert request({"method": "POST", "path": f"/terminals/{TID}"})["status"] == 403
         assert request({"method": "GET", "path": "/terminals/ffffffff"})["status"] == 403
         assert forwarded == [f"http://127.0.0.1:9999/terminals/{TID}"]

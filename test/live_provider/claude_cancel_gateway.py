@@ -168,6 +168,7 @@ def wrapper(root, args):
             DISABLE_ERROR_REPORTING="1",
             CAO_NATIVE_EXPECTED_MCP_TOOLS=json.dumps(adapter.expected_mcp_tools),
             CAO_NATIVE_MCP_OPERATION=adapter.native_operation,
+            CAO_NATIVE_SCOPED_DISCOVERY="1" if adapter.scoped_discovery else "0",
         )
         return env
 
@@ -305,8 +306,25 @@ def backend(args):
                 ):
                     from test.live_provider.native_read_bridge import native_operation_result
 
+                    expectation = None
+                    if os.environ.get("CAO_NATIVE_SCOPED_DISCOVERY") == "1":
+                        from test.live_provider.native_read_bridge import (
+                            DISCOVERY_EXPECTATION,
+                            read_discovery_expectation,
+                        )
+
+                        config = json.loads(Path(args[args.index("--mcp-config") + 1]).read_text())[
+                            "mcpServers"
+                        ]["cao-mcp-server"]
+                        expectation, digest = read_discovery_expectation(
+                            Path.home() / DISCOVERY_EXPECTATION, config["env"]["CAO_TERMINAL_ID"]
+                        )
+                        record(discovery_expectation_sha256=digest)
                     operation_result = native_operation_result(
-                        body, operation["call_id"], operation_mode
+                        body,
+                        operation["call_id"],
+                        operation_mode,
+                        expectation=expectation,
                     )
                     if operation_result is not None:
                         assert body.get("stream") is True and model == CLAUDE.model
