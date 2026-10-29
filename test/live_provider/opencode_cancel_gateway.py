@@ -1,0 +1,313 @@
+"""Synthetic OpenAI stream for native cancellation controls, never external inference.
+
+Only the private, source-pinned T220 wrapper calls ``wrapper``. Each attempt
+runs its real CLI and this endpoint in an isolated loopback-only namespace.
+"""
+
+import hashlib
+import http.server
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+MODEL = "opencode-go/glm-5.3-flash"
+PORT = 43871  # Separate network namespace for every native process.
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def save(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+def receipt_from_request(body):
+    """Bind the receipt to the last user message, never system/assistant text."""
+    users = [m for m in body["messages"] if m.get("role") == "user"]
+    assert users
+    text = users[-1]["content"]
+    if isinstance(text, list):
+        text = "\n".join(p["text"] for p in text if p.get("type") == "text")
+    assert isinstance(text, str)
+    receipts = set(re.findall(r"CAO-TURN-RECEIPT-[0-9a-f]{32}", text))
+    assert len(receipts) == 1
+    assert "T220 controlled native turn" in text
+    return receipts.pop()
+
+
+def primary_request(body):
+    users = [m for m in body.get("messages", []) if m.get("role") == "user"]
+    if not users or body.get("stream") is not True:
+        return False
+    text = users[-1].get("content", "")
+    if isinstance(text, list):
+        text = "\n".join(p["text"] for p in text if p.get("type") == "text")
+    return (
+        isinstance(text, str)
+        and text.startswith("T220 controlled native turn")
+        and "Do not quote or emit that receipt before the task is complete" in text
+    )
+
+
+def wrapper(root, args):
+    root = Path(root).resolve(strict=True)
+    manifest = json.loads((root / "manifest.json").read_text())
+    binary = Path(manifest["binary"])
+    assert sha(binary) == manifest["binary_sha256"]
+    if args == ["--version"]:
+        os.execv(str(binary), [str(binary), *args])
+    assert args[:2] == ["mini", "--standalone"]
+    assert args[args.index("--model") + 1] == MODEL
+    home = Path(os.environ["HOME"]).resolve(strict=True)
+    assert home.is_relative_to(root / "case")
+    tid = os.environ["CAO_TERMINAL_ID"]
+    assert re.fullmatch(r"[a-f0-9]{8}", tid)
+    attempts = root / "observations" / tid
+    attempts.mkdir(parents=True, mode=0o700, exist_ok=True)
+    assert len(list(attempts.glob("attempt-*"))) < 2
+    entry = Path(tempfile.mkdtemp(prefix="attempt-", dir=attempts))
+    fields = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()
+    save(
+        entry / "wrapper.json",
+        {"pid": os.getpid(), "birth": fields[19], "uid": os.getuid(), "terminal_id": tid},
+    )
+    gateway = Path(__file__).resolve()
+    assert sha(gateway) == manifest["gateway_sha256"]
+    # Native subprocess sees the private HOME, but cannot see database secrets.
+    masks = []
+    for key in ("CAO_DATABASE_CONFIG_FILE",):
+        if os.environ.get(key) and Path(os.environ[key]).is_file():
+            masks += ["--ro-bind", "/dev/null", os.environ[key]]
+    if (home / ".cao-postgres").exists():
+        masks += ["--tmpfs", str(home / ".cao-postgres")]
+    command = [
+        "bwrap",
+        "--unshare-all",
+        "--die-with-parent",
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--cap-add",
+        "CAP_NET_ADMIN",
+        "--ro-bind",
+        "/",
+        "/",
+        "--tmpfs",
+        "/mnt/c",
+        "--ro-bind",
+        manifest["repo"],
+        manifest["repo"],
+        "--tmpfs",
+        "/home/felni",
+        "--ro-bind",
+        "/home/felni/.local/share/uv/python",
+        "/home/felni/.local/share/uv/python",
+        "--bind",
+        str(home),
+        str(home),
+        *masks,
+        "--tmpfs",
+        "/tmp",
+        "--bind",
+        str(entry),
+        "/tmp/evidence",
+        "--ro-bind",
+        str(gateway),
+        "/tmp/gateway.py",
+        "--ro-bind",
+        str(binary),
+        "/tmp/opencode",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--chdir",
+        str(home),
+        "--",
+        sys.executable,
+        "/tmp/gateway.py",
+        "backend",
+        *args,
+    ]
+    env = {
+        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME": str(home),
+        "LANG": "C.UTF-8",
+        "TERM": os.environ.get("TERM", "xterm-256color"),
+    }
+    for key, value in os.environ.items():
+        if key.startswith("OPENCODE_") or key.startswith("XDG_"):
+            if key not in {"OPENCODE_AUTH_CONTENT", "OPENCODE_CONFIG_CONTENT", "OPENCODE_API_KEY"}:
+                env[key] = value
+    env["OPENCODE_API_KEY"] = "synthetic-local-control"
+    os.execve("/usr/bin/bwrap", command, env)
+
+
+def backend(args):
+    subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
+    assert [name for _, name in socket.if_nameindex()] == ["lo"]
+    assert not Path("/home/felni/.codex/auth.json").exists()
+    entry = Path("/tmp/evidence")
+    ledger = {
+        "requests": 0,
+        "primary_requests": 0,
+        "ticks": 0,
+        "stream_open": False,
+        "loopback_only": True,
+        "operator_home_masked": True,
+        "binary_sha256": sha("/tmp/opencode"),
+        "tty": list(os.get_terminal_size(0)),
+        "errors": [],
+    }
+    lock = threading.Lock()
+
+    def record(**updates):
+        with lock:
+            ledger.update(updates)
+            save(entry / "backend.json", ledger)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            try:
+                length = int(self.headers["Content-Length"])
+                assert 0 < length <= 1024 * 1024
+                body = json.loads(self.rfile.read(length))
+                assert body["model"] == "glm-5.3-flash"
+                # Auxiliary title/summary requests are not a native user turn.
+                primary = primary_request(body)
+                record(requests=ledger["requests"] + 1)
+                if not primary:
+                    record(auxiliary_requests=ledger.get("auxiliary_requests", 0) + 1)
+                    if body.get("stream") is True:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/event-stream")
+                        self.end_headers()
+                        chunk = {
+                            "id": "aux",
+                            "object": "chat.completion.chunk",
+                            "created": 1,
+                            "model": body["model"],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": "Local control"},
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                        }
+                        self.wfile.write(
+                            ("data: " + json.dumps(chunk) + "\n\ndata: [DONE]\n\n").encode()
+                        )
+                        self.wfile.flush()
+                        return
+                    payload = json.dumps(
+                        {
+                            "id": "aux",
+                            "object": "chat.completion",
+                            "model": body["model"],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {"role": "assistant", "content": "Local control"},
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 1,
+                                "completion_tokens": 1,
+                                "total_tokens": 2,
+                            },
+                        }
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                receipt = receipt_from_request(body)
+                assert ledger["primary_requests"] == 0, "duplicate_native_input"
+                names = sorted(t["function"]["name"] for t in body.get("tools", []))
+                assert not any("cao" in name.lower() for name in names), "unexpected_mcp_offer"
+                record(
+                    primary_requests=1,
+                    builtin_tool_count=len(names),
+                    receipt_sha256=hashlib.sha256(receipt.encode()).hexdigest(),
+                    stream_open=True,
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "close")
+                self.end_headers()
+
+                def chunk(text, finish=None):
+                    value = {
+                        "id": "t220",
+                        "object": "chat.completion.chunk",
+                        "created": 1,
+                        "model": body["model"],
+                        "choices": [
+                            {"index": 0, "delta": {"content": text}, "finish_reason": finish}
+                        ],
+                    }
+                    self.wfile.write(("data: " + json.dumps(value) + "\n\n").encode())
+                    self.wfile.flush()
+
+                deadline = time.monotonic() + 180
+                while not (entry / "release").exists():
+                    assert time.monotonic() < deadline, "stream_budget_expired"
+                    tick = ledger["ticks"] + 1
+                    chunk(f"T220-progress-{tick:04d}\n")
+                    record(ticks=tick, last_progress=time.monotonic())
+                    time.sleep(0.5)
+                chunk("\nT220 finished\n" + receipt + "\n")
+                chunk("", "stop")
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                record(stream_open=False, finished=True)
+            except (BrokenPipeError, ConnectionResetError):
+                record(stream_open=False, disconnected=True)
+            except BaseException as error:
+                record(errors=[*ledger["errors"], type(error).__name__ + ":" + str(error)[:120]])
+                raise
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    config_path = Path(os.environ["OPENCODE_CONFIG"])
+    config = json.loads(config_path.read_text())
+    assert config.get("mcp", {}).get("servers", {}) == {}
+    assert (
+        config["providers"]["opencode-go"]["settings"]["baseURL"] == f"http://127.0.0.1:{PORT}/v1"
+    )
+    record(
+        config_source_sha256=sha(config_path), network_namespace=os.readlink("/proc/self/ns/net")
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    process = subprocess.Popen(["/tmp/opencode", *args])
+    try:
+        raise SystemExit(process.wait())
+    finally:
+        server.shutdown()
+        server.server_close()
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    assert sys.argv[1] == "backend"
+    backend(sys.argv[2:])

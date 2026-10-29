@@ -6,18 +6,27 @@ from test.e2e import test_real_provider_matrix as matrix
 
 
 def observe_cancel_turn(
-    server, *, parent_id, terminal_id, session_name, generation, before_cancel, after_cancel
+    server,
+    *,
+    parent_id,
+    terminal_id,
+    session_name,
+    generation,
+    before_cancel,
+    after_cancel,
+    provider="codex",
 ):
+    assert provider in {"codex", "opencode_cli"}
     assert re.fullmatch(r"[0-9a-f]{32}", generation)
     url = server.url + "/terminals/" + terminal_id
     metadata = matrix._request("GET", url)
     assert metadata.status_code == 200
     metadata = metadata.json()
-    assert metadata["id"] == terminal_id and metadata["provider"] == "codex"
+    assert metadata["id"] == terminal_id and metadata["provider"] == provider
     assert metadata["caller_id"] == parent_id and metadata["session_name"] == session_name
 
     def active(turn):
-        assert turn["terminal_id"] == terminal_id and turn["provider"] == "codex"
+        assert turn["terminal_id"] == terminal_id and turn["provider"] == provider
         assert turn["generation"] == generation and turn["state"] == "pending"
         assert "cancel" in turn["allowed_actions"]
 
@@ -26,7 +35,7 @@ def observe_cancel_turn(
     active(response.json())
     receipt = matrix._receipt_for_terminal(server, parent_id, terminal_id)
     assert receipt["terminal_id"] == terminal_id and receipt["parent_terminal_id"] == parent_id
-    assert receipt["provider"] == "codex" and receipt["state"] in {
+    assert receipt["provider"] == provider and receipt["state"] in {
         "planned",
         "acknowledged",
         "sent",
@@ -58,7 +67,7 @@ def observe_cancel_turn(
     elapsed = time.monotonic() - started
     assert response.status_code == 200 and elapsed <= 180
     turn = response.json()
-    assert turn["terminal_id"] == terminal_id and turn["provider"] == "codex"
+    assert turn["terminal_id"] == terminal_id and turn["provider"] == provider
     assert turn["generation"] == generation and turn["state"] == "cancelled"
     assert turn["allowed_actions"] == []
     cancelled = matrix._receipt_for_terminal(server, parent_id, terminal_id)

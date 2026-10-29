@@ -9,6 +9,7 @@ pytestmark = pytest.mark.offline_database
 GEN = "a" * 32
 
 
+@pytest.mark.parametrize("provider", ["codex", "opencode_cli"])
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -34,7 +35,9 @@ GEN = "a" * 32
         "parent_dead",
     ],
 )
-def test_cancel_observer_binds_generation_identity_witnesses_and_cleanup(monkeypatch, mutation):
+def test_cancel_observer_binds_generation_identity_witnesses_and_cleanup(
+    monkeypatch, mutation, provider
+):
     cancelled = deleted = False
     calls = []
 
@@ -43,7 +46,7 @@ def test_cancel_observer_binds_generation_identity_witnesses_and_cleanup(monkeyp
             "id": "child",
             "terminal_id": "terminal",
             "parent_terminal_id": ("wrong" if mutation == "receipt_parent" else "parent"),
-            "provider": "codex",
+            "provider": provider,
             "state": "cancelled" if cancelled and mutation != "child_not_cancelled" else "sent",
             "settled_at": "settled" if cancelled or mutation == "receipt_settled" else None,
             "cleanup_completed_at": (
@@ -54,7 +57,7 @@ def test_cancel_observer_binds_generation_identity_witnesses_and_cleanup(monkeyp
     def turn():
         return {
             "terminal_id": "terminal",
-            "provider": "codex",
+            "provider": provider,
             "generation": ("b" * 32 if mutation == "turn_generation" else GEN),
             "state": (
                 "cancelled"
@@ -97,7 +100,7 @@ def test_cancel_observer_binds_generation_identity_witnesses_and_cleanup(monkeyp
         else:
             body = {
                 "id": "terminal",
-                "provider": "other" if mutation == "metadata_provider" else "codex",
+                "provider": "other" if mutation == "metadata_provider" else provider,
                 "caller_id": "other" if mutation == "metadata_parent" else "parent",
                 "session_name": "other" if mutation == "metadata_session" else "session",
             }
@@ -128,6 +131,7 @@ def test_cancel_observer_binds_generation_identity_witnesses_and_cleanup(monkeyp
             terminal_id="terminal",
             session_name="session",
             generation=GEN,
+            provider=provider,
             before_cancel=before,
             after_cancel=after,
         )
