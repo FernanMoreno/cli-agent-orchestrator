@@ -797,6 +797,17 @@ class LegacyMemoryAuditConnectionManager:
         with self._condition:
             return self._physical_count
 
+    def admission_slots(self) -> int | None:
+        """Conservative concurrent headroom; idle cached entries remain reusable."""
+        self._ensure_process()
+        with self._condition:
+            if self._closed:
+                return None
+            idle = sum(not entry.leased and not entry.retired for entry in self._entries.values())
+            if not 0 <= idle <= self._physical_count <= self.max_sessions:
+                return None
+            return self.max_sessions - (self._physical_count - idle)
+
     def session_count_for(self, target: DatabaseTarget) -> int:
         """Count this target's actual and reserved manager slots for tests/diagnostics."""
         self._ensure_process()

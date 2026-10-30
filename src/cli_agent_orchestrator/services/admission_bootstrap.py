@@ -22,6 +22,7 @@ from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
     ResourceBinding,
+    ResourceEnvelopeRecord,
     envelope_integer,
 )
 from cli_agent_orchestrator.security.auth import SCOPE_ADMIN, is_verified_principal
@@ -158,9 +159,25 @@ class ResourceBootstrap:
 
     @staticmethod
     def _administrator(principal: object) -> str:
-        if not is_verified_principal(principal) or SCOPE_ADMIN not in principal.scopes:
+        if (
+            not is_verified_principal(principal)
+            or principal.kind != "jwt"
+            or SCOPE_ADMIN not in principal.scopes
+        ):
             raise PermissionError("Resource authority requires a verified administrator")
         return principal.id
+
+    def registered_current(self, *, principal: object) -> ResourceEnvelopeRecord:
+        """Administrative registration state; it is not a capacity grant."""
+        self._administrator(principal)
+        target = self._repository.resolve_target()
+        instance = self._server_instance()
+        latest = self._repository.read_latest(target, instance)
+        if latest is None:
+            raise EnvelopeNotFound("Resource authority does not exist")
+        if latest.binding.instance_id != instance:
+            raise SchemaMismatch("Resource authority instance mismatch")
+        return latest
 
     def _server_instance(self) -> str:
         try:

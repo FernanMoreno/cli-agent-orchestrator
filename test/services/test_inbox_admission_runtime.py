@@ -1,0 +1,224 @@
+"""Operational ownership must span API cancellation and physical authority I/O."""
+
+import asyncio
+import importlib
+from dataclasses import replace
+from test.services.test_admission_monitor import fixture, warm
+from threading import Event
+from types import SimpleNamespace
+
+import pytest
+
+from cli_agent_orchestrator.security.auth import _verified_principal
+from cli_agent_orchestrator.services.inbox_service import InboxService
+
+pytestmark = pytest.mark.offline_database
+
+
+def operational_fixture():
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+        EnvelopeRevisionConflict,
+    )
+
+    f = fixture()
+
+    def append(target, *, binding, claims, expected_revision, principal_id, active=True):
+        latest = f.repository.latest
+        revision = latest.revision if latest is not None else 0
+        if revision != expected_revision:
+            raise EnvelopeRevisionConflict("revision conflict")
+        f.repository.latest = replace(
+            f.record,
+            binding=binding,
+            claims=claims,
+            revision=revision + 1,
+            active=active,
+            actor_principal_id=principal_id,
+        )
+        return f.repository.latest
+
+    f.repository.append = append
+    return f
+
+
+def runtime():
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    f = operational_fixture()
+    inbox = InboxService(clock=lambda: f.clock[0])
+    value = api.InboxAdmissionRuntime(
+        inbox,
+        monitor=f.monitor,
+        bootstrap=f.bootstrap,
+        clock=lambda: f.clock[0],
+        drain_timeout_s=10,
+    )
+    return value, f, inbox
+
+
+def principal():
+    return _verified_principal("urn:caos:test", "operator", ["cao:admin"], "jwt")
+
+
+@pytest.mark.parametrize("value", ["", "relative.json", "   "])
+def test_present_invalid_activation_never_falls_back_to_unbound(value, monkeypatch):
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    monkeypatch.setenv("CAO_ADMISSION_POLICY_FILE", value)
+    with pytest.raises(ValueError):
+        api.runtime_from_environment(InboxService())
+
+
+def test_absent_activation_preserves_compatibility(monkeypatch):
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    monkeypatch.delenv("CAO_ADMISSION_POLICY_FILE", raising=False)
+    assert api.runtime_from_environment(InboxService()) is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_binds_owner_and_rejects_replacement_until_retired():
+    value, f, inbox = runtime()
+    await value.start()
+    try:
+        assert inbox._admission is f.owner
+        with pytest.raises(RuntimeError, match="retir"):
+            inbox.bind_admission(None)
+    finally:
+        await value.stop()
+    assert value.retired
+    inbox.bind_admission(None)
+    assert inbox._admission is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["context", "thread"])
+async def test_control_setup_failure_before_start_cannot_leak_token_or_future(monkeypatch, stage):
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    value, f, _ = runtime()
+    await value.start()
+
+    def fail(*_a, **_k):
+        raise RuntimeError("controlled-prestart-setup")
+
+    try:
+        with monkeypatch.context() as patch:
+            if stage == "context":
+                patch.setattr(api, "contextvars", SimpleNamespace(copy_context=fail))
+            else:
+                patch.setattr(api, "threading", SimpleNamespace(Thread=fail))
+            with pytest.raises(RuntimeError, match="controlled-prestart-setup"):
+                await value.attest(
+                    principal=principal(), claims=f.record.claims, expected_revision=1
+                )
+        assert (await value.registered(principal=principal())).revision == 1
+        assert f.monitor.refresh().reason != "authority_changing"
+    finally:
+        # This injection proves no worker was created. Retire only those unused
+        # test resources on a failing candidate so teardown itself cannot hang.
+        call = value._call
+        if call is not None and call.future.cancel():
+            call.finished.set()
+        for token in tuple(f.monitor._authority_tokens):
+            f.monitor.cancel_authority_change(token)
+        await value.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_operator_awaiter_cannot_end_mutation_or_runtime_early():
+    value, f, _ = runtime()
+    entered, release = Event(), Event()
+    original = f.repository.append
+
+    def held(*args, **kwargs):
+        entered.set()
+        assert release.wait(10)
+        return original(*args, **kwargs)
+
+    f.repository.append = held
+    await value.start()
+    request = asyncio.create_task(
+        value.attest(principal=principal(), claims=f.record.claims, expected_revision=1)
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        assert f.monitor.refresh().reason == "authority_changing"
+        stop = asyncio.create_task(value.stop())
+        await asyncio.sleep(0)
+        assert not stop.done() and not value.retired
+        release.set()
+        await asyncio.wait_for(stop, 10)
+        assert f.repository.latest.revision == 2
+        assert value.retired
+    finally:
+        release.set()
+        await value.stop()
+
+
+def test_authority_pending_gate_fences_old_capacity_before_physical_write():
+    f = fixture()
+    warm(f)
+    token = f.monitor.begin_authority_change()
+    assert f.owner.snapshot(now=f.clock[0]).available_slots == 0
+    assert f.monitor.refresh().reason == "authority_changing"
+    with f.monitor.authority_change(token):
+        assert f.owner.try_reserve("denied", now=f.clock[0]).reservation is None
+    assert f.owner.snapshot(now=f.clock[0]).available_slots == 0
+
+
+def test_uncertain_write_remains_closed_without_automatic_retry():
+    f = fixture()
+    token = f.monitor.begin_authority_change()
+    with pytest.raises(OSError):
+        with f.monitor.authority_change(token):
+            raise OSError("private-writer-canary")
+    assert f.monitor.refresh().reason == "authority_uncertain"
+    with pytest.raises(RuntimeError, match="uncertain"):
+        f.monitor.begin_authority_change()
+
+
+def test_expected_conflict_does_not_turn_into_unknown_commit():
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+        EnvelopeRevisionConflict,
+    )
+
+    f = fixture()
+    token = f.monitor.begin_authority_change()
+    with pytest.raises(EnvelopeRevisionConflict):
+        with f.monitor.authority_change(token):
+            raise EnvelopeRevisionConflict("controlled")
+    token = f.monitor.begin_authority_change()
+    with f.monitor.authority_change(token):
+        pass
+
+
+def test_idle_pool_cache_is_capacity_while_active_retired_and_opening_are_charged():
+    from cli_agent_orchestrator.services.legacy_memory_audit_repository import (
+        LegacyMemoryAuditConnectionManager,
+    )
+
+    pool = LegacyMemoryAuditConnectionManager()
+    pool._entries = {i: SimpleNamespace(leased=False, retired=False) for i in range(4)}
+    pool._physical_count = 4
+    try:
+        assert pool.admission_slots() == 4
+        pool._entries[0].leased = True
+        pool._entries[1].retired = True
+        assert pool.admission_slots() == 2
+        pool._closed = True
+        assert pool.admission_slots() is None
+    finally:
+        pool._entries.clear()
+        pool._physical_count = 0
+
+
+@pytest.mark.asyncio
+async def test_monitor_notifies_after_background_cycle():
+    f = fixture()
+    signal = Event()
+    f.monitor.set_on_change(signal.set)
+    await f.monitor.start()
+    try:
+        assert await asyncio.to_thread(signal.wait, 5)
+    finally:
+        await f.monitor.stop()

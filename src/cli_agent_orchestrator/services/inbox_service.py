@@ -232,6 +232,7 @@ class InboxService:
         # Unbound instances retain compatibility until the API migration lands.
         self._admission = admission
         self._admission_clock = clock
+        self._admission_retirement: Callable[[], bool] | None = None
         # deliver_pending is read(PENDING) → status check → mark DELIVERED → send,
         # with no atomic claim at the DB layer, so two concurrent calls for the
         # SAME terminal can both read the same oldest row before either marks it
@@ -251,6 +252,29 @@ class InboxService:
         self._drain_waiters: Set[Tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = set()
         self._delivery_sink: _StatusEventSink | None = None
         self._delivery_loop: asyncio.AbstractEventLoop | None = None
+
+    def bind_admission(
+        self,
+        admission: DeliveryAdmission | None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        retirement: Callable[[], bool] | None = None,
+    ) -> None:
+        """Trusted lifespan wiring, never a request/profile setting or live replacement."""
+        with self._operations:
+            if self._admission_retirement is not None and not self._admission_retirement():
+                raise RuntimeError("previous admission runtime must retire before replacement")
+            if self._active_operations or self._delivery_sink is not None:
+                raise RuntimeError("inbox operations and consumer must retire before replacement")
+            if (
+                self._admission is not None
+                and self._admission.snapshot(now=self._admission_clock()).inflight
+            ):
+                raise RuntimeError("previous delivery leases must retire before replacement")
+            self._accepting_operations = False
+            self._admission = admission
+            self._admission_clock = clock
+            self._admission_retirement = retirement
 
     def notify_admission_changed(self, terminal_id: str | None = None) -> None:
         """Nonblocking notification from a monitor or a physical worker finally."""

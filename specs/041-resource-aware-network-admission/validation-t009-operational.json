@@ -1,0 +1,292 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-30T23:11:25.996112+00:00",
+  "scope": "T009 operational API composition, strict administrator resource registration and local Inbox handoff; not M1/M2/M3",
+  "status": "PASS_T009_OPERATIONAL_COMPONENT",
+  "base_head": "58b4377f7a9b585620791a3e73c18df49ea689d7",
+  "candidate_source_stamp": "d89cdbfe7f200cb14dcc6f802a75bf7b0e61fc7b1afe66e65536f85b7a4dff49",
+  "tests": {
+    "total": 577,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 12,
+    "pytest_seconds": 306.67,
+    "controller_seconds": 321.883,
+    "selected_files": 36,
+    "by_test_class": {
+      "test.api.test_admission_control": 9,
+      "test.api.test_admission_lifespan": 6,
+      "test.api.test_lifespan_inbox": 2,
+      "test.api.test_lifespan_inbox.TestLifespanInboxWiring": 4,
+      "test.api.test_work_launch_composition": 20,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceDelivery": 3,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceEventParsing": 5,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceKiroSupplement": 3,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceLifecycleEvents": 11,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceReconcile": 8,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceReconcileLiveTerminal": 3,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceReconnect": 1,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceRegisterReconnect": 2,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceRegistration": 4,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceSingleSubscribePerConnection": 3,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceSocketPath": 4,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceStartupDbCleanup": 3,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceSubscription": 1,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxServiceWorkspaceClosedLiveResolution": 2,
+      "test.backends.test_herdr_inbox_service.TestHerdrInboxSnapshot": 6,
+      "test.backends.test_herdr_inbox_service.TestHerdrRoutingOwnerLifetime": 3,
+      "test.backends.test_herdr_inbox_service.TestHerdrWorkLifecycleFence": 11,
+      "test.integration.test_inbox_lock_lifecycle": 1,
+      "test.integration.test_inbox_receiver_cursor": 3,
+      "test.integration.test_inbox_resource_admission": 2,
+      "test.integration.test_inbox_status_dispatch": 1,
+      "test.integration.test_inbox_stream_dispatch": 1,
+      "test.integration.test_inbox_sweep_postgres": 2,
+      "test.postgres.test_admission_bootstrap": 40,
+      "test.postgres.test_admission_control_http": 1,
+      "test.postgres.test_admission_pressure": 2,
+      "test.services.test_admission_bootstrap": 46,
+      "test.services.test_admission_monitor": 16,
+      "test.services.test_admission_policy": 63,
+      "test.services.test_admission_postgres": 25,
+      "test.services.test_admission_resources": 28,
+      "test.services.test_admission_settings": 38,
+      "test.services.test_delivery_admission": 25,
+      "test.services.test_herdr_inbox_registry.TestGetHerdrInboxService": 2,
+      "test.services.test_herdr_inbox_registry.TestModuleImport": 2,
+      "test.services.test_herdr_inbox_registry.TestSetHerdrInboxService": 4,
+      "test.services.test_inbox_admission_runtime": 13,
+      "test.services.test_inbox_lock_lifecycle": 5,
+      "test.services.test_inbox_pending_scheduler": 9,
+      "test.services.test_inbox_queued_requests": 4,
+      "test.services.test_inbox_receiver_ownership": 6,
+      "test.services.test_inbox_receiver_streaming": 2,
+      "test.services.test_inbox_resource_admission": 12,
+      "test.services.test_inbox_service": 8,
+      "test.services.test_inbox_service.TestDeliverPending": 14,
+      "test.services.test_inbox_service.TestEagerInboxDelivery": 7,
+      "test.services.test_inbox_service.TestPollOpenCodePendingMessages": 2,
+      "test.services.test_inbox_service.TestReconcileOrphanedMessages": 2,
+      "test.services.test_inbox_service.TestRun": 5,
+      "test.services.test_inbox_status_dispatch": 17,
+      "test.services.test_inbox_status_sink": 5,
+      "test.services.test_inbox_subscription_lifecycle": 5,
+      "test.services.test_inbox_sweep_progress": 12,
+      "test.services.test_legacy_memory_audit_pool": 21,
+      "test.services.test_legacy_memory_audit_pool_composition": 12
+    },
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t009-operational-final2/t009-operational-final2/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    }
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t009-control-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 18,
+        "failure": 11,
+        "error": 7,
+        "skipped": 0
+      },
+      "controller_seconds": 60.935,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-control-green",
+      "exit_code": 1,
+      "cases": {
+        "total": 80,
+        "failure": 1,
+        "error": 7,
+        "skipped": 0
+      },
+      "controller_seconds": 101.115,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-control-fixtures-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 80,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 93.969,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-control-review-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 22,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 94.647,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-lifespan-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 25,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 95.061,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-lifespan-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 87,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 106.006,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-lifespan-exit-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 6,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 103.66,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-lifespan-exit-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 90,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 108.4,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-producer-exit-red2",
+      "exit_code": 1,
+      "cases": {
+        "total": 6,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 99.364,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-control-native-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 91,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 103.003,
+      "source_preserved": true
+    },
+    {
+      "phase": "t009-operational-final",
+      "exit_code": 1,
+      "cases": {
+        "total": 577,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 334.632,
+      "source_preserved": true
+    }
+  ],
+  "checks": {
+    "scoped_mypy": "PASS7source_modules_main_global_types_not_claimed",
+    "black_isort": "PASS13changed_code_and_test_files",
+    "composition": {
+      "verdict": "PASS",
+      "files": 434,
+      "dependencies": 1922,
+      "kept": 5,
+      "broken": 0
+    },
+    "independent_review": "Codex read-only third round GO scoped T009; no new blockers; reviewer did not run tests"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "validated_source_sha256": {
+    "src/cli_agent_orchestrator/api/main.py": "3d111eaceb8e866aabdb2dc9eda69fe151fc9577cffb25eff5adc2a7449e8c20",
+    "src/cli_agent_orchestrator/api/admission_routes.py": "f776e750c5efcc5ff67277ad10f4f4d40152dc4f6837dca55f6dfa06b166a398",
+    "src/cli_agent_orchestrator/models/admission_control.py": "cab79aa1d16a9cf8da4245f27eb9087bb7091cc9390d52c8613b3031310af636",
+    "src/cli_agent_orchestrator/services/admission_bootstrap.py": "28ebc012a5c5016cf6f937431e17d955e2e1c01a4b01bac3d02ef160dfa7bc84",
+    "src/cli_agent_orchestrator/services/admission_monitor.py": "2107449817af52cddb116c8d09a98ae8adf5205f07410ecea149a5bbec4a5808",
+    "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": "151dcd3843207f8283c09cd649ef1a7df26bb8ac9d8cfbdf6781b8e1672c1889",
+    "src/cli_agent_orchestrator/services/inbox_service.py": "ee3f811c707b92f7418afdafef638d59937497b43061ddebbaf3a274e355cac7",
+    "src/cli_agent_orchestrator/services/legacy_memory_audit_repository.py": "71b77a1b7ea29d673e7fc6e181419138a4d356d216db20b2a6fd852ebe9fa18f",
+    "test/api/test_admission_control.py": "aebba30e32d33dd001d8d3c652910ef8044e8e583e5495fac1cf614f1447197e",
+    "test/api/test_admission_lifespan.py": "12e3d0661d719afb9dc62dcf5b88806f69d78bd24055069637297bb8558cae48",
+    "test/api/test_lifespan_inbox.py": "bf45d208c7eb00cd80a07d50673d13953165bfadf09c3dd93a29418a74239fa3",
+    "test/services/test_inbox_admission_runtime.py": "ccc5036e56d860ebf994aa6379ce04c44ac4cbd6df5858670c3b79ce084f00ea",
+    "test/postgres/test_admission_control_http.py": "f1df631cd0dce39fa5c63f54b0e43f2c5e51614b6e6a48c4455d7374236a637a"
+  },
+  "activation": {
+    "absent_key": "compatibility mode retains its previous four deliveries",
+    "present_invalid_path": "startup failure; never compatibility fallback",
+    "private_policy": "parameters/activation only; no authority grant",
+    "authority": "sealed verified JWT cao:admin, server-derived process/store/namespaces/view, CAS PostgreSQL writer; implicit auth-off operator denied",
+    "registration": "latest revision/claims, including revoked or stale state; not observed capacity",
+    "uncertainty": "pending physical write fences observation; unexpected outcomes remain process-sticky"
+  },
+  "real_control_scope": [
+    "HTTP/JWKS/RS256/PostgreSQL real, owned app and process identity, actual PID/birth/namespaces; main lifespan composition tested separately",
+    "missing registration404, reader403, absent bearer401, create/read/replay409/revoke, two native history rows and read-only runtime",
+    "claims complete_hierarchy=False deliberately preserve zero admission; no host hierarchy proof or provider/model turn"
+  ],
+  "remaining": [
+    "T010 managed Work and actual remote execution owner",
+    "T011 physical cost, fixtures and M1 real acceptance; local audited pool retains its finite four-session maximum",
+    "shared-domain reservations and elastic placement M2/M3",
+    "T022 PostgreSQL operational policy plus SDK; T023 actual UI remain unimplemented",
+    "global/provider/NFR gates remain separate"
+  ],
+  "knowledge": {
+    "operation_id": "save-20261031-resource-control-and-lifespan",
+    "status": "COMPLETE",
+    "strict_lint_issues": 0,
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ]
+  },
+  "graphify": {
+    "preimplementation": "baseline structure read and verified against source",
+    "refresh": "shared generated graph excluded to preserve existing foreign changes; no generated refresh in this correction",
+    "foreign_baseline": "11/12 original hashes unchanged; last_query_stamp differs from an earlier acknowledged query; no new mutation here"
+  }
+}

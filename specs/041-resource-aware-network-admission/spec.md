@@ -178,6 +178,14 @@ La medición independiente DEBE contrastar operaciones y procesos realmente acti
 
 ## Assumptions
 
+### Configuración mediante SDK e interfaz
+
+El operador debe poder consultar y cambiar presupuestos/atestaciones y parámetros de admisión mediante una API de control común, consumible por SDK e interfaz. Los dos clientes comparten esquemas tipados, unidades, validaciones, permisos administrativos y CAS de revisión; no escriben directamente archivos internos ni inventan estado del servidor. Un conflicto devuelve la revisión a reconciliar y no se sobrescribe automáticamente. La respuesta de registro se distingue de capacidad observada y de aceptación física. El SDK no crea ni renueva credenciales, y la interfaz no concede permisos adicionales por ser local.
+
+Los cambios operativos editables desde clientes deben persistirse con revisión/auditoría en PostgreSQL. El archivo privado de despliegue mantiene el rol de activación/semilla durante la transición, sin convertirse en un canal de autoridad ni en un almacén alternativo de coordinación. La interfaz muestra desconocido, caducado, drenaje y conflicto de forma explícita. Un límite local no aparece como techo global de agentes, ni la maqueta se presenta como ejecución real.
+
+La aceptación de esta extensión requiere el mismo recorrido desde HTTP, SDK y controles reales de interfaz: leer revisión, modificar con permiso, observar efecto, provocar conflicto, revocar y rechazar clientes sin autoridad; sin duplicar reglas en cada cliente.
+
 - «Escalar sin un número fijo» significa ausencia de un techo global impuesto por el producto y posibilidad de sumar capacidad autorizada. No significa memoria, conexiones, cuotas o cómputo infinitos en un nodo o dependencia.
 - El operador proporciona o autoriza nodos adicionales y las cuotas compartidas. Aprovisionar infraestructura de pago, instalar globalmente, cambiar credenciales y migrar sesiones vivas quedan fuera de esta spec.
 - Los presupuestos, márgenes y plazos de reacción, recuperación, incorporación y equidad se fijarán y justificarán en el plan y sus pruebas antes de ejecutarlas; no se ajustarán después de un fallo para declararlo aprobado. No se introducen nuevos valores mágicos de concurrencia como solución.

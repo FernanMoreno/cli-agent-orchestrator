@@ -3,9 +3,14 @@
 import asyncio
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Callable, Literal, Protocol
+from typing import Callable, Iterator, Literal, Protocol
 
+from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+    EnvelopeNotFound,
+    EnvelopeRevisionConflict,
+)
 from cli_agent_orchestrator.services.admission_bootstrap import (
     ResourceBootstrap,
     VerifiedResourceAttestation,
@@ -38,8 +43,21 @@ MonitorReason = (
         "probe_busy",
         "monitor_failed",
         "duplicate_observation",
+        "authority_changing",
+        "authority_uncertain",
     ]
 )
+
+
+class AuthorityChangeUnavailable(RuntimeError):
+    """No new control write is allowed in this lifetime/outcome state."""
+
+
+@dataclass
+class AuthorityMutationState:
+    """Process-owned latch; rebuilding a runtime never proves an uncertain write retired."""
+
+    uncertain: bool = False
 
 
 class ResourceSampler(Protocol):
@@ -111,6 +129,7 @@ class AdmissionMonitor:
         local_storage_capacity: Callable[[], int | None],
         clock: Callable[[], float] = time.monotonic,
         resource_factory: Callable[[VerifiedResourceAttestation], ResourceSampler] | None = None,
+        authority_state: AuthorityMutationState | None = None,
     ):
         if not isinstance(scope_id, str) or not scope_id.strip():
             raise ValueError("monitor requires an operator source scope")
@@ -137,6 +156,76 @@ class AdmissionMonitor:
         self._runner: asyncio.Task[None] | None = None
         self._physical: asyncio.Task[MonitorResult] | None = None
         self._drain: asyncio.Task[bool] | None = None
+        self._authority_state = (
+            authority_state if authority_state is not None else AuthorityMutationState()
+        )
+        self._authority_tokens: set[object] = set()
+        self._on_change: Callable[[], None] | None = None
+
+    @property
+    def retired(self) -> bool:
+        with self._lifecycle_guard:
+            return (
+                self._stopped
+                and self._retired.is_set()
+                and not self._authority_tokens
+                and self._runner is None
+                and self._physical is None
+                and self._drain is None
+                and not self._refresh_guard.locked()
+            )
+
+    def set_on_change(self, callback: Callable[[], None]) -> None:
+        with self._lifecycle_guard:
+            if self._runner is not None or self._refresh_guard.locked():
+                raise RuntimeError("monitor observer must be wired before sampling")
+            self._on_change = callback
+
+    def begin_authority_change(self) -> object:
+        with self._lifecycle_guard:
+            if self._authority_state.uncertain:
+                raise AuthorityChangeUnavailable("resource authority outcome is uncertain")
+            if self._stopped:
+                raise AuthorityChangeUnavailable("resource authority writer is stopped")
+            token = object()
+            self._authority_tokens.add(token)
+            self.owner.invalidate(expected_generation=self.owner.generation)
+            return token
+
+    def cancel_authority_change(self, token: object) -> None:
+        """Only for a control Future proven cancelled before its worker starts."""
+        with self._lifecycle_guard:
+            self._authority_tokens.discard(token)
+            self.owner.invalidate(expected_generation=self.owner.generation)
+
+    @contextmanager
+    def authority_change(self, token: object) -> Iterator[None]:
+        entered = False
+        acquired = False
+        try:
+            self._refresh_guard.acquire()
+            acquired = True
+            with self._lifecycle_guard:
+                if self._stopped or token not in self._authority_tokens:
+                    raise AuthorityChangeUnavailable("resource authority writer is stopped")
+                if self._authority_state.uncertain:
+                    raise AuthorityChangeUnavailable("resource authority outcome is uncertain")
+                self._retired.clear()
+                self.owner.invalidate(expected_generation=self.owner.generation)
+                entered = True
+            yield
+        except BaseException as error:
+            if entered and type(error) not in (EnvelopeRevisionConflict, EnvelopeNotFound):
+                with self._lifecycle_guard:
+                    self._authority_state.uncertain = True
+            raise
+        finally:
+            with self._lifecycle_guard:
+                self.owner.invalidate(expected_generation=self.owner.generation)
+                self._authority_tokens.discard(token)
+            if acquired:
+                self._retired.set()
+                self._refresh_guard.release()
 
     def _linux_sampler(self, attestation: VerifiedResourceAttestation) -> LinuxResourceSampler:
         return LinuxResourceSampler(
@@ -161,6 +250,11 @@ class AdmissionMonitor:
             lifecycle = self._lifecycle
             if self._stopped:
                 return MonitorResult("stopping")
+            if self._authority_state.uncertain:
+                self.owner.invalidate(expected_generation=self.owner.generation)
+                return MonitorResult("authority_uncertain")
+            if self._authority_tokens:
+                return MonitorResult("authority_changing")
         if not self._refresh_guard.acquire(blocking=False):
             return MonitorResult("probe_busy")
         self._retired.clear()
@@ -276,9 +370,13 @@ class AdmissionMonitor:
             marker=cycle_at,
             required=configuration.healthy_samples_before_growth,
         )
-        if not self.owner.observe(
-            observation, now=now, generation=generation, ceiling=self._recovery.current
-        ):
+        with self._lifecycle_guard:
+            if self._authority_tokens or self._authority_state.uncertain:
+                return MonitorResult("authority_changing")
+            published = self.owner.observe(
+                observation, now=now, generation=generation, ceiling=self._recovery.current
+            )
+        if not published:
             if self.owner.generation != generation:
                 self._recovery = _Recovery()
                 return MonitorResult("generation_changed")
@@ -311,12 +409,17 @@ class AdmissionMonitor:
             self._stopped = True
             self.owner.stop_accepting()
 
+    def stop_accepting(self) -> None:
+        self._stop_admission()
+
     async def _run(self) -> None:
         try:
             while not self._stopped:
                 self._physical = asyncio.create_task(asyncio.to_thread(self.refresh))
                 await asyncio.shield(self._physical)
                 self._physical = None
+                if self._on_change is not None:
+                    self._on_change()
                 await asyncio.sleep(self._interval)
         except Exception:
             self._stop_admission()

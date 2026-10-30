@@ -65,7 +65,12 @@ class _FakeTask:
 def _make_fake_create_task(tasks: list) -> object:
     """Build a ``create_task`` replacement that records every created task."""
 
-    def _fake_create_task(coro, *_args, **_kwargs) -> _FakeTask:
+    def _fake_create_task(coro, *_args, **_kwargs) -> _FakeTask | asyncio.Task[None]:
+        # Fake only the long-running actors. Discarding the finite shutdown
+        # coroutine would skip the very cancellation/registry assertions this
+        # fixture verifies. Use the loop directly to avoid this patched factory.
+        if asyncio.iscoroutine(coro) and coro.cr_code.co_name == "shutdown_running_lifespan":
+            return asyncio.get_running_loop().create_task(coro)
         task = _FakeTask(coro)
         tasks.append(task)
         return task

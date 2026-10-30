@@ -177,6 +177,7 @@ from cli_agent_orchestrator.services.herdr_inbox_registry import set_herdr_inbox
 from cli_agent_orchestrator.services.herdr_inbox_service import HerdrInboxService
 from cli_agent_orchestrator.services.inbox_service import (
     InboxServiceDrainTimeout,
+    InboxServiceStoppingError,
     inbox_service,
 )
 from cli_agent_orchestrator.services.install_service import InstallResult, install_agent
@@ -1706,6 +1707,9 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("OTel telemetry init failed; continuing", exc_info=True)
     init_db()
+    # No legacy input may slip through while an enabled resource runtime is
+    # being composed. Binding also refuses a previous lifetime still in use.
+    inbox_service.bind_admission(None)
     from cli_agent_orchestrator.services.interactions.service import (
         get_default_interaction_service,
     )
@@ -1730,6 +1734,7 @@ async def lifespan(app: FastAPI):
     herdr_service_registered = False
     work_dispatcher_task: Optional[asyncio.Task] = None
     owned_work_runtime: Dict[str, Any] = {}
+    admission_runtime = None
 
     def inbox_shutdown_drain_timeout_s() -> float:
         """Bound drain by the longest existing server operation budget (seconds).
@@ -1747,7 +1752,28 @@ async def lifespan(app: FastAPI):
         startup_tasks.append(task)
         return task
 
+    async def retire_admission_runtime() -> None:
+        if admission_runtime is None:
+            return
+        # Retirement owns physical workers. Run it in a fresh task so a
+        # cancelled lifespan cannot be mistaken for a cancelled monitor stop.
+        retirement = asyncio.create_task(admission_runtime.stop())
+        interrupted = False
+        while not retirement.done():
+            try:
+                await asyncio.shield(retirement)
+            except asyncio.CancelledError:
+                if retirement.cancelled():
+                    raise
+                interrupted = True
+        retirement.result()
+        if getattr(app.state, "inbox_admission_runtime", None) is admission_runtime:
+            delattr(app.state, "inbox_admission_runtime")
+        if interrupted:
+            raise asyncio.CancelledError
+
     async def shutdown_lifespan_resources(*, best_effort: bool) -> None:
+        await retire_admission_runtime()
         # A stopped lifespan must not leave capability/result owners attached to
         # a store that a later lifespan or test has replaced.
         await asyncio.to_thread(fifo_manager.stop_all_readers)
@@ -1779,7 +1805,10 @@ async def lifespan(app: FastAPI):
             logger.warning("Error shutting down telemetry during startup cleanup", exc_info=True)
 
     async def cleanup_failed_startup() -> None:
-        inbox_service.stop_accepting()
+        if admission_runtime is not None:
+            admission_runtime.close_admission()
+        else:
+            inbox_service.stop_accepting()
         if startup_tasks:
             try:
                 await asyncio.gather(*startup_tasks, return_exceptions=True)
@@ -1792,7 +1821,12 @@ async def lifespan(app: FastAPI):
                 logger.warning(
                     "Error clearing Herdr inbox service during startup cleanup", exc_info=True
                 )
-        await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())
+        # Join monitor/control before a delivery drain can fail. The runtime
+        # owns that drain too and retains its binding if physical work remains.
+        if admission_runtime is not None:
+            await retire_admission_runtime()
+        else:
+            await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())
         await shutdown_lifespan_resources(best_effort=True)
 
     try:
@@ -1803,7 +1837,19 @@ async def lifespan(app: FastAPI):
             )
         await registry.load()
         app.state.plugin_registry = registry
-        inbox_service.start_accepting()
+        from cli_agent_orchestrator.services.inbox_admission_runtime import runtime_from_environment
+
+        admission_runtime = runtime_from_environment(inbox_service)
+        if admission_runtime is not None:
+            app.state.inbox_admission_runtime = admission_runtime
+            await admission_runtime.start()
+        else:
+            previous = getattr(app.state, "inbox_admission_runtime", None)
+            if previous is not None:
+                if not previous.retired:
+                    raise RuntimeError("previous resource runtime has not retired")
+                delattr(app.state, "inbox_admission_runtime")
+            inbox_service.start_accepting()
 
         # Run cleanup in background
         start_lifespan_task(asyncio.to_thread(cleanup_old_data))
@@ -1909,7 +1955,11 @@ async def lifespan(app: FastAPI):
         if isinstance(backend, HerdrBackend):
 
             def deliver_inbox(terminal_id: str) -> None:
-                inbox_service.deliver_pending(terminal_id, registry=registry)
+                try:
+                    inbox_service.queue_delivery(terminal_id, registry=registry)
+                except (asyncio.QueueFull, InboxServiceStoppingError):
+                    # SQL remains PENDING; normal reconciliation rediscovers it.
+                    logger.debug("Herdr inbox wake deferred")
 
             svc = HerdrInboxService(
                 herdr_session=backend.herdr_session,
@@ -1921,7 +1971,10 @@ async def lifespan(app: FastAPI):
             logger.info("Herdr inbox service started")
 
     except BaseException:
-        inbox_service.stop_accepting()
+        if admission_runtime is not None:
+            admission_runtime.close_admission()
+        else:
+            inbox_service.stop_accepting()
         for task in startup_tasks:
             try:
                 task.cancel()
@@ -1979,13 +2032,17 @@ async def lifespan(app: FastAPI):
     continuation_task = (
         asyncio.create_task(continuation_driver.serve()) if continuation_driver else None
     )
-    try:
-        yield
-    finally:
+
+    async def shutdown_running_lifespan() -> None:
         # Fence direct API/Herdr submissions and all batch workers before
         # cancelling their async waiters. Already-admitted nested deliveries
         # remain part of their outer operation and are allowed to finish.
-        inbox_service.stop_accepting()
+        if admission_runtime is not None:
+            admission_runtime.close_admission()
+        else:
+            inbox_service.stop_accepting()
+        # Retire physical admission before releasing its process identity.
+        await retire_admission_runtime()
         if local_peer_registered:
             try:
                 await asyncio.to_thread(unregister_instance)
@@ -2010,71 +2067,89 @@ async def lifespan(app: FastAPI):
             deferred_init_recovery_task.cancel()
             await asyncio.gather(deferred_init_recovery_task, return_exceptions=True)
 
-    # Stop herdr inbox service on shutdown
-    if herdr_inbox_task is not None:
-        herdr_inbox_task.cancel()
+        # Stop herdr inbox service on shutdown
+        if herdr_inbox_task is not None:
+            herdr_inbox_task.cancel()
+            try:
+                await herdr_inbox_task
+            except asyncio.CancelledError:
+                pass
+            set_herdr_inbox_service(None)
+            logger.info("Herdr inbox service stopped")
+
+        # Cancel consumer tasks on shutdown
+        status_monitor_task.cancel()
+        log_writer_task.cancel()
+        inbox_service_task.cancel()
+        # Cancel approval bridge on shutdown
+        if approval_bridge_task is not None:
+            approval_bridge_task.cancel()
+            try:
+                await approval_bridge_task
+            except asyncio.CancelledError:
+                pass
+        # Cancel daemon on shutdown
+        daemon_task.cancel()
+
         try:
-            await herdr_inbox_task
+            await asyncio.gather(
+                status_monitor_task,
+                log_writer_task,
+                inbox_service_task,
+                daemon_task,
+                return_exceptions=True,
+            )
         except asyncio.CancelledError:
             pass
-        set_herdr_inbox_service(None)
-        logger.info("Herdr inbox service stopped")
 
-    # Cancel consumer tasks on shutdown
-    status_monitor_task.cancel()
-    log_writer_task.cancel()
-    inbox_service_task.cancel()
-    # Cancel approval bridge on shutdown
-    if approval_bridge_task is not None:
-        approval_bridge_task.cancel()
+        # Cancel OpenCode inbox poller on shutdown
+        opencode_inbox_task.cancel()
         try:
-            await approval_bridge_task
+            await opencode_inbox_task
         except asyncio.CancelledError:
             pass
-    # Cancel daemon on shutdown
-    daemon_task.cancel()
+
+        # Cancel inbox reconciliation sweep on shutdown
+        inbox_reconcile_task.cancel()
+        try:
+            await inbox_reconcile_task
+        except asyncio.CancelledError:
+            pass
+
+        if work_dispatcher_task is not None:
+            await _stop_registered_work_dispatcher(work_dispatcher_task)
+
+        try:
+            await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())
+        except InboxServiceDrainTimeout:
+            logger.critical(
+                "Inbox operations did not drain before the shutdown deadline; "
+                "leaving FIFO readers and plugins open while workers remain active",
+                exc_info=True,
+            )
+            raise
+
+        # Stop the pipe-pane liveness watchdog thread, then release shared services.
+        await shutdown_lifespan_resources(best_effort=False)
+        logger.info("Shutting down CLI Agent Orchestrator server...")
 
     try:
-        await asyncio.gather(
-            status_monitor_task,
-            log_writer_task,
-            inbox_service_task,
-            daemon_task,
-            return_exceptions=True,
-        )
-    except asyncio.CancelledError:
-        pass
-
-    # Cancel OpenCode inbox poller on shutdown
-    opencode_inbox_task.cancel()
-    try:
-        await opencode_inbox_task
-    except asyncio.CancelledError:
-        pass
-
-    # Cancel inbox reconciliation sweep on shutdown
-    inbox_reconcile_task.cancel()
-    try:
-        await inbox_reconcile_task
-    except asyncio.CancelledError:
-        pass
-
-    if work_dispatcher_task is not None:
-        await _stop_registered_work_dispatcher(work_dispatcher_task)
-
-    try:
-        await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())
-    except InboxServiceDrainTimeout:
-        logger.critical(
-            "Inbox operations did not drain before the shutdown deadline; "
-            "leaving FIFO readers and plugins open while workers remain active",
-            exc_info=True,
-        )
-        raise
-
-    # Stop the pipe-pane liveness watchdog thread, then release shared services.
-    await shutdown_lifespan_resources(best_effort=False)
-    logger.info("Shutting down CLI Agent Orchestrator server...")
+        yield
+    finally:
+        # Every exit retires consumers, callbacks and physical owners together.
+        # Repeated cancellation cannot detach cleanup from its work.
+        shutdown = asyncio.create_task(shutdown_running_lifespan())
+        interrupted = False
+        while not shutdown.done():
+            try:
+                await asyncio.shield(shutdown)
+            except asyncio.CancelledError:
+                if shutdown.cancelled():
+                    raise
+                interrupted = True
+        shutdown.result()
+        if interrupted:
+            raise asyncio.CancelledError
 
 
 def get_plugin_registry(request: Request) -> PluginRegistry:
@@ -2114,9 +2189,11 @@ app = FastAPI(
     version=SERVER_VERSION,
     lifespan=lifespan,
 )
+from cli_agent_orchestrator.api.admission_routes import router as admission_router
 from cli_agent_orchestrator.api.browser_auth_routes import router as browser_auth_router
 
 app.include_router(browser_auth_router)
+app.include_router(admission_router)
 from cli_agent_orchestrator.api.local_coordination_routes import router as local_coordination_router
 
 app.include_router(local_coordination_router)
