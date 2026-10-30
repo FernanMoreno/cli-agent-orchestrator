@@ -1,0 +1,466 @@
+{
+  "schema": "caos.real-process-capacity.v1",
+  "executed_base_head": "bb5fc03828e4946ad245a7a2ede673975352888d",
+  "candidate_source_stamp": "2f0ccb1551f2c2969eb562150397bee46fe6c838d3138e2045b2012fb7ab5282",
+  "candidate_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "candidate_archive_sha256": "465f4a2ab172186aa81e5f763a25a48b14437ead303b861ddfa8563655db6db1",
+  "global_acceptance": false,
+  "model_inference": false,
+  "mode": "one local owned API per rung; real PostgreSQL/private tmux/production mock_cli provider; ten-second mock workload plus unique echo followup",
+  "pytest": {
+    "cases": {
+      "total": 1,
+      "failure": 1,
+      "error": 0,
+      "skipped": 0
+    },
+    "exit_code": 1,
+    "controller_seconds": 566.25,
+    "source_preserved": true
+  },
+  "rungs": [
+    {
+      "workers": 2,
+      "agent_process_target": 3,
+      "created": 3,
+      "ready": 3,
+      "peak_processing": 2,
+      "retired": 3,
+      "passed": true,
+      "cleanup_confirmed": true,
+      "total_seconds": 40.33872534800321,
+      "available_before_mib": 10231,
+      "post_cleanup_available_mib": 10272,
+      "verified_deliveries": 4,
+      "verified_echoes": 4,
+      "accounting_reached": true,
+      "memory": {
+        "sample_count": 252,
+        "peak_aggregate_rss_bytes": 366620672,
+        "peak_owned_processes": 9,
+        "min_available_mib": 9975,
+        "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+      },
+      "startup_seconds": [
+        4.082630369986873,
+        3.8276830090326257,
+        3.9027523490367457
+      ],
+      "load_submit_to_echo_seconds": [
+        11.712661730998661,
+        11.814121177012566
+      ],
+      "message_submit_to_echo_seconds": [
+        1.7960469010286033,
+        1.7963959890184924
+      ],
+      "confirmed_sleep_start_span_seconds": 0.04
+    },
+    {
+      "workers": 4,
+      "agent_process_target": 5,
+      "created": 5,
+      "ready": 5,
+      "peak_processing": 4,
+      "retired": 5,
+      "passed": true,
+      "cleanup_confirmed": true,
+      "total_seconds": 47.17105879599694,
+      "available_before_mib": 10275,
+      "post_cleanup_available_mib": 10249,
+      "verified_deliveries": 8,
+      "verified_echoes": 8,
+      "accounting_reached": true,
+      "memory": {
+        "sample_count": 336,
+        "peak_aggregate_rss_bytes": 272674816,
+        "peak_owned_processes": 15,
+        "min_available_mib": 9923,
+        "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+      },
+      "startup_seconds": [
+        4.012506311992183,
+        3.7932995180017315,
+        3.8936388330184855,
+        3.849767587031238,
+        3.828994876006618
+      ],
+      "load_submit_to_echo_seconds": [
+        12.675452611001674,
+        12.260567325982265,
+        12.47853997600032,
+        12.481744955002796
+      ],
+      "message_submit_to_echo_seconds": [
+        2.0325331820058636,
+        2.029550781007856,
+        2.0330677999882028,
+        2.0371943379868753
+      ],
+      "confirmed_sleep_start_span_seconds": 0.37
+    },
+    {
+      "workers": 8,
+      "agent_process_target": 9,
+      "created": 9,
+      "ready": 9,
+      "peak_processing": 8,
+      "retired": 9,
+      "passed": true,
+      "cleanup_confirmed": true,
+      "total_seconds": 66.96749220602214,
+      "available_before_mib": 10248,
+      "post_cleanup_available_mib": 10101,
+      "verified_deliveries": 16,
+      "verified_echoes": 16,
+      "accounting_reached": true,
+      "memory": {
+        "sample_count": 512,
+        "peak_aggregate_rss_bytes": 444305408,
+        "peak_owned_processes": 27,
+        "min_available_mib": 9766,
+        "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+      },
+      "startup_seconds": [
+        4.139787569001783,
+        3.8112161320168525,
+        3.824448229977861,
+        3.870856486959383,
+        3.8345277560292743,
+        3.8312766430317424,
+        3.826302495028358,
+        3.8693803500500508,
+        3.840877790004015
+      ],
+      "load_submit_to_echo_seconds": [
+        14.248945961007848,
+        13.93161773699103,
+        13.74750945501728,
+        14.574426542967558,
+        14.166750320000574,
+        14.382446634001099,
+        13.963496690965258,
+        14.230967253970448
+      ],
+      "message_submit_to_echo_seconds": [
+        2.893527454987634,
+        2.8984220849815756,
+        2.896210125996731,
+        2.9140634550130926,
+        2.9158719910192303,
+        2.909029793983791,
+        2.912865658989176,
+        2.89399366104044
+      ],
+      "confirmed_sleep_start_span_seconds": 0.83
+    },
+    {
+      "workers": 12,
+      "agent_process_target": 13,
+      "created": 13,
+      "ready": 13,
+      "peak_processing": 12,
+      "retired": 13,
+      "passed": true,
+      "cleanup_confirmed": true,
+      "total_seconds": 87.53179793199524,
+      "available_before_mib": 10095,
+      "post_cleanup_available_mib": 9959,
+      "verified_deliveries": 24,
+      "verified_echoes": 24,
+      "accounting_reached": true,
+      "memory": {
+        "sample_count": 689,
+        "peak_aggregate_rss_bytes": 432619520,
+        "peak_owned_processes": 39,
+        "min_available_mib": 9694,
+        "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+      },
+      "startup_seconds": [
+        4.125233537983149,
+        3.817084259004332,
+        3.84707427903777,
+        3.8282918779877946,
+        3.8629787010140717,
+        3.8296590740210377,
+        3.843225094024092,
+        3.8521374050178565,
+        3.8853489449829794,
+        3.8547386350110173,
+        3.8631000029854476,
+        3.848866746004205,
+        3.871097116963938
+      ],
+      "load_submit_to_echo_seconds": [
+        16.04726117901737,
+        14.684364552027546,
+        16.546927553019486,
+        15.932838017004542,
+        16.436959775048308,
+        14.966407863015775,
+        15.146095033967867,
+        16.570991476008203,
+        14.733224158000667,
+        16.26799777301494,
+        16.669370063988026,
+        16.073066170036327
+      ],
+      "message_submit_to_echo_seconds": [
+        3.9888821879867464,
+        3.9874099420267157,
+        3.9815044869901612,
+        3.991773549001664,
+        3.9758652540040202,
+        3.9842330379760824,
+        3.9866376790450886,
+        3.9742465509916656,
+        3.9891244049649686,
+        3.9830657789716497,
+        3.9867720100446604,
+        3.981765496020671
+      ],
+      "confirmed_sleep_start_span_seconds": 2.08
+    },
+    {
+      "workers": 20,
+      "agent_process_target": 21,
+      "created": 21,
+      "ready": 21,
+      "peak_processing": 20,
+      "retired": 21,
+      "passed": true,
+      "cleanup_confirmed": true,
+      "total_seconds": 127.08944883401273,
+      "available_before_mib": 9959,
+      "post_cleanup_available_mib": 10022,
+      "verified_deliveries": 40,
+      "verified_echoes": 40,
+      "accounting_reached": true,
+      "memory": {
+        "sample_count": 1028,
+        "peak_aggregate_rss_bytes": 598548480,
+        "peak_owned_processes": 63,
+        "min_available_mib": 9614,
+        "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+      },
+      "startup_seconds": [
+        4.051307377987541,
+        3.8140103509649634,
+        3.840858394978568,
+        3.8296292439918034,
+        3.8323681189795025,
+        3.8260599200148135,
+        3.844947175006382,
+        3.8473226110218093,
+        3.84795727301389,
+        3.906441985978745,
+        3.848532658012118,
+        3.885044829978142,
+        3.9053088359651156,
+        3.865986648015678,
+        3.8668861879850738,
+        3.886857077013701,
+        3.925808778963983,
+        3.8876856630085967,
+        3.921545503020752,
+        3.9023426629719324,
+        3.8796952549600974
+      ],
+      "load_submit_to_echo_seconds": [
+        16.53893609798979,
+        15.969548754044808,
+        18.019299732986838,
+        19.533723294967785,
+        19.338970601034816,
+        17.51469070004532,
+        15.354686829028651,
+        15.72728376602754,
+        17.70681840996258,
+        18.88898753700778,
+        19.252902498003095,
+        16.380458442959934,
+        19.1102468050085,
+        15.752856932987925,
+        19.24764797097305,
+        17.547270116978325,
+        18.7488443320035,
+        19.499586035963148,
+        18.67280918895267,
+        16.716710773005616
+      ],
+      "message_submit_to_echo_seconds": [
+        6.4749909630045295,
+        6.473315944022033,
+        6.462994930043351,
+        6.4652182789868675,
+        6.468311058997642,
+        6.477711242972873,
+        6.478634950995911,
+        6.383150074048899,
+        6.476913752965629,
+        6.468193651002366,
+        6.470746765029617,
+        6.294485876976978,
+        6.390482021961361,
+        6.460306841996498,
+        6.4628348289988935,
+        6.4762023750226945,
+        6.45670846599387,
+        6.4666024089674465,
+        6.391808334970847,
+        6.467362837982364
+      ],
+      "confirmed_sleep_start_span_seconds": 4.22
+    },
+    {
+      "workers": 32,
+      "agent_process_target": 33,
+      "created": 33,
+      "ready": 33,
+      "peak_processing": 30,
+      "retired": 33,
+      "passed": false,
+      "cleanup_confirmed": true,
+      "total_seconds": 164.4243754359777,
+      "available_before_mib": 10022,
+      "post_cleanup_available_mib": 10055,
+      "verified_deliveries": null,
+      "verified_echoes": null,
+      "accounting_reached": false,
+      "memory": {
+        "sample_count": 1305,
+        "peak_aggregate_rss_bytes": 802488320,
+        "peak_owned_processes": 96,
+        "min_available_mib": 9617,
+        "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+      },
+      "startup_seconds": [
+        4.073719281994272,
+        3.818935210991185,
+        3.8614952879725024,
+        3.8450925140059553,
+        3.877458506030962,
+        3.843787860008888,
+        3.861193054995965,
+        3.840499504993204,
+        3.842081855982542,
+        3.9063555219909176,
+        3.845168473024387,
+        3.9110181590076536,
+        3.8824100689962506,
+        3.860517590015661,
+        3.864632614015136,
+        3.932728098006919,
+        3.8782454329775646,
+        3.8894699519732967,
+        3.890963819983881,
+        3.8822546239825897,
+        3.9382494760211557,
+        3.880860035016667,
+        3.9096614150330424,
+        3.9011669809697196,
+        3.93869762995746,
+        3.898465815000236,
+        3.9193382549565285,
+        3.9518226270447485,
+        3.9116457019699737,
+        3.9647498890408315,
+        3.9089404590195045,
+        3.9564948820043355,
+        3.915546060015913
+      ]
+    }
+  ],
+  "verified_messages_total": 92,
+  "agent_processes_created_total": 84,
+  "agent_processes_retired_total": 84,
+  "rung32_failure": "inbox POST requests.ReadTimeout at unchanged 10-second read deadline; detailed delivery accounting not reached",
+  "profiling_repeat32": {
+    "diagnostic_only": true,
+    "source_preserved": true,
+    "workload_and_deadlines_unchanged": true,
+    "rung": {
+      "workers": 32,
+      "created": 33,
+      "ready": 33,
+      "peak_processing": 26,
+      "passed": false,
+      "cleanup_confirmed": true
+    },
+    "phases": {
+      "create_inbox_message": {
+        "calls": 32,
+        "sum_call_seconds": 2.6219811080372892,
+        "max_call_seconds": 0.23698751698248088,
+        "thread_count": 1
+      },
+      "deliver_pending": {
+        "calls": 81,
+        "sum_call_seconds": 253.73985670291586,
+        "max_call_seconds": 10.845135123992804,
+        "thread_count": 32
+      }
+    },
+    "health": {
+      "samples": 696,
+      "request_errors": 2,
+      "max_observed_seconds": 1.0032158140093088
+    },
+    "caveats": [
+      "health RTT includes synchronous endpoint/threadpool work and is not a pure event-loop measure",
+      "phase time includes recorder begin-write/lock overhead",
+      "create call measures query/insert/commit/refresh together, not SQL-only duration",
+      "delivery includes API, watchdog and status-triggered calls; no per-request attribution",
+      "cause inside delivery remains unproven; no production correction justified solely by aggregate times"
+    ],
+    "pytest_exit_code": 1,
+    "controller_seconds": 196.738,
+    "failure": "requests.ReadTimeout inbox POST at unchanged10second read deadline"
+  },
+  "unit_controls": {
+    "passed": 10,
+    "seconds": 2.46,
+    "initial_missing_interface_collection_error_retained": true
+  },
+  "runtime_preflight": {
+    "passed": 17,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "controller_seconds": 142.306,
+    "installed_RECORD_hashes_verified": 9086,
+    "source_preserved": true
+  },
+  "independent_Codex_read_review": "PASS after partial-rung ownership and raw pane cardinality fixes",
+  "remaining": [
+    "32-worker uninstrumented acceptance",
+    "sustained or multi-instance capacity",
+    "actual model inference capacity",
+    "durable Work and graph visibility acceptance",
+    "global backend/Apps gates and unchanged loaded one-second NFR"
+  ],
+  "postgresql": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+    "same_existing_service_verified_before_and_after": true,
+    "live_reuse_owner_verified": true,
+    "after_all_runs": {
+      "clients": 0,
+      "databases": 0,
+      "test_roles": 0
+    },
+    "count_scope": {
+      "clients": "client backends excluding this read-only observer",
+      "databases": "non-template databases excluding postgres",
+      "test_roles": "c21_% roles"
+    },
+    "shared_service_retained": true
+  },
+  "architecture": {
+    "composition_exit_code": 0,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "memory_source": "/proc/meminfo MemAvailable in the Linux/WSL environment; not Windows host accounting",
+  "totals_scope": "first uninstrumented six-rung attempt; separate instrumented32 repeat creates/retires33 additional agents"
+}
