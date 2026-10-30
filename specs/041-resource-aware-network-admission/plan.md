@@ -29,10 +29,12 @@ Inspección git y conocimiento: completados. Spec aprobada por el usuario; plani
 ## Project Structure
 
 - `services/admission_policy.py`: modelos inmutables y decisión pura de capacidad; no I/O ni autoridad.
+- `services/admission_postgres.py`: presión agregada de un servidor consultado con rol runtime/readonly; una sonda viva y retiro confirmado, sin identidades ni errores privados en resultados. No sustituye reservas ni un mapeo autorizado de dominios.
+- `services/admission_settings.py`: política operativa privada y validada, próxima lectura y retención de última válida en el mismo ámbito; no usa el escritor genérico de ConfigService ni contiene atestaciones de jerarquía.
+- `services/admission_bootstrap.py`: verifica envelope explícito de operador persistido en PostgreSQL contra identidad/encarnación/namespaces del proceso; solo devuelve un objeto verificado al observador.
 - `services/admission_resources.py`: observaciones de host/cgroup y presión PostgreSQL con antigüedad y fallos explícitos.
 - `services/delivery_admission.py`: dueño común de reservas, drenaje, exclusión y estadísticas estructuradas locales.
 - `services/inbox_service.py`: consumidor, barridos y llamadas directas usan ese dueño; no generan capacidad adicional.
-- `services/settings_service.py`, `services/config_service.py`: política validada, próxima lectura y retención de última política válida.
 - `clients/admission_repository.py` y migración PostgreSQL: reservas y dominios compartidos M2, independientes del dueño de Work.
 - `services/elastic_assignment_service.py`: preparación/reserva confirmadas antes del primer efecto de colocación M3.
 - `test/services/test_admission_policy.py`, `test/services/test_delivery_admission.py`, `test/services/test_admission_resources.py`: controles puros, físicos y de cancelación.
@@ -47,6 +49,14 @@ Inspección git y conocimiento: completados. Spec aprobada por el usuario; plani
 La decisión expresa nuevas unidades disponibles en una observación; el dueño no puede volver a gastar una misma observación al cambiar el número de reservas. El dueño local reserva antes de enviar trabajo a un executor; cada reserva diferencia reservada, iniciada y liberada. Solo una cancelación antes de iniciar puede liberar la reserva sin fin físico. Se permiten disminuciones bajo consumo activo con deuda explícita; no nuevas admisiones hasta recuperar margen. Reservas por receptor son únicas. La política aplica a todo el conjunto de entradas, no uno por consumidor.
 
 Las medidas de CPU deben considerar afinidad/cuotas efectivas y presión; memoria debe considerar host y límites efectivos de cgroup, sin duplicar un dominio. El muestreo de PostgreSQL no consulta contenido de mensajes ni omite auditoría de operaciones funcionales. La instrumentación tiene su propio tiempo/acceso acotados y no se ejecuta por mensaje.
+
+### Prerrequisito de confianza para M1
+
+La investigación no encontró una atestación de recursos reutilizable. La presencia peer y el UUID de host por usuario solo sirven como identidad lógica. Se requiere un envelope explícito y finito del operador, persistido en PostgreSQL y ligado por el servidor al proceso/encarnación y a los namespaces de montaje/cgroup actuales. Una declaración de presupuesto no demuestra jerarquía completa; esa afirmación adicional requiere un Principal admin verificado y ámbito explícito. No se aceptará de settings, variables de entorno, perfiles o solicitudes ordinarias. El loader devolverá un objeto verificado; ausencia, revocación, cambio de namespaces/generación o imposibilidad de verificar conserva cobertura desconocida.
+
+Antes de conectar M1 deben existir este loader y sus controles de autorización/persistencia. No se activarán los flags del observador con True para obtener pruebas verdes. Los valores de política de consumo son configuración, separados de la autoridad de atestación.
+
+El Principal acredita quién autorizó una atestación del operador, no la verdad de ancestros invisibles. La cobertura declarada requiere contraste independiente con el host/orquestador. El servidor verifica su vinculación a generación, namespaces y digest de pertenencia/vista de montaje; cualquier deriva invalida esa vinculación. Un escritor administrativo con credenciales de migración protege frente a DML del rol runtime, pero no frente a un proceso comprometido que posea esas mismas credenciales; la separación fuerte exige mantenerlas fuera del runtime.
 
 ### M2 — Dominios compartidos
 

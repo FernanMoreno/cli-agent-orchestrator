@@ -1,0 +1,69 @@
+{
+  "scope": "Spec041 T006 components only; not M1/M2/M3 acceptance",
+  "date": "2026-10-30",
+  "base_head": "53876092fceb073230fee8adff22e7b0b78817ce",
+  "status": "PASS_SCOPED_NOT_M1",
+  "tests": {
+    "passed": 158,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "pure_cases": 156,
+    "native_postgres_cases": 2,
+    "seconds": 60.33,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/f041-pressure-policy-final-green/f041-pressure-policy-final-green/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    }
+  },
+  "red_evidence": {
+    "fifo": "1 expected failure; blocked before file type validation",
+    "json_initial": "duplicate rejected by test; depth2000 accepted by CPython3.13, preserved original run",
+    "json_final": "2 expected failures: duplicate fields and depth20000 under64KiB",
+    "postgres_open": "2 expected factory/entry failures; 1 supplier recovery pass"
+  },
+  "types": "mypy scoped five admission source modules PASS; not the global type gate",
+  "style": "Black/isort five changed Python files PASS",
+  "composition": {
+    "files": 426,
+    "dependencies": 1875,
+    "kept": 5,
+    "broken": 0
+  },
+  "review": "Codex independent read review PASS for T006; no Claude invoked",
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "source_files": {
+    "src/cli_agent_orchestrator/services/admission_postgres.py": "cac7128ca186ebcf614dbe6e897919e90652260446a21e6efc03cb7b4e6c9158",
+    "src/cli_agent_orchestrator/services/admission_settings.py": "a98be5851ba4862fd9a0d4d8af8661784a5ffec3206e3975e28a8fa07b09655f",
+    "test/services/test_admission_postgres.py": "c1b9ba1bd9af72336108be5d41c86982fb9c5544c8ae4498eabfc3d3e5693677",
+    "test/services/test_admission_settings.py": "f3316499e31f62498a97287a5820bed1d88ad1f9a5a4272a17aa307de68b6e62",
+    "test/postgres/test_admission_pressure.py": "2d2adef5f11d001754a06873ae716c8a213f85c4fef5350d62512b18f60a8b35"
+  },
+  "boundaries": [
+    "No InboxService or Work integration yet; fixed consumer4 unchanged.",
+    "PG pressure is telemetry for one selected target, not physical domain identity or a reservation.",
+    "Opening without a close witness remains blocked; recreating sampler is not retirement proof.",
+    "T007 operator attestation/bootstrap and T008 single-owner lifecycle remain prerequisites.",
+    "M1/M2/M3,32-agent and global acceptance remain pending."
+  ],
+  "composition_review": {
+    "changed": "strict private operator policy reader and one-owner PostgreSQL pressure probe",
+    "neighbors": "resource observation, pure admission policy, readonly PostgreSQL adapter/target supplier",
+    "invariants": "atomic reload, explicit scope, strict JSON, redacted reasons, unknown fails closed, physical closure before another probe",
+    "scenarios": "malformed/reloaded private JSON, FIFO, scope change, concurrent busy probe, failed entry/close, real readonly queries and held backend pressure",
+    "contract_tests": "Internal typed model and configuration contracts; no external API/message schema changed, Pact not applicable.",
+    "verdict": "PASS WITH RISKS: unwired components only"
+  },
+  "graph_refresh_decision": "No regeneration of foreign graph outputs; query/source verification and Import Linter used. Query changed only cache/last_query_stamp; kept outside commit.",
+  "knowledge_persist_decision": "Existing durable physical-retirement and resource-coverage rules apply; bounded implementation details retained in Spec041 research/receipts, no duplicate vault entry."
+}
