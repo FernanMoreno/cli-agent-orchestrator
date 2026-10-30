@@ -1,0 +1,129 @@
+{
+  "date": "2026-10-30",
+  "scope": "T009 explicitly bound Inbox direct/status/sweep component; API singleton remains unbound",
+  "status": "PASS_BOUND_COMPONENT_CHECKPOINT_T009_OPEN",
+  "base_head": "4af7346a81a7049eb1c6f1c7884f345c72b9726c",
+  "tests": {
+    "total": 163,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 3,
+    "pytest_seconds": 103.7,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t009-inbox-final/t009-inbox-final/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    },
+    "by_test_class": {
+      "test.services.test_inbox_resource_admission": 12,
+      "test.integration.test_inbox_resource_admission": 2,
+      "test.services.test_inbox_pending_scheduler": 9,
+      "test.services.test_inbox_queued_requests": 4,
+      "test.services.test_inbox_sweep_progress": 12,
+      "test.services.test_inbox_status_dispatch": 17,
+      "test.services.test_inbox_receiver_ownership": 6,
+      "test.services.test_inbox_receiver_streaming": 2,
+      "test.services.test_inbox_lock_lifecycle": 5,
+      "test.services.test_inbox_subscription_lifecycle": 5,
+      "test.services.test_inbox_status_sink": 5,
+      "test.services.test_inbox_service.TestDeliverPending": 14,
+      "test.services.test_inbox_service.TestEagerInboxDelivery": 7,
+      "test.services.test_inbox_service.TestPollOpenCodePendingMessages": 2,
+      "test.services.test_inbox_service.TestReconcileOrphanedMessages": 2,
+      "test.services.test_inbox_service.TestRun": 5,
+      "test.services.test_inbox_service": 8,
+      "test.integration.test_inbox_status_dispatch": 1,
+      "test.integration.test_inbox_sweep_postgres": 2,
+      "test.integration.test_inbox_lock_lifecycle": 1,
+      "test.integration.test_inbox_stream_dispatch": 1,
+      "test.services.test_delivery_admission": 25,
+      "test.services.test_admission_monitor": 16
+    },
+    "selected_files": 18
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t009-inbox-red",
+      "result": "5FAIL39.81s constructor binding absent"
+    },
+    {
+      "phase": "t009-inbox-green",
+      "result": "72PASS52.45s"
+    },
+    {
+      "phase": "t009-inbox-review-red",
+      "result": "2FAIL5PASS40.23s: premature key/Future publication; join helper absent"
+    },
+    {
+      "phase": "t009-inbox-review-green",
+      "result": "74PASS52.72s"
+    },
+    {
+      "phase": "t009-restart-red",
+      "result": "1FAIL39.59s service flag reopens before owner restart succeeds"
+    },
+    {
+      "phase": "t009-inbox-expanded",
+      "result": "161PASS104.65s including native PostgreSQL denial/recovery"
+    },
+    {
+      "phase": "t009-physical-start-red",
+      "result": "1FAIL41.10s live child loses drain count when Thread.start reports error after spawning"
+    }
+  ],
+  "checks": {
+    "types": "PASS1changedsource",
+    "black_isort": "PASS3files",
+    "composition": {
+      "files": 431,
+      "dependencies": 1899,
+      "kept": 5,
+      "broken": 0
+    },
+    "independent_review": "Codex third code round PASS explicitbound scope; no reviewer tests",
+    "diff_review": "PASS scoped source/tests and documents"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "source_sha256": {
+    "src/cli_agent_orchestrator/services/inbox_service.py": "607d430f69ad2627d4cd2165981ee6b496ef44b1ee7918af3aa7ee6cf91ad1b2",
+    "test/services/test_inbox_resource_admission.py": "09bc75960e1d38ca26a11910469cad79e4763f7ea05497cf1f6b3a8a0aa443dd",
+    "test/integration/test_inbox_resource_admission.py": "a46db91d94d4c1c8f86dd351ced829634c13983bd18137918d0f584d07fb3b48"
+  },
+  "acceptance": {
+    "T009_complete": false,
+    "API_activated": false,
+    "eight_held_threads": "synthetic resource budget only, not real provider/node acceptance",
+    "M1": false,
+    "M2": false,
+    "M3": false
+  },
+  "remaining": [
+    "Trusted API lifetime binding and authenticated operational enrollment",
+    "Monitor\u2192notify_admission_changed signal",
+    "Herdr callback enqueue instead of inline delivery",
+    "Work/remote actual-owner accounting T010",
+    "Fixture/integration and real M1/M2/M3 gates"
+  ],
+  "graphify": "Read-only historical graph inspected/source verified; generated graph foreign edits preserved; earlier last_query_stamp side effect disclosed in T008 receipts",
+  "composition_review": "composition-t009.md",
+  "knowledge": {
+    "operation_id": "save-20261030-inbox-handoff-and-child-ownership",
+    "strict_lint_issues": 0,
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ]
+  }
+}

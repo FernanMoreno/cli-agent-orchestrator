@@ -8,11 +8,13 @@ import contextvars
 import logging
 import math
 import threading
+import time
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from heapq import heappop, heappush
 from itertools import count, groupby, islice
+from queue import Empty, SimpleQueue
 from typing import Callable, Dict, Iterable, Iterator, Set, Tuple
 
 from cli_agent_orchestrator.backends.base import TerminalNotFoundError
@@ -34,6 +36,10 @@ from cli_agent_orchestrator.plugins import PluginRegistry
 from cli_agent_orchestrator.providers.manager import provider_manager
 from cli_agent_orchestrator.runtime_channel.registry import RuntimeUnavailableError
 from cli_agent_orchestrator.services import terminal_service
+from cli_agent_orchestrator.services.delivery_admission import (
+    DeliveryAdmission,
+    DeliveryReservation,
+)
 from cli_agent_orchestrator.services.event_bus import bus
 from cli_agent_orchestrator.services.settings_service import get_server_settings
 from cli_agent_orchestrator.services.status_monitor import status_monitor
@@ -83,6 +89,7 @@ class _PendingStatusEvents:
     def __init__(self) -> None:
         self._events: dict[str, deque[int]] = {}
         self._ready: list[tuple[int, str]] = []
+        self._ready_keys: set[str] = set()
         self._ordinals = count()
         self._size = 0
 
@@ -96,6 +103,7 @@ class _PendingStatusEvents:
             events = self._events[terminal_id] = deque()
             if not busy:
                 heappush(self._ready, (ordinal, terminal_id))
+                self._ready_keys.add(terminal_id)
         events.append(ordinal)
         self._size += 1
         return ordinal
@@ -108,6 +116,7 @@ class _PendingStatusEvents:
         if not self._ready:
             return None
         ordinal, terminal_id = heappop(self._ready)
+        self._ready_keys.remove(terminal_id)
         events = self._events[terminal_id]
         events.popleft()
         self._size -= 1
@@ -115,10 +124,19 @@ class _PendingStatusEvents:
             del self._events[terminal_id]
         return ordinal, terminal_id
 
+    def peek_event(self) -> tuple[int, str] | None:
+        return self._ready[0] if self._ready else None
+
+    def park_head(self) -> None:
+        """Keep the event and its ordinal; physical completion will wake its key."""
+        _, terminal_id = heappop(self._ready)
+        self._ready_keys.remove(terminal_id)
+
     def completed(self, terminal_id: str) -> None:
         events = self._events.get(terminal_id)
-        if events:
+        if events and terminal_id not in self._ready_keys:
             heappush(self._ready, (events[0], terminal_id))
+            self._ready_keys.add(terminal_id)
 
 
 class _StatusEventSink:
@@ -178,6 +196,23 @@ class _StatusEventSink:
         ordinal, terminal_id = event
         return terminal_id, self._requests.pop(ordinal, None)
 
+    def reserve_delivery(
+        self, admission: DeliveryAdmission, *, now: float
+    ) -> (
+        tuple[str, tuple[contextvars.Context, PluginRegistry | None] | None, DeliveryReservation]
+        | None
+    ):
+        while (event := self.pending.peek_event()) is not None:
+            attempt = admission.try_reserve(event[1], now=now)
+            if attempt.reservation is not None:
+                wake = self.pop_delivery()
+                assert wake is not None
+                return wake[0], wake[1], attempt.reservation
+            if attempt.reason != "receiver_busy":
+                return None
+            self.pending.park_head()
+        return None
+
     def close(self) -> None:
         self.closed = True
         self.pending = _PendingStatusEvents()
@@ -187,7 +222,16 @@ class _StatusEventSink:
 class InboxService:
     """Delivers one pending message per terminal per IDLE cycle."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        admission: DeliveryAdmission | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        # Explicit server-owned wiring; no request/profile can supply this owner.
+        # Unbound instances retain compatibility until the API migration lands.
+        self._admission = admission
+        self._admission_clock = clock
         # deliver_pending is read(PENDING) → status check → mark DELIVERED → send,
         # with no atomic claim at the DB layer, so two concurrent calls for the
         # SAME terminal can both read the same oldest row before either marks it
@@ -207,6 +251,74 @@ class InboxService:
         self._drain_waiters: Set[Tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = set()
         self._delivery_sink: _StatusEventSink | None = None
         self._delivery_loop: asyncio.AbstractEventLoop | None = None
+
+    def notify_admission_changed(self, terminal_id: str | None = None) -> None:
+        """Nonblocking notification from a monitor or a physical worker finally."""
+        with self._operations:
+            sink, loop = self._delivery_sink, self._delivery_loop
+        if sink is None or loop is None:
+            return
+
+        def wake() -> None:
+            if self._delivery_sink is sink and not sink.closed:
+                if terminal_id is not None and not sink._is_busy(terminal_id):
+                    sink.pending.completed(terminal_id)
+                sink.ready.set()
+
+        try:
+            loop.call_soon_threadsafe(wake)
+        except RuntimeError:
+            # A closed observer loop is not a physical release witness.
+            logger.debug("Inbox admission observer loop already closed")
+
+    def _execute_reserved(
+        self,
+        reservation: DeliveryReservation,
+        terminal_id: str,
+        num_messages: int,
+        registry: PluginRegistry | None,
+    ) -> None:
+        try:
+            # Capacity is already reserved; never wait for a receiver lock.
+            with self._delivery_lock(terminal_id, blocking=False) as acquired:
+                if not acquired or not reservation.start():
+                    return
+                try:
+                    self._deliver_pending_locked(terminal_id, num_messages, registry)
+                finally:
+                    # Includes every send, audit, receipt and status write.
+                    reservation.finish()
+        finally:
+            reservation.cancel_before_start()
+            self.notify_admission_changed(terminal_id)
+
+    def _submit_reserved(
+        self, reservation: DeliveryReservation, terminal_id: str, callback: Callable[[], None]
+    ) -> Future[None]:
+        """No second executor queue/worker ceiling beyond admitted reservations."""
+        future: Future[None] = Future()
+        context = contextvars.copy_context()
+
+        def worker() -> None:
+            if not future.set_running_or_notify_cancel():
+                reservation.cancel_before_start()
+                self.notify_admission_changed(terminal_id)
+                return
+            try:
+                result = context.run(callback)
+            except BaseException as error:
+                future.set_exception(error)
+            else:
+                future.set_result(result)
+
+        thread = threading.Thread(target=worker, name="cao-inbox-admitted")
+        try:
+            thread.start()
+        except BaseException:
+            reservation.cancel_before_start()
+            self.notify_admission_changed(terminal_id)
+            raise
+        return future
 
     def queue_delivery(self, terminal_id: str, *, registry: PluginRegistry | None) -> bool:
         """Wake the bounded consumer after commit; SQL remains the durable queue.
@@ -237,12 +349,17 @@ class InboxService:
                 raise RuntimeError(
                     "cannot reopen inbox admission while prior operations are active"
                 )
+            if self._admission is not None:
+                self._accepting_operations = False
+                self._admission.start_accepting()
             self._accepting_operations = True
 
     def stop_accepting(self) -> None:
         """Fence new top-level work while allowing already-owned batches to finish."""
         with self._operations:
             self._accepting_operations = False
+            if self._admission is not None:
+                self._admission.stop_accepting()
 
     async def drain(self, *, timeout_s: float) -> None:
         """Wait for every admitted sync operation, including nested batch work.
@@ -355,14 +472,23 @@ class InboxService:
         terminal_id: str,
         cancelled: threading.Event,
         registry: PluginRegistry | None = None,
+        reservation: DeliveryReservation | None = None,
     ) -> None:
         # Admission and the invocation's stop fence share the operation lock.
         # A late executor worker cannot join a subsequent server lifespan.
-        with self._track_operation(cancelled=cancelled):
-            self.deliver_pending(terminal_id, registry=registry)
+        try:
+            with self._track_operation(cancelled=cancelled):
+                if reservation is None:
+                    self.deliver_pending(terminal_id, registry=registry)
+                else:
+                    self._execute_reserved(reservation, terminal_id, 1, registry)
+        finally:
+            if reservation is not None and reservation.cancel_before_start():
+                self.notify_admission_changed(terminal_id)
 
     async def run(self, registry: PluginRegistry | None = None) -> None:
-        deliveries: dict[str, asyncio.Task[None]] = {}
+        deliveries: dict[str, asyncio.Future[None]] = {}
+        reservations: dict[str, DeliveryReservation] = {}
         capacity = 2 * max(1, get_server_settings()["event_bus_max_queue_size"])
         sink = _StatusEventSink(capacity, lambda key: key in deliveries)
         bus.subscribe_sink("terminal.*.status", sink)
@@ -379,7 +505,31 @@ class InboxService:
                 sink.ready.clear()
                 # Keep every consumed ready event. Skip busy keys without
                 # occupying executor slots waiting for their per-terminal lock.
-                while len(deliveries) < _STATUS_DELIVERY_CONCURRENCY:
+                while self._admission is not None or len(deliveries) < _STATUS_DELIVERY_CONCURRENCY:
+                    if self._admission is not None:
+                        reserved = sink.reserve_delivery(
+                            self._admission, now=self._admission_clock()
+                        )
+                        if reserved is None:
+                            break
+                        terminal_id, request, reservation = reserved
+                        delivery_registry = registry if request is None else request[1]
+
+                        def submit(
+                            key=terminal_id, lease=reservation, selected_registry=delivery_registry
+                        ):
+                            return self._submit_reserved(
+                                lease,
+                                key,
+                                lambda: self._deliver_status_pending(
+                                    key, cancelled, selected_registry, lease
+                                ),
+                            )
+
+                        future = submit() if request is None else request[0].run(submit)
+                        reservations[terminal_id] = reservation
+                        deliveries[terminal_id] = asyncio.wrap_future(future)
+                        continue
                     wake = sink.pop_delivery()
                     if wake is None:
                         break
@@ -409,6 +559,7 @@ class InboxService:
                 for terminal_id, delivery in tuple(deliveries.items()):
                     if delivery in done:
                         del deliveries[terminal_id]
+                        reservations.pop(terminal_id, None)
                         sink.pending.completed(terminal_id)
                         try:
                             delivery.result()
@@ -432,6 +583,8 @@ class InboxService:
                 children.append(reader)
             for child in children:
                 child.cancel()
+            for reservation in reservations.values():
+                reservation.cancel_before_start()
             # Join asyncio awaiters only. The real threads remain owned by
             # _track_operation and the server's bounded drain, not this gather.
             await asyncio.gather(*children, return_exceptions=True)
@@ -456,6 +609,11 @@ class InboxService:
         serialized per terminal (see __init__ for why that is load-bearing).
         """
         with self._track_operation():
+            if self._admission is not None:
+                attempt = self._admission.try_reserve(terminal_id, now=self._admission_clock())
+                if attempt.reservation is not None:
+                    self._execute_reserved(attempt.reservation, terminal_id, num_messages, registry)
+                return
             with self._delivery_lock(terminal_id):
                 self._deliver_pending_locked(terminal_id, num_messages, registry)
 
@@ -586,8 +744,25 @@ class InboxService:
         port.send_keys(target.tmux_session, target.tmux_window, target.message.message)
 
     def _deliver_sweep_receiver(
-        self, terminal_id: str, registry: PluginRegistry | None, label: str
+        self,
+        terminal_id: str,
+        registry: PluginRegistry | None,
+        label: str,
+        reservation: DeliveryReservation | None = None,
     ) -> None:
+        if reservation is not None:
+            # A start handshake can fail after spawning. Independently count
+            # physical children before lease.start, even if their parent loses
+            # the returned Future and can no longer join it directly.
+            try:
+                with self._track_operation():
+                    self._execute_reserved(reservation, terminal_id, 1, registry)
+            except Exception as error:
+                logger.debug("%s failed for %s: %s", label, terminal_id, error)
+            finally:
+                if reservation.cancel_before_start():
+                    self.notify_admission_changed(terminal_id)
+            return
         # The submitting sweep retains its outer operation until its private
         # executor joins every child. Inherit that admission, including after
         # stop_accepting(), without admitting unrelated top-level work.
@@ -608,6 +783,9 @@ class InboxService:
         self, receiver_ids: Iterable[str], registry: PluginRegistry | None, label: str
     ) -> None:
         assert getattr(self._operation_context, "depth", 0) > 0
+        if self._admission is not None:
+            self._deliver_admitted_sweep(receiver_ids, registry, label)
+            return
         receivers = iter(receiver_ids)
         try:
             with ThreadPoolExecutor(
@@ -641,6 +819,71 @@ class InboxService:
             close = getattr(receivers, "close", None)
             if close is not None:
                 close()
+
+    def _deliver_admitted_sweep(
+        self, receiver_ids: Iterable[str], registry: PluginRegistry | None, label: str
+    ) -> None:
+        assert self._admission is not None
+        receivers = iter(receiver_ids)
+        pending: set[Future[None]] = set()
+        completed: SimpleQueue[Future[None]] = SimpleQueue()
+        failure: BaseException | None = None
+        try:
+            if self._admission.snapshot(now=self._admission_clock()).available_slots:
+                for terminal_id in receivers:
+                    attempt = self._admission.try_reserve(terminal_id, now=self._admission_clock())
+                    if attempt.reservation is None:
+                        if attempt.reason == "receiver_busy":
+                            continue
+                        break
+                    lease = attempt.reservation
+
+                    def deliver_receiver(
+                        key: str = terminal_id, reservation: DeliveryReservation = lease
+                    ) -> None:
+                        self._deliver_sweep_receiver(key, registry, label, reservation)
+
+                    future = self._submit_reserved(lease, terminal_id, deliver_receiver)
+                    pending.add(future)
+                    future.add_done_callback(completed.put)
+                    # Retire completed bookkeeping during streaming, not only at
+                    # the end; do not scan all active children per receiver.
+                    while True:
+                        try:
+                            finished = completed.get_nowait()
+                        except Empty:
+                            break
+                        pending.remove(finished)
+                        finished.result()
+        except BaseException as error:
+            failure = error
+        try:
+            close = getattr(receivers, "close", None)
+            if close is not None:
+                close()
+        except BaseException as error:
+            if failure is None:
+                failure = error
+        try:
+            self._join_deliveries(pending)
+        except BaseException as error:
+            if failure is None:
+                failure = error
+        if failure is not None:
+            raise failure
+
+    @staticmethod
+    def _join_deliveries(pending: Iterable[Future[None]]) -> None:
+        """Join every owned child even when an earlier result raised."""
+        failure: BaseException | None = None
+        for future in pending:
+            try:
+                future.result()
+            except BaseException as error:
+                if failure is None:
+                    failure = error
+        if failure is not None:
+            raise failure
 
     def poll_opencode_pending_messages(self, registry: PluginRegistry | None = None) -> None:
         """Poll OpenCode terminals for pending inbox messages.
