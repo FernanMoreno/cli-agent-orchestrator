@@ -65,6 +65,8 @@ import cli_agent_orchestrator.services.memory_service as memory_service
 module_path = Path(memory_service.__file__).resolve()
 assert expected_source == module_path or expected_source in module_path.parents
 assert "cli_agent_orchestrator.services.legacy_memory_audit_repository" in sys.modules
+assert "cli_agent_orchestrator.services.memory_scoring" in sys.modules
+assert "cli_agent_orchestrator.services.memory_append" in sys.modules
 from cli_agent_orchestrator.services.legacy_memory_audit_repository import (
     _LegacyMemoryAuditWorkRepository,
     _legacy_memory_audit_manager,

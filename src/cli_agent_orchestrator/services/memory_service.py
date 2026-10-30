@@ -22,6 +22,7 @@ from cli_agent_orchestrator.constants import (
     MEMORY_SCOPE_BUDGET_CHARS,
 )
 from cli_agent_orchestrator.models.memory import Memory, MemoryScope, MemoryType
+from cli_agent_orchestrator.services import memory_append, memory_scoring
 from cli_agent_orchestrator.services.legacy_memory_access import (
     audited_legacy,
     propagate_legacy_policy_failure,
@@ -993,10 +994,8 @@ class MemoryService:
         # scope defaults to "global" (operator) unless terminal_context sets
         # an explicit ``caller_scope`` — so existing CLI/operator callers are
         # unaffected. The rejection log carries no content bytes.
-        from cli_agent_orchestrator.services.memory_scoring import scope_write_allowed
-
         caller_scope = self.resolve_caller_scope(terminal_context)
-        if not scope_write_allowed(caller_scope, scope):
+        if not memory_scoring.scope_write_allowed(caller_scope, scope):
             logger.warning(
                 "cross_scope_store_rejected caller=%s target=%s key=%s",
                 caller_scope,
@@ -1084,11 +1083,6 @@ class MemoryService:
             target_source_kind="native",
         )
         now = datetime.now(timezone.utc)
-        from cli_agent_orchestrator.services.memory_append import (
-            MemoryAppendEntry,
-            append_section,
-        )
-
         wiki_path = self.get_wiki_path(scope, scope_id, key)
         wiki_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1144,9 +1138,9 @@ class MemoryService:
                     f"<!-- id: {memory_id} | scope: {scope} | "
                     f"type: {memory_type} | tags: {tags} -->\n"
                 )
-            appended = append_section(
+            appended = memory_append.append_section(
                 existing_content,
-                MemoryAppendEntry(content=content, occurred_at=occurred_at, now=now),
+                memory_append.MemoryAppendEntry(content=content, occurred_at=occurred_at, now=now),
             )
             new_content = appended.content
             entry_body = appended.entry_body

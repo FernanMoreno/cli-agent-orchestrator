@@ -567,3 +567,11 @@ HEAD88335 differs from the earlier failed R5 source5628 in metadata runtime and 
 ### T135 — Bounded memoization of immutable source migration checksums
 
 The source descriptor checksum serializes and hashes the same frozen migration SQL on every verification (Workv1:526statements/134914characters). Cache only that pure expected-source calculation for exact ComponentMigration instances with immutable primitive fields, bounded entries/input sizes and identity checks against later field replacement. Never cache observed catalog manifests/digests, roles, store identity/history, authority, or transactions. Preserve exact historical checksum bytes and fallback behavior for mutable, noncanonical, oversized and subclass inputs; no schema/migration/API/verification-count change. A rejected SQL experiment does not justify a weaker proof.
+
+### T136 focused import attribution
+
+Measure only the actual original import calls for settings_service, memory_scoring and memory_append inside the existing ten measured stores. Record module-presence misses/hits, inclusive and nonoverlapping wall time, failures and exact restoration. Preserve source, timer, GC, coverage, fresh pycache prefix and strict assertion. This is diagnostic only; source loading/compilation causality cannot be inferred from elapsed imports alone. No prewarming or product change without measured evidence.
+
+### T137 pure service dependency import boundary
+
+T136 measured2first-load import calls within the original store body: memory_scoring24.402ms and memory_append22.212ms, with the original benchmark failing1.036369854s. Resolve these pure standard-library-only dependencies when memory_service is imported, preserving module attribute lookup at operation time and all authorization, time/date/rendering, disabled-path and transaction behavior. Do not preload services in tests, move repository construction, cache runtime observations or alter the original timer/GC/coverage/threshold. The work moves to service startup; it is not eliminated or claimed as an NFR pass.

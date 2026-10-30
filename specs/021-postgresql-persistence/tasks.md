@@ -484,3 +484,11 @@ T132/T133 checkpoint2026-10-30: actual current-source covered diagnostics fail1.
 T134/T135 checkpoint2026-10-30: actual uninstrumented coldR1failed1.042606872s, downstreamNOTRUN; originalreceipt retained. T135 source-only cache validated25controls +85focusedtests, typesPASS, architecture5/0, Codexreview; same freshproof/authority/transaction contracts. T135 staysopen until main integration and fresh source-bound global attempt. [Evidence](current-source-nfr-20261030.md).
 
 T135 completed scope: source correction integrated/published9131a011,25finalcontrols/85focusedtests/types/architecture/Codexreview; fresh bound global attempt FAILcoldR1at1.159185422s/controller100.858s, all later stagesNOTRUN, exactsourcepreserved and samePG0/0/0. This checkbox closes the correction/attempt only. Original NFR/global tasks stayOPEN; no unchanged retry.
+
+- [x] T136 [US3] Measure the original fixed-module lazy import duration during the existing ten stores with hit/miss, nested-time and restoration controls; retain covered original result, source/runtime/PG bindings and cleanup. Decide whether import work is material from measurements before any product change. This diagnostic cannot close original cold/full acceptance.
+
+- [ ] T137 [US3] Move only the measured pure memory_scoring/memory_append dependencies to service import, retaining dynamic module attribute access and all operation-time checks. Require fresh-process RED/GREEN import/no-storage and native memory/scoring/append/audit composition regressions, Codex review, styles/types/architecture, main integration and a fresh unchanged-criteria global attempt. No NFR closure from import diagnostics.
+
+T136 result: completed fixed-import diagnostic with8controls; originalcoveredNFRfails1.036369854s. Two firstloadimports contribute46.614ms combined; settings70hits0.141ms. Source/private/PGidentity/restoration/cleanup pass; T137 addresses measured pure-dependency boundary, not storage/proof criteria.
+
+T137 source checkpoint: RED1fail1pass→GREEN2pass;165focused+11explicit integrationPASS,types/stylesPASS,architecture5/0,CodexdiffreviewPASS;PG0/0/0 andforeign12unchanged. Pure helperloading moves to serviceimport, operation-timechecks unchanged. Main integration/freshglobalpending.

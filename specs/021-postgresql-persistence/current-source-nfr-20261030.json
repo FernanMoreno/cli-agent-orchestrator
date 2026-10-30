@@ -269,5 +269,81 @@
       "closure_sha256": "2993ed578d64a4edcf5e1a018837cea83a37b70030aec00174cf6a5e0146e8b0",
       "launch_admission_issue": "First outer invocation lacked repository PYTHONPATH and stopped before claim or tests; preserved separately; second invocation supplies explicit source/repo roots, no source or gate edits"
     }
+  },
+  "T136": {
+    "schema": "caos.t136.fixed-import-diagnostic.v1",
+    "head": "97e078f1eb9037ed1d742387f9d70635a3e35a08",
+    "diagnostic_only": true,
+    "acceptance_claimed": false,
+    "strict_elapsed_seconds": 1.0363698540022597,
+    "pytest_exit_code": 1,
+    "import_exclusive_ms": 46.754572,
+    "initial_module_presence": {
+      "cli_agent_orchestrator.services.memory_append": false,
+      "cli_agent_orchestrator.services.settings_service": true,
+      "cli_agent_orchestrator.services.memory_scoring": false
+    },
+    "original_import_calls": 90,
+    "miss_calls": 2,
+    "controls_passed": 8,
+    "closure": {
+      "pytest_exit_code": 1,
+      "seconds": 54.731,
+      "before": {
+        "clients": 0,
+        "databases": 0,
+        "test_roles": 0
+      },
+      "after": {
+        "clients": 0,
+        "databases": 0,
+        "test_roles": 0
+      },
+      "source_preserved": true,
+      "private_preserved": true,
+      "same_postgres": true
+    },
+    "per_module": {
+      "cli_agent_orchestrator.services.memory_append": {
+        "calls": 10,
+        "exclusive_ms": 22.211644,
+        "misses": 1
+      },
+      "cli_agent_orchestrator.services.settings_service": {
+        "calls": 70,
+        "exclusive_ms": 0.140583,
+        "misses": 0
+      },
+      "cli_agent_orchestrator.services.memory_scoring": {
+        "calls": 10,
+        "exclusive_ms": 24.402345,
+        "misses": 1
+      }
+    },
+    "interpretation": "Two first-load import calls inside stores materially contribute46.6ms; import-call duration includes loader/module initialization/overhead and does not isolate compilation; no global acceptance"
+  },
+  "T137": {
+    "status": "SOURCE_VALIDATED_PENDING_INTEGRATION_AND_GLOBAL",
+    "source_change": "module-import pure memory_append/memory_scoring, operation-time module attr calls",
+    "red": {
+      "failed": 1,
+      "passed": 1
+    },
+    "green_import_disabled": 2,
+    "focused_passed": 165,
+    "focused_default_deselected": 11,
+    "explicit_integration_status": "11_PASSED;94notselected_alreadycoveredbyfocusedbatch",
+    "mypy": "PASS",
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    },
+    "review": "Codex Luna read-only: no blocking contract issue; startup work shifted, not eliminated",
+    "global_acceptance": false,
+    "native_postcheck": {
+      "clients": 0,
+      "databases": 0,
+      "test_roles": 0
+    }
   }
 }
