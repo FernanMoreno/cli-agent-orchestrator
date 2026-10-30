@@ -172,6 +172,7 @@ async def test_creation_passes_frozen_selection_through_real_manager(
         terminal_service, "_resolve_existing_session_incarnation_locked", lambda _: "incarnation"
     )
     monkeypatch.setattr(terminal_service, "get_session_env", lambda _: {})
+    monkeypatch.setattr(terminal_service, "has_unreclaimed_window_label", lambda *_args: False)
     monkeypatch.setattr(terminal_service, "transition_native_child", MagicMock())
     monkeypatch.setattr(terminal_service, "update_terminal_provider_variant", MagicMock())
     monkeypatch.setattr(terminal_service, "status_monitor", MagicMock())

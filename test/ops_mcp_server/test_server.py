@@ -15,6 +15,7 @@ from cli_agent_orchestrator.ops_mcp_server.models import (
 )
 from cli_agent_orchestrator.ops_mcp_server.server import (
     _HTTP_TIMEOUT,
+    API_BASE_URL,
     _launch_session_impl,
     _lookup_session,
     _request_json,
@@ -73,7 +74,7 @@ class TestProfileTools:
         assert result == ProfileListResult(success=True, profiles=profiles)
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/agents/profiles",
+            f"{API_BASE_URL}/agents/profiles",
             params=None,
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -160,7 +161,7 @@ class TestProfileTools:
         assert result == InstallResult(**payload)
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/agents/profiles/install",
+            f"{API_BASE_URL}/agents/profiles/install",
             params=None,
             json={"source": "developer", "provider": "kiro_cli"},
             timeout=_HTTP_TIMEOUT,
@@ -186,7 +187,7 @@ class TestProfileTools:
         assert result == InstallResult(**payload)
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/agents/profiles/install",
+            f"{API_BASE_URL}/agents/profiles/install",
             params=None,
             json={"source": "https://example.com/remote.md", "provider": "kiro_cli"},
             timeout=_HTTP_TIMEOUT,
@@ -213,7 +214,7 @@ class TestProfileTools:
         assert result == InstallResult(**payload)
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/agents/profiles/install",
+            f"{API_BASE_URL}/agents/profiles/install",
             params=None,
             json={"source": "developer"},
             timeout=_HTTP_TIMEOUT,
@@ -242,7 +243,7 @@ class TestProfileTools:
 
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/agents/profiles/install",
+            f"{API_BASE_URL}/agents/profiles/install",
             params=None,
             json={
                 "source": "developer",
@@ -317,7 +318,7 @@ class TestSessionLifecycleTools:
         )
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/sessions",
+            f"{API_BASE_URL}/sessions",
             params={
                 "agent_profile": "developer",
                 "session_name": "cao-generated",
@@ -351,7 +352,7 @@ class TestSessionLifecycleTools:
         )
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/sessions",
+            f"{API_BASE_URL}/sessions",
             params={
                 "provider": "codex",
                 "agent_profile": "developer",
@@ -408,7 +409,7 @@ class TestSessionLifecycleTools:
         )
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/sessions",
+            f"{API_BASE_URL}/sessions",
             params={
                 "provider": "codex",
                 "agent_profile": "developer",
@@ -446,7 +447,7 @@ class TestSessionLifecycleTools:
         )
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/sessions",
+            f"{API_BASE_URL}/sessions",
             params={
                 "agent_profile": "developer",
                 "session_name": "env-session",
@@ -605,7 +606,7 @@ class TestSessionLifecycleTools:
         )
         mock_request.assert_called_once_with(
             "post",
-            "http://127.0.0.1:9889/terminals/term-123/inbox/messages",
+            f"{API_BASE_URL}/terminals/term-123/inbox/messages",
             params={"sender_id": "cao-ops-mcp", "message": "Build feature X"},
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -746,7 +747,7 @@ class TestSessionLifecycleTools:
         assert result == payload
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/sessions/cao-acc-agy",
+            f"{API_BASE_URL}/sessions/cao-acc-agy",
             params=None,
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -767,7 +768,7 @@ class TestSessionLifecycleTools:
         }
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/sessions/cao-missing",
+            f"{API_BASE_URL}/sessions/cao-missing",
             params=None,
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -790,7 +791,7 @@ class TestSessionLifecycleTools:
         }
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/sessions/cao-acc-agy",
+            f"{API_BASE_URL}/sessions/cao-acc-agy",
             params=None,
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -823,8 +824,8 @@ class TestSessionLifecycleTools:
 
         assert result == payload
         assert [call.args[:2] for call in mock_request.call_args_list] == [
-            ("get", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
-            ("delete", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
+            ("get", f"{API_BASE_URL}/sessions/cao-acc-agy"),
+            ("delete", f"{API_BASE_URL}/sessions/cao-acc-agy"),
         ]
 
     async def test_shutdown_session_deletes_an_already_canonical_name_directly(
@@ -844,8 +845,8 @@ class TestSessionLifecycleTools:
 
         assert result == payload
         assert [call.args[:2] for call in mock_request.call_args_list] == [
-            ("get", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
-            ("delete", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
+            ("get", f"{API_BASE_URL}/sessions/cao-acc-agy"),
+            ("delete", f"{API_BASE_URL}/sessions/cao-acc-agy"),
         ]
 
     async def test_shutdown_session_deletes_the_canonical_name_when_it_is_absent(
@@ -874,8 +875,8 @@ class TestSessionLifecycleTools:
 
         assert result == payload
         assert [call.args[:2] for call in mock_request.call_args_list] == [
-            ("get", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
-            ("delete", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
+            ("get", f"{API_BASE_URL}/sessions/cao-acc-agy"),
+            ("delete", f"{API_BASE_URL}/sessions/cao-acc-agy"),
         ]
 
     async def test_shutdown_session_aborts_when_the_lookup_cannot_resolve(self) -> None:
@@ -902,7 +903,7 @@ class TestSessionLifecycleTools:
             ),
         }
         assert [call.args[:2] for call in mock_request.call_args_list] == [
-            ("get", "http://127.0.0.1:9889/sessions/cao-acc-agy"),
+            ("get", f"{API_BASE_URL}/sessions/cao-acc-agy"),
         ]
 
     async def test_shutdown_session_returns_success_payload(self) -> None:
@@ -953,7 +954,7 @@ class TestSessionLifecycleTools:
             ),
         }
         assert [call.args[:2] for call in mock_request.call_args_list] == [
-            ("get", "http://127.0.0.1:9889/sessions/cao-123"),
+            ("get", f"{API_BASE_URL}/sessions/cao-123"),
         ]
 
 
@@ -981,7 +982,7 @@ class TestTerminalMonitoringTools:
         assert result == payload
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/terminals/term-123",
+            f"{API_BASE_URL}/terminals/term-123",
             params=None,
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -1012,7 +1013,7 @@ class TestTerminalMonitoringTools:
         assert result == {"output": "done: added foo()", "mode": "last"}
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/terminals/term-123/output",
+            f"{API_BASE_URL}/terminals/term-123/output",
             params={"mode": "last"},
             json=None,
             timeout=_HTTP_TIMEOUT,

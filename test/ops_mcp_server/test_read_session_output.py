@@ -6,6 +6,7 @@ import pytest
 
 from cli_agent_orchestrator.ops_mcp_server.server import (
     _HTTP_TIMEOUT,
+    API_BASE_URL,
     _read_session_output_impl,
     read_session_output,
 )
@@ -42,7 +43,7 @@ class TestReadSessionOutputImpl:
         }
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/terminals/term-1/output",
+            f"{API_BASE_URL}/terminals/term-1/output",
             params={"mode": "full"},
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -61,7 +62,7 @@ class TestReadSessionOutputImpl:
         assert result["mode"] == normalized
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/terminals/term-1/output",
+            f"{API_BASE_URL}/terminals/term-1/output",
             params={"mode": normalized},
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -102,7 +103,7 @@ class TestReadSessionOutputImpl:
         assert result["output"] == "abc"
         assert mock_request.call_args_list[0].args[:2] == (
             "get",
-            "http://127.0.0.1:9889/sessions/cao-acc-agy",
+            f"{API_BASE_URL}/sessions/cao-acc-agy",
         )
 
     def test_session_resolve_error_is_returned(self) -> None:
@@ -117,7 +118,7 @@ class TestReadSessionOutputImpl:
         assert "Session unavailable" in result["message"]
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/sessions/cao-x",
+            f"{API_BASE_URL}/sessions/cao-x",
             params=None,
             json=None,
             timeout=_HTTP_TIMEOUT,
@@ -263,7 +264,7 @@ class TestReadSessionOutputImpl:
         }
         mock_request.assert_called_once_with(
             "get",
-            "http://127.0.0.1:9889/terminals/term-1/output",
+            f"{API_BASE_URL}/terminals/term-1/output",
             params={"mode": "last"},
             json=None,
             timeout=_HTTP_TIMEOUT,

@@ -23,6 +23,15 @@ TEXT = "Validado ñ, 中文."
 RENDERED = "Validado\n ñ, 中文.\n" + TOKEN
 
 
+def _replace_native_user_text(database: Path, text: str) -> None:
+    """Change only the synthetic upstream OpenCode store, never CAO metadata."""
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute(
+            "UPDATE session_message SET data=? WHERE id='user-1'",
+            (json.dumps({"text": text}, ensure_ascii=False),),
+        )
+
+
 def _provider_and_store(tmp_path: Path, *, parts: list[str], restored=False, agent_id: str = AGENT):
     cao_home = tmp_path / "cao"
     owner = PrivateConfigOwnership(cao_home, TERMINAL_ID)

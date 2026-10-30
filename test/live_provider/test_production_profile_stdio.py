@@ -59,7 +59,7 @@ async def test_real_configured_profile_stdio_catalog_and_direct_authority(
         "TMPDIR": str(home),
         "PATH": "/usr/local/bin:/usr/bin:/bin",
         "PYTHONPATH": str(repo / "src") + os.pathsep + str(repo),
-        "PYTHONPYCACHEPREFIX": os.environ["PYTHONPYCACHEPREFIX"],
+        "PYTHONPYCACHEPREFIX": str(home / "pycache"),
         "CAO_MCP_APPS_ENABLED": "0",
         "CAO_TERMINAL_ID": "",
         "CAO_AUTH_TOKEN": "",

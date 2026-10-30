@@ -7,6 +7,8 @@ from test.services.test_terminal_service_inbox_registration import create_mocks
 
 import pytest
 
+from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
+from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.services import terminal_service as module
 
 pytestmark = pytest.mark.asyncio
@@ -142,7 +144,13 @@ async def test_cancel_during_rollback_finishes_cleanup_before_deleting_row(
     monkeypatch.setattr(
         module, "_remove_interaction_capability_files", lambda _id: steps.append("caps")
     )
-    monkeypatch.setattr(module, "get_terminal_metadata", lambda _id: {})
+    mocks.generate_terminal_id.return_value = "ab12cd34"
+    mocks.db_create_terminal.side_effect = database.create_terminal
+    mocks.backend.kill_window.return_value = True
+    mocks.backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+        TerminalCleanupOutcome.ABSENT
+    )
+    monkeypatch.setattr(module, "get_terminal_metadata", database.get_terminal_metadata)
     monkeypatch.setattr(
         module, "delete_terminal_row", lambda *_args, **_kwargs: steps.append("row")
     )

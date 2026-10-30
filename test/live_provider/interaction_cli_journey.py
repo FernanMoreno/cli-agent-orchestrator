@@ -1345,8 +1345,11 @@ def _claude_command(provider_command: str, prompt: str) -> list[str]:
         "--output-format",
         "stream-json",
         "--verbose",
-        "--tools",
-        "",
+        *(
+            []
+            if any(t == "--tools" or t.startswith("--tools=") for t in tokens)
+            else ["--tools", ""]
+        ),
         "--allowedTools",
         *CLAUDE_ALLOWED_TOOLS,
         "--max-budget-usd",

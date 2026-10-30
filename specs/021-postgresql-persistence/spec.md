@@ -575,3 +575,7 @@ Measure only the actual original import calls for settings_service, memory_scori
 ### T137 pure service dependency import boundary
 
 T136 measured2first-load import calls within the original store body: memory_scoring24.402ms and memory_append22.212ms, with the original benchmark failing1.036369854s. Resolve these pure standard-library-only dependencies when memory_service is imported, preserving module attribute lookup at operation time and all authorization, time/date/rendering, disabled-path and transaction behavior. Do not preload services in tests, move repository construction, cache runtime observations or alter the original timer/GC/coverage/threshold. The work moves to service startup; it is not eliminated or claimed as an NFR pass.
+
+### T138–T144 global failure corrections
+
+The actual T137 full8 run fails140calls/55setups with21438passed/256skipped and86.9212376768236%coverage against87%. Retain original records and samePG0/0/0/source integrity. Correct confirmed launcher/fixture/configuration boundaries without relaxing domain, ownership, transport, authorization, coverage or timing assertions. Unix socket tests need short owner-only TMPDIR and pytest basetemp; retain exact failed artefacts. Do not use a cached installation that lacks isolated callback modules. CAO metadata fixtures must use PostgreSQL; OpenCode-owned read-only stores remain upstream SQLite. Explicit Docker context must be verified before any engine probe even when DOCKER_HOST is inherited.

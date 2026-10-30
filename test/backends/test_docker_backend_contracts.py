@@ -108,7 +108,7 @@ def native(monkeypatch):
         with socket.socket(socket.AF_UNIX) as endpoint:
             endpoint.bind(str(Path(directory) / "docker.sock"))
             monkeypatch.setenv("DOCKER_HOST", "unix://" + endpoint.getsockname())
-            monkeypatch.setenv("DOCKER_CONTEXT", "untrusted-context")
+            monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
             monkeypatch.setenv("DOCKER_TLS_VERIFY", "1")
             monkeypatch.setenv("DOCKER_CERT_PATH", "/untrusted")
             seam = NativeDocker()
@@ -141,6 +141,29 @@ def test_preflight_pins_socket_clears_remote_environment_and_caches_verified_ima
         "DOCKER_TLS_VERIFY" not in options["env"] and "DOCKER_CERT_PATH" not in options["env"]
         for _, options in seam.calls
     )
+
+
+def test_explicit_local_context_overrides_remote_host_before_engine_probe(native, monkeypatch):
+    backend, seam = native
+    local_host = docker.os.environ["DOCKER_HOST"]
+    monkeypatch.setenv("DOCKER_HOST", "tcp://untrusted.example:2376")
+    monkeypatch.setenv("DOCKER_CONTEXT", "verified-local")
+    events = []
+
+    def resolve_context(command, **options):
+        if command[1:3] == ["context", "inspect"]:
+            assert command[3] == "verified-local"
+            events.append("context")
+            return result(local_host)
+        events.append("engine")
+        return seam(command, **options)
+
+    seam.response = preflight_responses
+    monkeypatch.setattr(docker.subprocess, "run", resolve_context)
+    backend.preflight_work(_restriction(docker))
+    backend.preflight_work(_restriction(docker))
+    assert events == ["context", "engine", "engine", "engine"]
+    assert all(command[2] == local_host for command, _ in seam.calls)
 
 
 @pytest.mark.parametrize(

@@ -219,7 +219,8 @@ class DockerWorkBackend(TmuxBackend):
         docker_host = environment.get("DOCKER_HOST")
         docker_context = environment.get("DOCKER_CONTEXT")
         executable = self._docker_executable()
-        if docker_host:
+        # Docker's explicit context selector takes precedence over DOCKER_HOST.
+        if docker_host and not docker_context:
             host = docker_host
         else:
             if not docker_context:

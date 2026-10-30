@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import requests
 
 from cli_agent_orchestrator.mcp_server.server import (
+    API_BASE_URL,
     _list_siblings_impl,
     _mcp_timeout,
     _require_discovery_marker,
@@ -44,7 +45,7 @@ class TestListSiblingsImpl:
             "siblings": [{"id": "sib-1", "group": ["t1"], "metadata": None}],
         }
         mock_get.assert_called_once_with(
-            "http://127.0.0.1:9889/terminals/caller-abc/siblings",
+            f"{API_BASE_URL}/terminals/caller-abc/siblings",
             params={},
             headers={},
             timeout=_mcp_timeout(),
@@ -62,7 +63,7 @@ class TestListSiblingsImpl:
             _list_siblings_impl(2)
 
         mock_get.assert_called_once_with(
-            "http://127.0.0.1:9889/terminals/caller-abc/siblings",
+            f"{API_BASE_URL}/terminals/caller-abc/siblings",
             params={"depth": 2},
             headers={},
             timeout=_mcp_timeout(),
@@ -83,7 +84,7 @@ class TestListSiblingsImpl:
             _list_siblings_impl(None, cross_session=True)
 
         mock_get.assert_called_once_with(
-            "http://127.0.0.1:9889/terminals/caller-abc/siblings",
+            f"{API_BASE_URL}/terminals/caller-abc/siblings",
             params={"cross_session": "true"},
             headers={},
             timeout=_mcp_timeout(),
@@ -101,7 +102,7 @@ class TestListSiblingsImpl:
             _list_siblings_impl(None, cross_session=False)
 
         mock_get.assert_called_once_with(
-            "http://127.0.0.1:9889/terminals/caller-abc/siblings",
+            f"{API_BASE_URL}/terminals/caller-abc/siblings",
             params={},
             headers={},
             timeout=_mcp_timeout(),
@@ -167,7 +168,7 @@ class TestUpdateMetadataImpl:
 
         assert result == {"success": True, "metadata": {"task": "reviewing PR"}}
         mock_patch.assert_called_once_with(
-            "http://127.0.0.1:9889/terminals/caller-abc/metadata",
+            f"{API_BASE_URL}/terminals/caller-abc/metadata",
             json={"metadata": {"task": "reviewing PR"}},
             headers={},
             timeout=_mcp_timeout(),

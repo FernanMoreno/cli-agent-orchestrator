@@ -32,6 +32,7 @@ class TestServerConstants:
 
         env_copy = os.environ.copy()
         env_copy.pop("CAO_API_PORT", None)
+        env_copy.pop("CAO_API_HOST", None)
         with patch.dict("os.environ", env_copy, clear=True):
             import importlib
 
@@ -39,6 +40,7 @@ class TestServerConstants:
 
             importlib.reload(constants_module)
             assert constants_module.SERVER_PORT == 9889
+            assert constants_module.API_BASE_URL == "http://127.0.0.1:9889"
 
     def test_server_host_is_not_localhost(self):
         """Test that the default SERVER_HOST is an IP, not 'localhost'."""

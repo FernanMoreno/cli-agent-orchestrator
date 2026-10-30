@@ -113,6 +113,8 @@ Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics
 
+- Keep Unix IPC paths within the platform limit before launching a broad regression. Use a fresh short, owner-only temporary root and explicit pytest basetemp per subprocess; retain its device/inode ownership receipt. Deep evidence directories belong outside the socket namespace. Preserve worker counts, coverage, deadlines and negative socket checks.
+- Verify isolated Python callbacks with their actual `-I` invocation. `PYTHONPATH` and matching dependency hashes do not establish which application package an isolated interpreter imports. Require its package origin to match the canonical checkout and install missing locked extras only in the authorized local environment before freezing the runtime.
 - A PostgreSQL readiness file is not a live ownership witness. Before borrowing, verify the coordinator PID, recorded process birth and non-zombie state, plus exact container identity and SQL readiness. A dead coordinator does not authorize restarting or replacing a healthy shared container; establish a separate reuse-only coordinator and preserve historical ownership records.
 - A strict intermediate SQL/event snapshot can race a correct fast ACK. Reproduce the original observer failure before changing it; use a narrowly owned, bounded pending/release barrier outside database transactions and global locks. Release before teardown, preserve the real upstream call/reply and all original intermediate/final counts, and fail the diagnostic on barrier failure. Never add sleeps, accept later counts as the intermediate phase, or repair ledger rows.
 

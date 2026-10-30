@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from cli_agent_orchestrator.mcp_server.server import _mcp_timeout, load_skill, mcp
+from cli_agent_orchestrator.mcp_server.server import API_BASE_URL, _mcp_timeout, load_skill, mcp
 
 
 def _run_coroutine(coroutine):
@@ -34,7 +34,7 @@ class TestLoadSkillImpl:
 
         assert result == "# Use pytest"
         mock_get.assert_called_once_with(
-            "http://127.0.0.1:9889/skills/python-testing", headers={}, timeout=_mcp_timeout()
+            f"{API_BASE_URL}/skills/python-testing", headers={}, timeout=_mcp_timeout()
         )
 
     @patch("cli_agent_orchestrator.mcp_server.server.requests.get")

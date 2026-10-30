@@ -1,0 +1,79 @@
+{
+  "schema": "caos.functional-recovery.v1",
+  "date": "2026-10-30",
+  "base_head": "8967bdadf119072dcc44b8468d8c8cc9c28d1113",
+  "global_acceptance": false,
+  "execution_scope": "targeted serial regressions; original full8 result remains failed",
+  "original_global": {
+    "passed": 21438,
+    "failed": 140,
+    "errors": 55,
+    "skipped": 256,
+    "coverage_percent": 86.9212376768236,
+    "required_coverage_percent": 87,
+    "loaded_nfr_seconds": 1.3314148979843594
+  },
+  "recovery": {
+    "baseline_failure_and_error_cases": 195,
+    "now_passed_unique_baseline_cases": 194,
+    "unresolved": [
+      {
+        "nodeid": "test/services/test_memory_service_index_roundtrip.py::test_roundtrip_runs_under_one_second",
+        "message": "AssertionError: round-trip took 1.331s, exceeds 1s budget\nassert 1.3314148979843594 < 1.0"
+      }
+    ],
+    "scope": "targeted serial functional recovery; original full8 latency/coverage/global acceptance remain open"
+  },
+  "runs": [
+    {
+      "phase": "t139-140-141-green",
+      "base_head": "8967bdadf119072dcc44b8468d8c8cc9c28d1113",
+      "exit_code": 1,
+      "seconds": 232.731,
+      "source_preserved": true,
+      "cases": {
+        "total": 300,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "private_receipt_sha256": "sha256:4919054594cc6c09fc963dc9f38059fa85c7a7f58a5bbb090dc42872d7f8f0af",
+      "candidate_sha256": "sha256:1d8b0b030bfcbbb71ca3aea96b7940ebfc8420d8fb344227ac8a4dbc47c9148b",
+      "controller_sha256": "sha256:4ede7818bfd819414d4fdf0ceb2143da7691a5e8dccfc30146772413852764d1"
+    },
+    {
+      "phase": "t140-142-143-144-green",
+      "base_head": "8967bdadf119072dcc44b8468d8c8cc9c28d1113",
+      "exit_code": 0,
+      "seconds": 480.892,
+      "source_preserved": true,
+      "cases": {
+        "total": 390,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "private_receipt_sha256": "sha256:18d35bb3dc613cd46acf0e9456d3f9fa3dcf82d2d2b042abcda2d3c3058b6ccd",
+      "candidate_sha256": "sha256:8d645c77830523d38a29fb0985d7d367e2f9871e16bd9d94ac06d6f0519a22ae",
+      "controller_sha256": "sha256:4ede7818bfd819414d4fdf0ceb2143da7691a5e8dccfc30146772413852764d1"
+    },
+    {
+      "phase": "remaining-functional",
+      "base_head": "8967bdadf119072dcc44b8468d8c8cc9c28d1113",
+      "exit_code": 0,
+      "seconds": 242.037,
+      "source_preserved": true,
+      "cases": {
+        "total": 161,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "private_receipt_sha256": "sha256:48c13d500626a73be4cf74d0d94904c2b4649785ed9bfac7f38f5025a028e378",
+      "candidate_sha256": "sha256:7e653b1298067f25330b81df174d385fd780ec587f34d73586ed5a35632686f6",
+      "controller_sha256": "sha256:6627c8655ce7f20c460875d0e7473f079865dcfb55fb07c0e478b67d5089f60d",
+      "candidate_patch_sha256": "sha256:37fd9a0dbd2b5b567c9724f2dfaa3731f7ecfbf6ce908458b09a2dd4e647b0ca",
+      "candidate_archive_sha256": "sha256:5826039dd2c12cdb58e76055a247b407666685b95fb04a917bd3d677ad1ff58d"
+    }
+  ]
+}

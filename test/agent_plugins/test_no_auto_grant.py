@@ -769,6 +769,18 @@ async def test_us5_fresh_native_launch_cannot_scan_changed_plugin(
     monkeypatch.setattr(
         "cli_agent_orchestrator.utils.opencode_config.OPENCODE_CONFIG_DIR", native_config
     )
+    if native_provider == "opencode_cli":
+        native_config.mkdir(mode=0o700)
+        native_agents = native_config / "agents"
+        native_agents.mkdir(mode=0o700)
+        monkeypatch.setattr(
+            "cli_agent_orchestrator.providers.opencode_cli.OPENCODE_AGENTS_DIR", native_agents
+        )
+        native_profile = native_agents / "developer.md"
+        native_profile.write_text(
+            "---\ndescription: Developer\nmode: primary\n---\nPrivate prompt.\n"
+        )
+        native_profile.chmod(0o600)
     root = build_plugin(tmp_path / "candidate", "candidate", skills=["example"])
     install_plugin(
         PluginSource(kind="path", location=str(root)),

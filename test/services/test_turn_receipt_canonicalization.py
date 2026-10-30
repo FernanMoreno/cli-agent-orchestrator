@@ -4,12 +4,11 @@ import contextlib
 import hashlib
 import importlib.util
 import json
-import sqlite3
 from pathlib import Path
+from test.postgres.fixtures import make_orm_engine, reset_postgres_worker_targets
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from cli_agent_orchestrator.clients import database
@@ -460,16 +459,11 @@ def test_verified_last_read_without_string_result_fails_before_provider_lookup(
 
 
 def test_legacy_split_verification_without_retained_text_cannot_return_receipt_transcript(
-    monkeypatch, request
+    monkeypatch, request, postgres_worker_targets
 ):
-    engine = create_engine("sqlite:///:memory:")
+    reset_postgres_worker_targets(postgres_worker_targets)
+    engine = make_orm_engine(postgres_worker_targets.main)
     request.addfinalizer(engine.dispose)
-    tables = [
-        database.TerminalModel.__table__,
-        database.TerminalTurnReceiptModel.__table__,
-        database.TerminalTurnRecoveryModel.__table__,
-    ]
-    database.Base.metadata.create_all(engine, tables=tables)
     session_factory = sessionmaker(bind=engine)
     monkeypatch.setattr(database, "SessionLocal", session_factory)
     with session_factory() as session:
@@ -479,7 +473,6 @@ def test_legacy_split_verification_without_retained_text_cannot_return_receipt_t
                 tmux_session="session",
                 tmux_window="window",
                 provider="opencode",
-                insertion_sequence=1,
             )
         )
         session.add(
@@ -587,11 +580,9 @@ def test_real_opencode_owned_store_reaches_existing_receipt_cas(
     prepared = provider._format_turn_receipt_input(phase_prompt, TOKEN)
     assert prepared.startswith(phase_prompt + "\n\n")
     assert prepared.index(runner.LAST_RECEIPT) < prepared.index(TOKEN)
-    with contextlib.closing(sqlite3.connect(database)) as db, db:
-        db.execute(
-            "UPDATE session_message SET data=? WHERE id='user-1'",
-            (json.dumps({"text": prepared}, ensure_ascii=False),),
-        )
+    from test.providers.test_opencode_v2_canonical_result import _replace_native_user_text
+
+    _replace_native_user_text(database, prepared)
     transcript = "› current request\n\n" + RENDERED + "\n\n┃\nctrl+p menu"
     rendered = provider.extract_last_message_from_script(transcript)
     assert "Validado\n" in rendered

@@ -7,6 +7,8 @@ import os
 import re
 from pathlib import Path
 
+import pytest
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10
@@ -22,6 +24,13 @@ CODE_ROOTS = (
     ROOT / "test",
 )
 GUARD_PATH = Path(__file__).resolve()
+UPSTREAM_SQLITE_PATHS = frozenset(
+    {
+        "src/cli_agent_orchestrator/utils/opencode_v2_store.py",
+        "test/providers/test_opencode_v2_store.py",
+        "test/providers/test_opencode_v2_canonical_result.py",
+    }
+)
 EXCLUDED_DISCOVERY_DIRECTORIES = {
     ".git",
     ".venv",
@@ -131,6 +140,10 @@ def _sqlite_feature_findings(path: Path) -> list[str]:
     findings: list[str] = []
 
     for line, module in _module_imports(tree):
+        if relative in UPSTREAM_SQLITE_PATHS and (
+            module == "sqlite3" or module.startswith("sqlite3.")
+        ):
+            continue
         if (
             module == "sqlite3"
             or module.startswith("sqlite3.")
@@ -155,6 +168,12 @@ def _sqlite_feature_findings(path: Path) -> list[str]:
         value = node.value
         lowered = value.lower()
         marker = (relative, value)
+        if (
+            relative in UPSTREAM_SQLITE_PATHS
+            and not SQLITE_URL_LITERAL.search(value)
+            and (SQLITE_CATALOG_LITERAL.search(value) or SQLITE_PRAGMA_LITERAL.search(value))
+        ):
+            continue
         if value == "sqlite-dump.json":
             if marker not in ALLOWED_UNSUPPORTED_ARCHIVE_MARKERS:
                 findings.append(f"{relative}:{node.lineno}: recognizes a retired archive marker")
@@ -196,6 +215,65 @@ def test_runtime_and_functional_test_trees_have_no_sqlite_support():
                 )
 
     assert findings + shell_findings == []
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "src/cli_agent_orchestrator/utils/opencode_v2_store.py",
+        "test/providers/test_opencode_v2_store.py",
+        "src/cli_agent_orchestrator/services/metadata_store.py",
+    ],
+)
+def test_upstream_exceptions_never_allow_a_cao_sqlite_engine(tmp_path, monkeypatch, relative):
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "from sqlalchemy import create_engine\nengine = create_engine('sqlite:///:memory:')\n"
+    )
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    assert _sqlite_feature_findings(path)
+
+
+def test_only_upstream_adapter_connects_with_read_only_uri_and_authorizer():
+    path = ROOT / "src/cli_agent_orchestrator/utils/opencode_v2_store.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    connections = [
+        node
+        for node in calls
+        if isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "sqlite3"
+        and node.func.attr == "connect"
+    ]
+    assert len(connections) == 1
+    connection = connections[0]
+    assert len(connection.args) == 1
+    uri = connection.args[0]
+    assert isinstance(uri, ast.BinOp) and isinstance(uri.op, ast.Add)
+    assert isinstance(uri.right, ast.Constant) and uri.right.value == "?mode=ro"
+    assert isinstance(uri.left, ast.Call) and isinstance(uri.left.func, ast.Attribute)
+    assert uri.left.func.attr == "as_uri"
+    uri_options = [keyword.value for keyword in connection.keywords if keyword.arg == "uri"]
+    assert len(uri_options) == 1
+    assert isinstance(uri_options[0], ast.Constant) and uri_options[0].value is True
+    assert any(
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "execute"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "PRAGMA query_only=ON"
+        for node in calls
+    )
+    assert any(
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "set_authorizer"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "_authorizer"
+        for node in calls
+    )
 
 
 def test_legacy_importers_and_packaged_payloads_are_removed():

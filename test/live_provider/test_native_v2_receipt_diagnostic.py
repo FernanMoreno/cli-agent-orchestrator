@@ -139,6 +139,7 @@ def test_real_api_controller_checks_observer_initialization(
     )
     namespace = dict(vars(runner))
     namespace.update(
+        case=runner._case_definition(),
         api_b_launch_attempted=False,
         receipt_stage_observer=observer if install_bootstrap else fake,
         receipt_stage_context=context,

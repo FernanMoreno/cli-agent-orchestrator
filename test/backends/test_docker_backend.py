@@ -118,6 +118,9 @@ def test_docker_work_rejects_remote_daemon_before_engine_probe(monkeypatch, name
 
     backend = module.DockerWorkBackend(image_ref="sha256:" + "b" * 64)
     monkeypatch.setattr(module.platform, "system", lambda: "Linux")
+    monkeypatch.delenv("DOCKER_CONTEXT", raising=False)
+    if name == "DOCKER_CONTEXT":
+        monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
     monkeypatch.setenv(name, value)
     commands = []
 
@@ -353,7 +356,9 @@ def test_docker_reconcile_removes_only_artifacts_with_exact_attempt_labels(monke
         lambda container_id, *, kill: removed.append((container_id, kill)) or True,
     )
     monkeypatch.setattr(
-        backend, "_cleanup_attempt_image", lambda image_tag: image_removed.append(image_tag) or True
+        backend,
+        "_cleanup_attempt_image",
+        lambda image_tag: image_removed.append(image_tag) or True,
     )
 
     assert backend.reconcile_attempt(attempt_id, generation) == {

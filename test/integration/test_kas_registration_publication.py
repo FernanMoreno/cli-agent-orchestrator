@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.backends.base import TerminalCleanupOutcome, TerminalCleanupResult
 from cli_agent_orchestrator.clients import database as db
 from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.kiro_launch import KiroLaunchRefusedError
@@ -25,9 +26,11 @@ def kas_creation(create_mocks, monkeypatch, tmp_path):
     create_mocks.load_agent_profile.return_value = profile
     create_mocks.db_create_terminal.side_effect = db.create_terminal
     monkeypatch.setattr(constants, "ENABLE_KAS_LAUNCH", True)
-    monkeypatch.setattr(kiro_profiles, "KIRO_AGENTS_DIR", tmp_path)
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir(mode=0o700)
+    monkeypatch.setattr(kiro_profiles, "KIRO_AGENTS_DIR", agents_dir)
     effective = kiro_profiles.resolve_kas_launch_profile(profile, [], None)
-    return create_mocks, terminal_id, effective, tmp_path
+    return create_mocks, terminal_id, effective, agents_dir
 
 
 def snapshot(directory):
@@ -257,6 +260,10 @@ async def test_cancelled_publisher_stops_before_startup_release(kas_creation, mo
 @pytest.mark.asyncio
 async def test_cancelled_registration_worker_never_publishes_grant(kas_creation):
     mocks, terminal_id, _, directory = kas_creation
+    mocks.backend.kill_window.return_value = True
+    mocks.backend.cleanup_terminal_exact.return_value = TerminalCleanupResult(
+        TerminalCleanupOutcome.ABSENT
+    )
     entered, release = threading.Event(), threading.Event()
 
     def controlled_insert(*args, **kwargs):

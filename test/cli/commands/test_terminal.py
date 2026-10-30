@@ -29,6 +29,7 @@ class TestSnapshotOnDelete:
         from cli_agent_orchestrator.services.terminal_service import delete_terminal
 
         mock_log_dir.__truediv__ = lambda self, name: tmp_path / name
+        mock_log_dir.resolve.return_value = tmp_path
         mock_meta.return_value = {
             "id": "abc12345",
             "tmux_session": "cao-test",
@@ -75,6 +76,7 @@ class TestSnapshotOnDelete:
         from cli_agent_orchestrator.services.terminal_service import delete_terminal
 
         mock_log_dir.__truediv__ = lambda self, name: tmp_path / name
+        mock_log_dir.resolve.return_value = tmp_path
         mock_meta.return_value = {
             "id": "abc12345",
             "tmux_session": "cao-test",
