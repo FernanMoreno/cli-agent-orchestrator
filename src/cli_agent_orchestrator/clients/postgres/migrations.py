@@ -27,12 +27,53 @@ class ComponentMigration:
 
     @property
     def checksum(self):
-        return hashlib.sha256(
-            json.dumps(
-                [self.component, self.scope, self.version, self.statements, self.tables],
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
+        source = (self.component, self.scope, self.version, self.statements, self.tables)
+        if type(self) is ComponentMigration:
+            if "_checksum_source_key" not in self.__dict__:
+                object.__setattr__(
+                    self,
+                    "_checksum_source_key",
+                    source if _cacheable_migration_source(*source) else None,
+                )
+            key = self.__dict__["_checksum_source_key"]
+            if key is not None and all(a is b for a, b in zip(source, key)):
+                return _cached_component_migration_checksum(*source)
+        return _component_migration_checksum(*source)
+
+
+def _cacheable_migration_source(component, scope, version, statements, tables):
+    """Bound immutable source retention; never retain observed database state."""
+    if (
+        type(component) is not str
+        or type(scope) is not str
+        or type(version) is not int
+        or not 0 <= version <= 2**31 - 1
+        or type(statements) is not tuple
+        or type(tables) is not tuple
+        or len(statements) > 1024
+        or len(tables) > 256
+    ):
+        return False
+    characters = len(component) + len(scope)
+    for text in (*statements, *tables):
+        if type(text) is not str:
+            return False
+        characters += len(text)
+        if characters > 262144:
+            return False
+    return characters <= 262144
+
+
+def _component_migration_checksum(component, scope, version, statements, tables):
+    return hashlib.sha256(
+        json.dumps([component, scope, version, statements, tables], separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+@lru_cache(maxsize=32)
+def _cached_component_migration_checksum(component, scope, version, statements, tables):
+    """Memoize expected static source only; verification still reads fresh catalogs."""
+    return _component_migration_checksum(component, scope, version, statements, tables)
 
 
 def _records(connection, query, parameters):

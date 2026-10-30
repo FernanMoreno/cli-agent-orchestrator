@@ -1,0 +1,29 @@
+# Current-source NFR diagnosis — 2026-10-30
+
+Current source `88335de1570fde666b464e71ebb88e853ee727db`. T076/T081/T083 remain open. The T132–T134 measurements below precede the T135 source-only correction; none proves global acceptance. Both measurements below preserve the original covered test, timer, GC,1s threshold and failed pytest outcome.
+
+T132 fails at1.0493575949803926s (whole instrumented call1058.450ms).21 fresh catalog calls consume547.142ms: execute471.033ms, guarded fetch/JSON decoding53.563ms, normalization18.766ms, literal rendering1.474ms. Separate canonical digest costs74.716ms. Counts match the source:43profile resolutions18.183ms,42session configurations28.638ms,1physical open7.109ms. Nested times overlap; execute includes server/driver/transport and is not direct server attribution.56original and4new split controls pass; missing bindings none, restoration complete, source/private bytes unchanged and same PostgreSQL0clients/0DB/0testroles after closure.
+
+Retained plans disprove two sorts for the same keys: the constraint sorts serve different orderings. Outer JSON aggregation is already JSON. Existing zero-parameter generic-plan controls and the prior T055 comparison do not support changing plan mode. These hypotheses were discarded without new SQL experiments or production changes.
+
+T133 tests only direct composite json_agg instead of building an intermediate row_to_json for each row, retaining all nine families, projections, joins, ordering, empty/null/numeric semantics and fresh proofs. Official semantics: [PostgreSQL aggregate functions](https://www.postgresql.org/docs/18/functions-aggregate.html), [JSON creation](https://www.postgresql.org/docs/18/functions-json.html). The original instrumented benchmark still fails1.0597157249576412s. All3AB/BA/AB pairs match raw values/types, normalized values and canonical digest under one stable owned readonly repeatable-read snapshot. Source/private bytes and cleanup checks pass.
+
+| Pair | Order | Client A/B ms | EXPLAIN server A/B ms |
+|---|---|---|---|
+|1|AB|42.408/28.168|22.955/22.431|
+|2|BA|23.488/23.312|22.280/21.669|
+|3|AB|23.474/22.985|21.299/21.602|
+
+The candidate is **rejected**: server time worsens in pair3 and neither median reaches the predeclared5% improvement in both client and server. All samples remain recorded. No SQL/product port follows. Fresh-connection/client observations and EXPLAIN/post-call cache effects are not interchangeable with cold acceptance.5final pure/framework controls pass, including actual Pluggy proof that the post-call probe runs after the timing wrapper restores itself. Independent Codex review corroborates parity and rejection.
+
+The next task T134 is a fresh current-source uninstrumented acceptance, not a retry to relabel these diagnostics or the older R5. Exactly3independent cold processes, stop at first failure, then full8backend/87% and Apps/90%/ratchet plus applicable Web/type/build/composition checks. The timing witness may observe only pytest's already-stopped successful assertion; no inner profiler/tracer/wrapper. Closed admission and review precede activation. No QEMU91 or historical reconciliation.
+
+[Structured evidence](current-source-nfr-20261030.json).
+
+T134 actually ran the uninstrumented cold-r1 gate on the unchanged source and failed the original assertion at **1.0426068719825707s**. The controller stopped immediately; cold-r2/r3, full backend, Apps and downstream stages did not run. The119.151s controller retained the executed source/runtime bindings and verified unchanged source, closed operational descriptor and the same PostgreSQL with0clients/0databases/0testroles. This failure remains authoritative and is never relabeled by later work.
+
+T135 implements a separate, bounded cache of the immutable **expected migration source checksum**. It does not cache database observations, catalog digests, history, identity, roles or authority. The original checksum serializer and all verification/transaction boundaries remain intact. Exact-class/type guards,32entries,1024statements/256tables/262144characters and31-bit version bound retained memory; subclasses, mutable/noncanonical/oversized inputs and replaced source fields take the original uncached path. Lazy sidecar references leave constructor/dataclass fields unchanged. Baseline regression was2failed/18passed; initial corrected controls20passed. Implemented AB/BA/AB microbench preserves all84checksums, with baseline9.86–10.24ms versus0.54–0.82ms. These are source-only diagnostics, not a1s NFR pass. Native integration, final review and a fresh source-bound global acceptance remain separately required.
+
+T135 final source validation:25checksum controls pass (including actual NUL/newline/Unicode and JSON null in each source field);85focused tests pass before the5additional null controls, including real PostgreSQL schema drift, role preparation, caller transactions,21fresh verifications/20audit commits, pool/fork/cleanup behavior. Mypy passes for the changed source; composition5contracts kept/0broken. Independent Codex review found no product blocker; the null-coverage finding was corrected. Foreign Graphify12files remain byte-identical; generated graph refresh is deferred to preserve that unrelated work. No migration DDL, public API or consumer wire contract changed; Pact is not applicable to this pure internal transformation. Global acceptance remains OPEN.
+
+Historical scope: T058 contains an unexplained “rejected checksum cache” note and T065 records no checksum port. Independent Codex review found no accessible receipt identifying this exact immutable-source variant or its rejection rationale; the cited private historical evidence directory is unavailable. Those notes remain intact and ambiguous. T135 therefore records its own bounded source parity/performance evidence without claiming that earlier rejection was disproved.

@@ -1,0 +1,253 @@
+{
+  "schema": "caos.current-nfr-diagnostics-20261030.v1",
+  "source_head": "88335de1570fde666b464e71ebb88e853ee727db",
+  "T132": {
+    "status": "FAILED_DIAGNOSTIC_NOT_ACCEPTANCE",
+    "strict_elapsed_seconds": 1.0493575949803926,
+    "whole_call_ms": 1058.449606,
+    "counts_and_ms": {
+      "memory.repository": {
+        "calls": 10,
+        "wall_ms": 84.884919
+      },
+      "audit.read_snapshot": {
+        "calls": 1,
+        "wall_ms": 68.134368
+      },
+      "audit.checkout": {
+        "calls": 21,
+        "wall_ms": 831.690687
+      },
+      "audit.profile_resolve": {
+        "calls": 43,
+        "wall_ms": 18.182598
+      },
+      "audit.open_physical": {
+        "calls": 1,
+        "wall_ms": 7.109442
+      },
+      "audit.configure_raw": {
+        "calls": 42,
+        "wall_ms": 28.637758
+      },
+      "audit.execute": {
+        "calls": 124,
+        "wall_ms": 99.528966
+      },
+      "work.verify": {
+        "calls": 21,
+        "wall_ms": 731.381895
+      },
+      "catalog.verify_component": {
+        "calls": 21,
+        "wall_ms": 660.563458
+      },
+      "catalog.manifest": {
+        "calls": 21,
+        "wall_ms": 547.141818
+      },
+      "catalog.boundary.statement": {
+        "calls": 21,
+        "wall_ms": 1.473548
+      },
+      "catalog.boundary.execute": {
+        "calls": 21,
+        "wall_ms": 471.032933
+      },
+      "catalog.boundary.fetchone": {
+        "calls": 21,
+        "wall_ms": 53.562952
+      },
+      "catalog.boundary.normalize": {
+        "calls": 21,
+        "wall_ms": 18.766456
+      },
+      "catalog.digest": {
+        "calls": 21,
+        "wall_ms": 74.716327
+      },
+      "catalog.verify_role": {
+        "calls": 21,
+        "wall_ms": 48.566588
+      },
+      "work.context_verify": {
+        "calls": 21,
+        "wall_ms": 1.46063
+      },
+      "audit.commit": {
+        "calls": 21,
+        "wall_ms": 7.426772
+      },
+      "work.audit_transaction": {
+        "calls": 20,
+        "wall_ms": 764.067067
+      },
+      "settings.vault_config": {
+        "calls": 10,
+        "wall_ms": 2.657502
+      },
+      "memory.collision": {
+        "calls": 10,
+        "wall_ms": 30.713384
+      },
+      "memory.index_update": {
+        "calls": 10,
+        "wall_ms": 3.598069
+      },
+      "memory.metadata_upsert": {
+        "calls": 10,
+        "wall_ms": 36.31394
+      },
+      "audit.nowait": {
+        "calls": 10,
+        "wall_ms": 0.329682
+      },
+      "memory.index_parse": {
+        "calls": 1,
+        "wall_ms": 0.185233
+      }
+    },
+    "controls": "56 original plus4split PASS; originalsplitRED2fail1error1pass",
+    "receipt_sha256": "8b091e6845bf7bb567e4461f8dcbef119ac0fce17bcace408c1848710a89cac0",
+    "source_files_pinned": 1839,
+    "private_files_pinned": 4,
+    "source_unchanged": true,
+    "same_postgres_zero_before_after": true
+  },
+  "T133": {
+    "status": "REJECTED_CANDIDATE_DIAGNOSTIC_COMPLETE",
+    "original_strict_elapsed_seconds": 1.0597157249576412,
+    "original_pytest_failed_preserved": true,
+    "complete_three_pairs": true,
+    "all_raw_numeric_normalized_canonical_digest_parity": true,
+    "candidate_all_pairs_client_faster": true,
+    "candidate_all_pairs_server_faster": false,
+    "client_median_gain_pct": 0.7498419490504671,
+    "server_median_gain_pct": 2.742369838420111,
+    "predeclared_minimum_median_gain_pct": 5,
+    "no_product_port": true,
+    "samples": [
+      {
+        "pair": 1,
+        "variant": "A",
+        "prepared_client_ms": 42.40754502825439,
+        "Planning Time": 3.106,
+        "Execution Time": 22.955
+      },
+      {
+        "pair": 1,
+        "variant": "B",
+        "prepared_client_ms": 28.1677310122177,
+        "Planning Time": 3.005,
+        "Execution Time": 22.431
+      },
+      {
+        "pair": 2,
+        "variant": "B",
+        "prepared_client_ms": 23.31230096751824,
+        "Planning Time": 3.034,
+        "Execution Time": 21.669
+      },
+      {
+        "pair": 2,
+        "variant": "A",
+        "prepared_client_ms": 23.48842704668641,
+        "Planning Time": 2.775,
+        "Execution Time": 22.28
+      },
+      {
+        "pair": 3,
+        "variant": "A",
+        "prepared_client_ms": 23.474013956729323,
+        "Planning Time": 2.882,
+        "Execution Time": 21.299
+      },
+      {
+        "pair": 3,
+        "variant": "B",
+        "prepared_client_ms": 22.984883980825543,
+        "Planning Time": 3.77,
+        "Execution Time": 21.602
+      }
+    ],
+    "controls": "4 initial missing-helper RED errors;5finalPASS including actualPluggy order outside benchmark profile",
+    "receipt_sha256": "a9f8224e5db8c2835a1d68ced783a470eb51b2c044ebe4ce2055569a541e03e7",
+    "candidate_summary_sha256": "b982a6085a507422a460d94c5d978567cf8372cc028c0f9293305cd286d325cb",
+    "source_unchanged": true,
+    "same_postgres_zero_before_after": true
+  },
+  "review": "Codex GPT6Luna Max /root/nfr_boundary_read_review, source/integrity/semantic/criteria verified by root",
+  "limits": [
+    "profiled outcomes are not uninstrumented NFR acceptance",
+    "past failed receipts stay failed",
+    "new T134 current-source uninstrumented gates not yet executed",
+    "no product correction integrated",
+    "no Claude used after user stop instruction"
+  ],
+  "T134": {
+    "status": "FAILED_COLD_R1_STOPPED",
+    "strict_elapsed_seconds": 1.0426068719825707,
+    "controller_seconds": 119.151,
+    "later_stages": "NOT_RUN",
+    "source_preserved": true,
+    "owned_cleanup": {
+      "clients": 0,
+      "databases": 0,
+      "test_roles": 0
+    }
+  },
+  "T135": {
+    "status": "SOURCE_VALIDATED_GLOBAL_PENDING",
+    "red": {
+      "failed": 2,
+      "passed": 18
+    },
+    "initial_green": 20,
+    "microbenchmark": {
+      "diagnostic_only": true,
+      "acceptance_claimed": false,
+      "canonical_checksums_equal": true,
+      "samples": [
+        {
+          "variant": "A",
+          "milliseconds": 10.242713,
+          "checksums": 84
+        },
+        {
+          "variant": "B",
+          "milliseconds": 0.816035,
+          "checksums": 84
+        },
+        {
+          "variant": "B",
+          "milliseconds": 0.54325,
+          "checksums": 84
+        },
+        {
+          "variant": "A",
+          "milliseconds": 9.913393,
+          "checksums": 84
+        },
+        {
+          "variant": "A",
+          "milliseconds": 9.855332,
+          "checksums": 84
+        },
+        {
+          "variant": "B",
+          "milliseconds": 0.538961,
+          "checksums": 84
+        }
+      ]
+    },
+    "global_acceptance": false,
+    "final_controls": 25,
+    "focused_native_and_controls": 85,
+    "architecture": {
+      "kept": 5,
+      "broken": 0
+    },
+    "mypy": "PASS",
+    "review": "Codex read-only; None coverage added; no observed proof cached"
+  }
+}

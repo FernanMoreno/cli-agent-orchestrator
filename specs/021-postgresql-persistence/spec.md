@@ -549,3 +549,21 @@ TERMINATED merely from elapsed time or relax the security/test assertions.
 ### T132 — Current-source cold NFR diagnosis (2026-10-22)
 
 FR-044 and the existing strict benchmark remain unchanged. On published main5628bdf6, global R5 reproduced the first independent covered cold NFR at1.0231529650045559s against `<1.0s`; subsequent stages were not executed. Diagnose that source/fixture/environment rather than treating older loaded/isolated profiles as its cause. Any diagnostic must preserve all fresh schema/identity/history/authority checks, audit commits, transaction and failure-order boundaries. Profiling/EXPLAIN measurements are diagnostic only and cannot substitute for three uninstrumented cold covered passes or full regression/coverage. No prewarm, timer/body/GC/threshold/selection change or unchanged retry for green.
+
+
+T132 continuation2026-10-30: retain all original requirements and prior failures. A current-source diagnostic may distinguish catalog statement rendering, execute/wait, guarded fetch/JSON decoding and normalization within each fresh manifest. Instrument only the exact benchmark call, preserve values/exceptions/descriptors and all transactions/checks, emit fixed labels and numeric timings only. Diagnostic PASS is never uninstrumented or global acceptance.
+
+
+### T133 — Direct composite catalog aggregation experiment
+
+Evaluate only whether json_agg(manifest_row ORDER BY unchangedkeys) can avoid the intermediate row_to_json value in each of nine current catalog family aggregates. PostgreSQL18 documents composite conversion for json_agg/to_json: https://www.postgresql.org/docs/18/functions-aggregate.html and https://www.postgresql.org/docs/18/functions-json.html. This is a distinct hypothesis from rejected routineJSONB/subset/NOTNULL candidates, not a promised speedup. Preserve current joins/projections/inner and outer ordering, JSON empty arrays/nulls/numerictypes, every fresh authority/catalog check and exact normalized canonical digest. No product modification follows without stable measured benefit and broader parity/independent Codex review.
+
+
+### T134 — Current-source uninstrumented global acceptance
+
+HEAD88335 differs from the earlier failed R5 source5628 in metadata runtime and shared fixtures; no current-head uninstrumented cold result exists. Perform one newly source/runtime/PG-bound acceptance: three independent cold covered benchmark processes, halt at first failure, then the complete unfiltered eight-worker backend with87% floor and Apps with90% floor/unchanged ratchet, plus applicable Web/type/build/composition checks. No diagnostic plugins, prewarm, GC/body/threshold/worker/selection changes, QEMU91 execution or historical reconciliation. Profiling failures stay diagnostic and earlier failures remain failed; a new pass does not prove the historical cause.
+
+
+### T135 — Bounded memoization of immutable source migration checksums
+
+The source descriptor checksum serializes and hashes the same frozen migration SQL on every verification (Workv1:526statements/134914characters). Cache only that pure expected-source calculation for exact ComponentMigration instances with immutable primitive fields, bounded entries/input sizes and identity checks against later field replacement. Never cache observed catalog manifests/digests, roles, store identity/history, authority, or transactions. Preserve exact historical checksum bytes and fallback behavior for mutable, noncanonical, oversized and subclass inputs; no schema/migration/API/verification-count change. A rejected SQL experiment does not justify a weaker proof.
