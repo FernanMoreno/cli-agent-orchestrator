@@ -1,0 +1,41 @@
+{
+  "schema": "caos.bounded-tmux-outcome-validation.v1",
+  "source_base_head": "e17924729bfac4e2dc5143e0b0ade5cd9d8d3795",
+  "candidate_sha256": "2e1c0f9310f184b369807d0104a5eabc47067814298b7eb08e8dab27a85271b8",
+  "candidate_patch_sha256": "0f72e5d91c5c45947afaf95648031fe2dc3561336c90b07c478ebc387fefd152",
+  "candidate_archive_sha256": "f20ca725a9440b406a125fd8f2c489ae8e31bc0d7c803a34e2f25652fdb4d3dd",
+  "diagnostic_only": true,
+  "global_acceptance": false,
+  "red_cases": {
+    "failed": 3,
+    "passed": 0
+  },
+  "final_cases": {
+    "total": 11,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0
+  },
+  "pytest_seconds": 72.62,
+  "controller_seconds": 78.877,
+  "source_preserved": true,
+  "real_dependencies": [
+    "owned API process",
+    "existing PostgreSQL",
+    "private tmux",
+    "mock_cli processes without model inference"
+  ],
+  "cleanup_guard_ast_parity": true,
+  "owner_stop_exception_control": {
+    "before_owner_stopped": true,
+    "after_owner_stopped": false
+  },
+  "architecture": {
+    "kept": 5,
+    "broken": 0
+  },
+  "independent_codex_read_review": "PASS",
+  "historical_cleanup_cause": "UNPROVEN",
+  "T147": "OPEN",
+  "loaded_NFR": "OPEN; unchanged 1-second criterion"
+}

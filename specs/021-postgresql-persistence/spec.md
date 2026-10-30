@@ -584,3 +584,8 @@ The actual T137 full8 run fails140calls/55setups with21438passed/256skipped and8
 ### T145 temporary namespace containment
 
 The actual T138 full8 report contains183Vault failures/errors before the fixture creates a vault: basetemp is a sibling of TMPDIR, while the existing fixture requires its target beneath tempfile.gettempdir(). Correct the shared launcher helper so pytest basetemp is inside its stable private TMPDIR. Preserve root ownership/inode checks, fresh per-process namespaces, Unix socket budget, original arguments and the Vault fixture's confinement/symlink/nonempty checks. Reproduce with the actual fresh child environment before correction; validate both Vault consumers and native IPC consumers afterward. Full8 coverage87.09320267134663% passes, but loadedNFR1.377081821s and the remaining functional incidents remain open.
+
+
+### T147 cleanup outcome observability
+
+The retained scoped mockAPI failure does not identify the first rejected cleanup guard. Add an optional structured diagnostic sink to the existing test-owned tmux cleanup helper, preserving its bool result and every ownership/socket/process/liveness/exit predicate. Unknown liveness must still retain resources. Record only fixed reason codes, liveness and owned process/socket identity metadata; never raw stderr, environment or credential content. The actual scoped fixture must retain this evidence privately before its unchanged success assertion. Observe a reproduced rejected guard before changing cleanup behavior or claiming the historical failure resolved.

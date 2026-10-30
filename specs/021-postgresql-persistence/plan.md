@@ -1367,3 +1367,11 @@ Use structuredJUnit inventory from globalT137, not repeatedunchangedfullruns. Fi
 ### T145 correction sequence
 
 Retain the completed T138 source/runtime/PG-bound failure and compare original failure identities. Graphify identifies vault_factory callers across Vault, API and CLI; current source verifies the tempfile confinement boundary. Add regression controls for basetemp containment and a fresh child invoking the actual Vault factory with configured TMPDIR and worker-like paths; retain RED. Change only OwnedPytestTemp.basetemp to a child of tmpdir, keep owner-only directories and existing socket checks. Run the helper/Vault negatives plus the183failed Vault identities under the corrected launch environment and8worker native IPC controls; preserve all failed receipts. Handle subprocess startup, Work input fence/restart observation and exact tmux cleanup as separately diagnosed defects; do not relax timers or cleanup authority.
+
+
+### T147 first-guard evidence
+
+Reproduce the missing diagnostic interface with owned-root/unknown-liveness/known-absent controls. Keep existing bool behavior and short-circuit order while adding an optional typed diagnostic list at each rejection. Exercise both omitted and supplied sinks and foreign sentinels. Wire only the scoped mockAPI test to save a0600 outcome outside the socket root before asserting the original bool. Run targeted guards and actual existing scoped case, then inspect first failed guard; a passing attempt cannot establish the cause of older false cleanup results. Preserve old retained socket/root evidence without action.
+
+
+T147 caller evidence must set owner_stopped only after the managed server.stop returns: the fixture's _terminate explicitly confirms process exit or raises. A raised stop must keep the flag false and forbid probing/removing the namespace. The final false outcome after rmtree also needs a fixed root_not_removed reason, preserving the same exists predicate and bool result.

@@ -1,5 +1,6 @@
 """No-model real API/PostgreSQL/tmux preflight for scoped mock peer setup."""
 
+import json
 import os
 from pathlib import Path
 from test.e2e import test_real_provider_matrix as matrix
@@ -77,12 +78,29 @@ def test_owned_mock_api_fixture_has_real_peer_and_decoys(postgres_service, tmp_p
                 if server is not None and session is not None:
                     matrix._delete_session(server, session)
         finally:
+            owner_stopped = False
             try:
                 if server is not None:
                     server.stop()
+                    owner_stopped = True
             finally:
                 from cli_agent_orchestrator.clients import tmux
 
-                assert owned_tmux.cleanup_private_tmux_root(
-                    socket_root, home, tmux, owner_stopped=True
+                diagnostics = []
+                removed = owned_tmux.cleanup_private_tmux_root(
+                    socket_root, home, tmux, owner_stopped=owner_stopped, diagnostics=diagnostics
                 )
+                evidence_path = tmp_path / "tmux-cleanup.private.json"
+                descriptor = os.open(
+                    evidence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                )
+                with os.fdopen(descriptor, "w") as stream:
+                    json.dump(
+                        {
+                            "schema": "caos.private-tmux-cleanup.v1",
+                            "removed": removed,
+                            "rejections": diagnostics,
+                        },
+                        stream,
+                    )
+                assert removed, diagnostics

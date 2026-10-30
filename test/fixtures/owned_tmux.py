@@ -140,19 +140,45 @@ def cleanup_private_tmux_root(
     *,
     owner_stopped: bool,
     command_runner: Any = None,
+    diagnostics: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Remove only this fixture's empty tmux server after its owner has stopped."""
+    verdict = None
+    server_pid = None
+    process_identity = None
+    socket_identity = None
+    failure_type = None
+
+    def refuse(reason: str) -> bool:
+        if diagnostics is not None:
+            try:
+                diagnostics.append(
+                    {
+                        "reason": reason,
+                        "liveness": verdict,
+                        "owner_stopped": owner_stopped,
+                        "server_pid": server_pid,
+                        "process_identity": process_identity,
+                        "socket_identity": socket_identity,
+                        "exception_type": failure_type,
+                    }
+                )
+            except BaseException:
+                # Missing diagnostic output never turns a rejected cleanup into success.
+                pass
+        return False
+
     if root is None:
         return True
     if not owner_stopped:
-        return False
+        return refuse("owner_not_stopped")
     socket_path = root / f"tmux-{os.getuid()}" / "default"
     pidfd = -1
     try:
         ensure_private_directory(root, must_exist=True)
         verdict = tmux_module._tmux_server_liveness(str(socket_path))
         if verdict not in {tmux_module._SERVER_ABSENT, tmux_module._SERVER_ALIVE}:
-            return False
+            return refuse("liveness_unknown")
         try:
             socket_metadata = socket_path.lstat()
         except FileNotFoundError:
@@ -160,10 +186,10 @@ def cleanup_private_tmux_root(
         if socket_metadata is not None and (
             not stat.S_ISSOCK(socket_metadata.st_mode) or socket_metadata.st_uid != os.geteuid()
         ):
-            return False
+            return refuse("socket_not_owned_socket")
         if verdict == tmux_module._SERVER_ALIVE:
             if socket_metadata is None:
-                return False
+                return refuse("alive_socket_missing")
             socket_directory_metadata = socket_path.parent.lstat()
             if (
                 not stat.S_ISDIR(socket_directory_metadata.st_mode)
@@ -171,10 +197,10 @@ def cleanup_private_tmux_root(
                 or socket_directory_metadata.st_uid != os.geteuid()
                 or stat.S_IMODE(socket_directory_metadata.st_mode) != 0o700
             ):
-                return False
+                return refuse("socket_directory_not_private")
             tmux_binary = shutil.which("tmux")
             if tmux_binary is None:
-                return False
+                return refuse("tmux_binary_missing")
             runner = command_runner or subprocess.run
             socket_identity = (socket_metadata.st_dev, socket_metadata.st_ino)
             pid_result = _private_tmux_command(
@@ -186,17 +212,17 @@ def cleanup_private_tmux_root(
                 command=("display-message", "-p", "#{pid}"),
             )
             if pid_result is None or re.fullmatch(r"[1-9][0-9]*\n?", pid_result.stdout) is None:
-                return False
+                return refuse("pid_probe_failed")
             server_pid = int(pid_result.stdout.strip())
             process_identity = _read_process_identity(server_pid)
             if process_identity is None or process_identity[0] != os.geteuid():
-                return False
+                return refuse("server_identity_unverified")
             try:
                 pidfd = os.pidfd_open(server_pid, 0)
             except (AttributeError, OSError):
-                return False
+                return refuse("pidfd_unavailable")
             if _read_process_identity(server_pid) != process_identity:
-                return False
+                return refuse("server_identity_changed")
             sessions = _private_tmux_command(
                 runner,
                 tmux_binary=tmux_binary,
@@ -206,14 +232,14 @@ def cleanup_private_tmux_root(
                 command=("list-sessions", "-F", "#{session_id}"),
             )
             if sessions is None or sessions.stdout.strip():
-                return False
+                return refuse("sessions_unverified_or_present")
             if (
                 _tmux_socket_identity(socket_path) != socket_identity
                 or tmux_module._tmux_server_liveness(str(socket_path)) != tmux_module._SERVER_ALIVE
                 or _pidfd_exited(pidfd)
                 or _read_process_identity(server_pid) != process_identity
             ):
-                return False
+                return refuse("pre_kill_identity_changed")
             killed = _private_tmux_command(
                 runner,
                 tmux_binary=tmux_binary,
@@ -223,36 +249,37 @@ def cleanup_private_tmux_root(
                 command=("kill-server",),
             )
             if killed is None:
-                return False
+                return refuse("kill_server_failed")
             deadline = time.monotonic() + 3.0
             while time.monotonic() < deadline and not _pidfd_exited(pidfd):
                 if _read_process_identity(server_pid) != process_identity:
-                    return False
+                    return refuse("server_identity_changed_during_exit")
                 time.sleep(0.05)
             if not _pidfd_exited(pidfd):
-                return False
+                return refuse("server_exit_unconfirmed")
             while time.monotonic() < deadline:
                 verdict = tmux_module._tmux_server_liveness(str(socket_path))
                 if verdict == tmux_module._SERVER_ABSENT:
                     break
                 if verdict != tmux_module._SERVER_ALIVE:
-                    return False
+                    return refuse("post_kill_liveness_unknown")
                 time.sleep(0.1)
             if verdict != tmux_module._SERVER_ABSENT:
-                return False
+                return refuse("post_kill_server_not_absent")
             if _tmux_socket_identity(socket_path) != socket_identity:
-                return False
+                return refuse("post_kill_socket_identity_changed")
         if socket_metadata is not None:
             if _tmux_socket_identity(socket_path) != (
                 socket_metadata.st_dev,
                 socket_metadata.st_ino,
             ):
-                return False
+                return refuse("socket_identity_changed_before_unlink")
             socket_path.unlink()
         shutil.rmtree(root)
-        return not root.exists()
-    except BaseException:
-        return False
+        return not root.exists() or refuse("root_not_removed")
+    except BaseException as error:
+        failure_type = type(error).__name__
+        return refuse("cleanup_exception")
     finally:
         if pidfd >= 0:
             try:
