@@ -8,6 +8,12 @@
 - AdmissionDecision: nuevas unidades disponibles bajo esa observación, motivo fijo y valores por recurso. Una decisión no es una concesión de autoridad.
 - DeliveryReservation: identificador opaco, receptor/encarnación, estado reserved/started/released, generación del dueño y recursos reclamados. Una reserva iniciada solo se libera al terminar físicamente; una reducción permite deuda visible.
 
+## Prerrequisito M1: atestación del operador (T007, pendiente)
+
+El componente main `resource_envelopes`, versión1, añadirá `_cao_resource_envelopes`: historial por instance_id/revisión, store UUID e identidad lógica del target, generación/PID/inicio del proceso, pares dispositivo/inodo de namespaces mnt/cgroup y digest de la vista de recursos. Incluye presupuestos positivos y finitos de memoria (bytes), CPU (millicores) y almacenamiento (slots), las declaraciones complete_hierarchy/root_is_host, estado activo/revocado y actor Principal verificado. No almacena rutas privadas ni credenciales. Una raíz host requiere jerarquía declarada completa.
+
+El runtime solo puede leer; cada migración reaplica esa protección tras sus grants genéricos y verifica permisos efectivos. Registrar una fila requiere autoridad administrativa y CAS; el loader comparará identidad, generación, namespaces, vista y revisión antes de devolver atestación opaca. La declaración del operador no demuestra por sí sola ancestros invisibles. Este historial no sustituye reservas de recursos, ni acredita M1 mientras falten el escritor autorizado y el loader.
+
 ## M2: persistencia PostgreSQL
 
 ResourceDomain identifica host/nodo/almacenamiento/cuota con presupuesto y revisión. ResourceReservation vincula operación, dueño, encarnación, dominios y cantidades. Estados preparing/active/releasing/uncertain/released; transiciones condicionales a revisión e identidad. Los índices y la migración se definen en la tareaM2 contra el registro de migraciones vigente; no se reserva un número de migración prematuramente.

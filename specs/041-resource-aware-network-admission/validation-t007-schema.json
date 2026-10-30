@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-30",
+  "scope": "T007 schema/ACL scaffolding and shared worker reset only; T007 not complete",
+  "status": "PASS_SCOPED_NOT_T007_OR_M1",
+  "base_head": "2e8bd3817e075ec83e8899eeaf3f1f87ac51d0b7",
+  "tests": {
+    "cases": {
+      "total": 245,
+      "failure": 0,
+      "error": 0,
+      "skipped": 0
+    },
+    "pytest_seconds": 100.36,
+    "controller_seconds": 102.718,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/f041-envelope-reset-formatted-green/f041-envelope-reset-formatted-green/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    }
+  },
+  "retained_attempts": [
+    {
+      "phase": "f041-envelope-schema-red",
+      "result": "28 expected missing-module failures; schema not implemented"
+    },
+    {
+      "phase": "f041-envelope-acl-red",
+      "result": "preflight only, not executed; explicit native migration fixture added before replacement"
+    },
+    {
+      "phase": "f041-envelope-acl-r1-red",
+      "result": "14 failures/16 passes; 13 reached privilege boundaries, one view failed during unqualified CREATE setup"
+    },
+    {
+      "phase": "f041-envelope-schema-green",
+      "result": "29 passes/2 failures; view setup tried pg_catalog because schema was unqualified; failures did not reach view guards"
+    },
+    {
+      "phase": "f041-envelope-composition-green",
+      "result": "242 passes/1 failure; shared worker reset regranted DML to resource envelope; runtime guard correctly refused"
+    },
+    {
+      "phase": "f041-envelope-reset-green",
+      "result": "preflight only, not executed; formatting mutation required fresh source freeze"
+    }
+  ],
+  "style": "Black/isort six changed Python files PASS before final freeze",
+  "types": "mypy three changed source modules PASS; global type gate not rerun",
+  "composition": {
+    "files": 427,
+    "dependencies": 1877,
+    "kept": 5,
+    "broken": 0
+  },
+  "independent_review": "Codex schema/ACL and grants/reset reviews PASS; no Claude invoked",
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "source_files": {
+    "src/cli_agent_orchestrator/clients/admission_bootstrap_schema.py": "89734b0e311dcb764d0cba0ddeeef642439366867382b2fdc656290129ca8463",
+    "src/cli_agent_orchestrator/clients/postgres/migrations.py": "5a40b1acc71cdc1c431b21ae07e276798c2ee26a9cf29da6c3dcae685d763162",
+    "src/cli_agent_orchestrator/clients/postgres/registry.py": "b6799b198d6970b2a858b829931f795ec5a48f51bd706866d039ba539bc0026e",
+    "test/postgres/test_admission_bootstrap.py": "1fe4fd065583b467b6065f0c30c262cb7259a582b352baee97aca45b67b63a52",
+    "test/postgres/fixtures.py": "f980e183cac52c1dead6b59056acc1399558e20824c4f7cc5de0822bd454533c",
+    "test/postgres/test_worker_isolation.py": "9020e87b477c0d76723a373a9a278746d58edaf4d856cb13863cbc7aaa506eaf"
+  },
+  "composition_review": {
+    "changed": "main resource-envelope migration, central readonly authority ACL and role verification, worker reset",
+    "neighbors": "import receipts, migration order/checksums, owner/runtime role separation, catalog fingerprints, RemoteOperationStore, resource-policy components",
+    "invariants": "runtime has no authority DML, explicit column/PUBLIC grants removed after generic grants, wrong relation type rejected, owner DDL private-schema qualified, read guards retained",
+    "real_dependencies": "existing pinned PostgreSQL18.6; private disposable worker schemas/roles only",
+    "contract_tests": "native SQL role/DDL contracts and 158 prior admission cases; no external API/message change, Pact not applicable",
+    "verdict": "PASS WITH RISKS: operator writer/CAS, sealed Principal provenance and opaque loader remain unimplemented"
+  },
+  "acceptance": {
+    "T007_complete": false,
+    "M1": false,
+    "M2": false,
+    "M3": false,
+    "consumer_fixed4_removed": false,
+    "global_suite": false,
+    "mock32": false
+  },
+  "graph_refresh_decision": "Historical graph queried/read without regeneration; relevant paths verified against source; foreign outputs excluded from commit. Earlier Graphify query changed only last_query_stamp cache metadata.",
+  "knowledge": {
+    "operation_id": "save-20261030-admission-authority-boundaries",
+    "lint": "strict PASS0issues",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ]
+  }
+}

@@ -1177,7 +1177,10 @@ def reset_postgres_worker_targets(targets: PostgresTargets) -> None:
 
     from cli_agent_orchestrator.clients.postgres import connect
     from cli_agent_orchestrator.clients.postgres.import_receipt_schema import IMPORT_RECEIPT_TABLE
-    from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+    from cli_agent_orchestrator.clients.postgres.migrations import (
+        SchemaMismatch,
+        protect_runtime_authority_tables,
+    )
     from cli_agent_orchestrator.clients.postgres.registry import bootstrap_scope
 
     _POSTGRES_WORKER_RESET_COUNT += 1
@@ -1285,6 +1288,7 @@ def reset_postgres_worker_targets(targets: PostgresTargets) -> None:
                         sql.Identifier(target.user),
                     )
                 )
+            protect_runtime_authority_tables(connection, target)
             connection.execute(
                 sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA {} FROM {}").format(
                     sql.Identifier(target.schema), sql.Identifier(target.user)

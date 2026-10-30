@@ -730,10 +730,10 @@ _RUNTIME_ROLE_QUERY = """WITH role_flags AS MATERIALIZED (
                       AND c.relname IN (
                           '_cao_schema_migrations',
                           '_cao_store_identity',
-                          '_cao_import_receipts'
+                          '_cao_import_receipts',
+                          '_cao_resource_envelopes'
                       )
-                      AND c.relkind IN ('r','p')
-                      AND (
+                      AND CASE WHEN c.relkind NOT IN ('r','p') THEN true ELSE (
                           NOT has_table_privilege(current_user,c.oid,'SELECT')
                           OR has_any_column_privilege(current_user,c.oid,'INSERT')
                           OR has_any_column_privilege(current_user,c.oid,'UPDATE')
@@ -742,7 +742,7 @@ _RUNTIME_ROLE_QUERY = """WITH role_flags AS MATERIALIZED (
                           OR has_any_column_privilege(current_user,c.oid,'REFERENCES')
                           OR has_table_privilege(current_user,c.oid,'TRIGGER')
                           OR has_table_privilege(current_user,c.oid,'MAINTAIN')
-                      )
+                      ) END
                     LIMIT 1
                 )
                 ELSE false END AS drift
@@ -830,6 +830,75 @@ def verify_component(connection: Connection, migrations):
         catalog_manifest(connection, tables)
     ):
         raise SchemaMismatch("PostgreSQL component schema fingerprint mismatch")
+
+
+def _protect_runtime_readonly_table(
+    connection: Connection, target: DatabaseTarget, name: str, label: str
+) -> None:
+    relation = connection.execute(
+        """SELECT c.oid,c.relkind FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname=%s AND c.relname=%s""",
+        (target.schema, name),
+    ).fetchone()
+    if relation is None:
+        return
+    if relation[1] not in {"r", "p"}:
+        raise SchemaMismatch(f"PostgreSQL {label} relation is not a table")
+    table = sql.Identifier(target.schema, name)
+    columns = tuple(
+        sql.Identifier(row[0])
+        for row in connection.execute(
+            """SELECT attname FROM pg_catalog.pg_attribute
+            WHERE attrelid=%s AND attnum>0 AND NOT attisdropped ORDER BY attnum""",
+            (relation[0],),
+        ).fetchall()
+    )
+    runtime_role = sql.Identifier(target.user)
+    for grantee in (sql.SQL("PUBLIC"), runtime_role):
+        connection.execute(
+            sql.SQL("REVOKE ALL PRIVILEGES ON TABLE {} FROM {}").format(table, grantee)
+        )
+        if columns:
+            # Table REVOKE does not remove independent column ACL entries.
+            connection.execute(
+                sql.SQL("REVOKE ALL PRIVILEGES ({}) ON TABLE {} FROM {}").format(
+                    sql.SQL(",").join(columns), table, grantee
+                )
+            )
+    connection.execute(sql.SQL("GRANT SELECT ON TABLE {} TO {}").format(table, runtime_role))
+    checks = []
+    parameters: list[object] = []
+    for privilege in (
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+        "MAINTAIN",
+    ):
+        check = f"has_table_privilege(%s,%s,'{privilege}')"
+        parameters.extend((target.user, relation[0]))
+        if privilege in {"INSERT", "UPDATE", "REFERENCES"}:
+            check = f"({check} OR has_any_column_privilege(%s,%s,'{privilege}'))"
+            parameters.extend((target.user, relation[0]))
+        checks.append(check)
+    effective = connection.execute("SELECT " + ",".join(checks), tuple(parameters)).fetchone()
+    if effective is None or not effective[0] or any(effective[1:]):
+        # Remaining inherited privileges must fail the migration, not be
+        # revoked from a potentially shared role outside this schema's scope.
+        raise SchemaMismatch(f"PostgreSQL runtime role must have read-only {label}s")
+
+
+def protect_runtime_authority_tables(connection: Connection, target: DatabaseTarget) -> None:
+    """Restore authority ACLs after generic grants using an owned schema connection."""
+    for protected_name, protected_label in (
+        ("_cao_import_receipts", "import receipt"),
+        ("_cao_resource_envelopes", "resource envelope"),
+    ):
+        _protect_runtime_readonly_table(connection, target, protected_name, protected_label)
 
 
 def migrate_component(target: DatabaseTarget, migrations):
@@ -939,47 +1008,7 @@ def migrate_component(target: DatabaseTarget, migrations):
                     sql.Identifier(target.schema), sql.Identifier(target.user)
                 )
             )
-            receipt = connection.execute(
-                """SELECT c.oid,c.relkind FROM pg_catalog.pg_class c
-                JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-                WHERE n.nspname=%s AND c.relname='_cao_import_receipts'""",
-                (target.schema,),
-            ).fetchone()
-            if receipt is not None:
-                if receipt[1] not in {"r", "p"}:
-                    raise SchemaMismatch("PostgreSQL import receipt relation is not a table")
-                receipt_table = sql.Identifier(target.schema, "_cao_import_receipts")
-                runtime_role = sql.Identifier(target.user)
-                connection.execute(
-                    sql.SQL("REVOKE ALL PRIVILEGES ON TABLE {} FROM PUBLIC").format(receipt_table)
-                )
-                connection.execute(
-                    sql.SQL("REVOKE ALL PRIVILEGES ON TABLE {} FROM {}").format(
-                        receipt_table, runtime_role
-                    )
-                )
-                connection.execute(
-                    sql.SQL("GRANT SELECT ON TABLE {} TO {}").format(receipt_table, runtime_role)
-                )
-                privileges = (
-                    "SELECT",
-                    "INSERT",
-                    "UPDATE",
-                    "DELETE",
-                    "TRUNCATE",
-                    "REFERENCES",
-                    "TRIGGER",
-                    "MAINTAIN",
-                )
-                checks = ",".join(
-                    f"has_table_privilege(%s,%s,'{privilege}')" for privilege in privileges
-                )
-                parameters = tuple(value for _ in privileges for value in (target.user, receipt[0]))
-                effective = connection.execute(f"SELECT {checks}", parameters).fetchone()
-                if effective is None or not effective[0] or any(effective[1:]):
-                    raise SchemaMismatch(
-                        "PostgreSQL runtime role must have read-only import receipts"
-                    )
+            protect_runtime_authority_tables(connection, target)
             connection.execute(
                 sql.SQL("REVOKE ALL ON ALL FUNCTIONS IN SCHEMA {} FROM PUBLIC").format(
                     sql.Identifier(target.schema)

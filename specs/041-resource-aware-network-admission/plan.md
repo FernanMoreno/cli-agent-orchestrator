@@ -32,6 +32,7 @@ Inspección git y conocimiento: completados. Spec aprobada por el usuario; plani
 - `services/admission_postgres.py`: presión agregada de un servidor consultado con rol runtime/readonly; una sonda viva y retiro confirmado, sin identidades ni errores privados en resultados. No sustituye reservas ni un mapeo autorizado de dominios.
 - `services/admission_settings.py`: política operativa privada y validada, próxima lectura y retención de última válida en el mismo ámbito; no usa el escritor genérico de ConfigService ni contiene atestaciones de jerarquía.
 - `services/admission_bootstrap.py`: verifica envelope explícito de operador persistido en PostgreSQL contra identidad/encarnación/namespaces del proceso; solo devuelve un objeto verificado al observador.
+- `clients/admission_bootstrap_schema.py`: componente main de historial de atestaciones; runtime solo lectura, con protección central de ACL después de cada migración y del reinicio de esquemas de prueba. El esquema no acredita al actor ni concede capacidad.
 - `services/admission_resources.py`: observaciones de host/cgroup y presión PostgreSQL con antigüedad y fallos explícitos.
 - `services/delivery_admission.py`: dueño común de reservas, drenaje, exclusión y estadísticas estructuradas locales.
 - `services/inbox_service.py`: consumidor, barridos y llamadas directas usan ese dueño; no generan capacidad adicional.

@@ -11,6 +11,7 @@ import pytest
 from psycopg import sql
 
 from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.postgres.migrations import verify_runtime_role
 from cli_agent_orchestrator.runtime_channel.store import RemoteOperationStore
 
 pytestmark = pytest.mark.postgres
@@ -239,3 +240,33 @@ def test_worker_reset_keeps_import_receipts_runtime_read_only(postgres_worker_ta
             ).fetchone()
         assert privileges is not None
         assert tuple(privileges) == (True, False, False, False, False, False, False, False)
+
+
+@pytest.mark.parametrize("public", [False, True], ids=["runtime", "public"])
+def test_worker_reset_keeps_resource_authority_and_columns_read_only(
+    postgres_worker_targets, public
+):
+    from cli_agent_orchestrator.clients.admission_bootstrap_schema import RESOURCE_ENVELOPE_TABLE
+
+    targets = postgres_worker_targets
+    target = targets.main
+    reset_postgres_worker_targets(targets)
+    relation = f"{target.schema}.{RESOURCE_ENVELOPE_TABLE}"
+    with connect(target.migration_target()) as owner:
+        owner.execute(
+            sql.SQL("GRANT UPDATE(active) ON {} TO {}").format(
+                sql.Identifier(target.schema, RESOURCE_ENVELOPE_TABLE),
+                sql.SQL("PUBLIC") if public else sql.Identifier(target.user),
+            )
+        )
+    reset_postgres_worker_targets(targets)
+    with connect(target, readonly=True) as runtime:
+        verify_runtime_role(runtime)
+        privileges = runtime.execute(
+            "SELECT has_table_privilege(current_user,%s,'SELECT'),"
+            "has_any_column_privilege(current_user,%s,'INSERT'),"
+            "has_any_column_privilege(current_user,%s,'UPDATE'),"
+            "has_table_privilege(current_user,%s,'DELETE')",
+            (relation,) * 4,
+        ).fetchone()
+        assert tuple(privileges) == (True, False, False, False)
