@@ -197,7 +197,7 @@
     }
   },
   "T135": {
-    "status": "SOURCE_VALIDATED_GLOBAL_PENDING",
+    "status": "SOURCE_IMPLEMENTED_VALIDATED_INTEGRATED;GLOBAL_FAILED",
     "red": {
       "failed": 2,
       "passed": 18
@@ -248,6 +248,26 @@
       "broken": 0
     },
     "mypy": "PASS",
-    "review": "Codex read-only; None coverage added; no observed proof cached"
+    "review": "Codex read-only; None coverage added; no observed proof cached",
+    "integration_head": "9131a0113b0a846ab94dcfd1c8f8668385acb3a3",
+    "global_attempt": {
+      "source_head": "9131a0113b0a846ab94dcfd1c8f8668385acb3a3",
+      "source_tree_sha256": "57e4ee72e021b7b08ab4561355c5b4da0f039229807f8b01a194529a0a8b2008",
+      "status": "FAILED_COLD_R1_STOPPED",
+      "strict_elapsed_seconds": 1.1591854220023379,
+      "controller_seconds": 100.858,
+      "cold_r2_r3_full_backend_apps_ratchet_web_types": "NOT_RUN",
+      "owned_cleanup": {
+        "clients": 0,
+        "databases": 0,
+        "test_roles": 0
+      },
+      "source_tree_preserved": true,
+      "executed_bytes_preserved": true,
+      "original_criteria_unchanged": true,
+      "receipt_sha256": "95e653c3c288ba05315cda0b4be6e863d066598959f08a09286969a867feb1f0",
+      "closure_sha256": "2993ed578d64a4edcf5e1a018837cea83a37b70030aec00174cf6a5e0146e8b0",
+      "launch_admission_issue": "First outer invocation lacked repository PYTHONPATH and stopped before claim or tests; preserved separately; second invocation supplies explicit source/repo roots, no source or gate edits"
+    }
   }
 }
