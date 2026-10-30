@@ -56,6 +56,20 @@ class AdmissionPolicy:
 
 
 @dataclass(frozen=True)
+class ResourceHeadroom:
+    """One domain's paired quantities; reserves must use this domain's limit."""
+
+    available_units: int
+    limit_units: int
+
+    def __post_init__(self) -> None:
+        _integer("available_units", self.available_units)
+        _integer("limit_units", self.limit_units, minimum=1)
+        if self.available_units > self.limit_units:
+            raise ValueError("domain headroom cannot exceed its limit")
+
+
+@dataclass(frozen=True)
 class CapacityObservation:
     """Available quantities at one process-local monotonic instant in seconds.
 
@@ -72,6 +86,8 @@ class CapacityObservation:
     cpu_limit_millicores: int | None
     storage_available_slots: int | None
     coverage: Coverage = "known"
+    memory_domains: tuple[ResourceHeadroom, ...] = ()
+    cpu_domains: tuple[ResourceHeadroom, ...] = ()
 
     def __post_init__(self) -> None:
         validate_clock(self.observed_at)
@@ -96,6 +112,19 @@ class CapacityObservation:
         ):
             if available is not None and limit is not None and available > limit:
                 raise ValueError("available resource cannot exceed its effective limit")
+        for domains, available, limit in (
+            (self.memory_domains, self.memory_available_bytes, self.memory_limit_bytes),
+            (self.cpu_domains, self.cpu_available_millicores, self.cpu_limit_millicores),
+        ):
+            if not isinstance(domains, tuple) or any(
+                not isinstance(domain, ResourceHeadroom) for domain in domains
+            ):
+                raise ValueError("resource domains must be immutable validated headroom pairs")
+            if domains and (
+                (available is not None and available != min(d.available_units for d in domains))
+                or (limit is not None and limit != min(d.limit_units for d in domains))
+            ):
+                raise ValueError("aggregate quantities must match their domain observations")
 
 
 @dataclass(frozen=True)
@@ -132,23 +161,35 @@ def evaluate_capacity(
     assert observation.cpu_available_millicores is not None
     assert observation.cpu_limit_millicores is not None
     assert observation.storage_available_slots is not None
+    memory_domains = observation.memory_domains or (
+        ResourceHeadroom(observation.memory_available_bytes, observation.memory_limit_bytes),
+    )
+    cpu_domains = observation.cpu_domains or (
+        ResourceHeadroom(observation.cpu_available_millicores, observation.cpu_limit_millicores),
+    )
     limits = (
         (
             "memory",
-            _available_units(
-                observation.memory_available_bytes,
-                observation.memory_limit_bytes,
-                policy.memory_reserve_percent,
-                policy.memory_per_delivery_bytes,
+            min(
+                _available_units(
+                    domain.available_units,
+                    domain.limit_units,
+                    policy.memory_reserve_percent,
+                    policy.memory_per_delivery_bytes,
+                )
+                for domain in memory_domains
             ),
         ),
         (
             "cpu",
-            _available_units(
-                observation.cpu_available_millicores,
-                observation.cpu_limit_millicores,
-                policy.cpu_reserve_percent,
-                policy.cpu_per_delivery_millicores,
+            min(
+                _available_units(
+                    domain.available_units,
+                    domain.limit_units,
+                    policy.cpu_reserve_percent,
+                    policy.cpu_per_delivery_millicores,
+                )
+                for domain in cpu_domains
             ),
         ),
         ("storage", observation.storage_available_slots),

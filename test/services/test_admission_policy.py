@@ -191,3 +191,25 @@ def test_policy_observation_and_decision_are_immutable_and_content_free():
             setattr(value, field, replacement)
     assert dict(decision.resource_limits) == {"memory": 12, "cpu": 6, "storage": 100}
     assert decision.reason == "capacity_available"
+
+
+@pytest.mark.parametrize(
+    ("available", "limit"), [(True, 100), (-1, 100), (1, 0), (101, 100), (1.5, 100)]
+)
+def test_each_domain_pair_requires_conservative_integer_quantities(available, limit):
+    with pytest.raises(ValueError):
+        module().ResourceHeadroom(available, limit)
+
+
+def test_domain_pairs_cannot_disagree_with_diagnostic_aggregates():
+    api = module()
+    with pytest.raises(ValueError, match="aggregate"):
+        observation(memory_domains=(api.ResourceHeadroom(512 * MIB, 1024 * MIB),))
+
+
+def test_domain_collections_are_immutable_validated_values():
+    api = module()
+    with pytest.raises(ValueError, match="immutable"):
+        observation(memory_domains=[api.ResourceHeadroom(1024 * MIB, 1024 * MIB)])
+    with pytest.raises(ValueError, match="immutable"):
+        observation(cpu_domains=(object(),))

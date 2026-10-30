@@ -12,7 +12,7 @@
 
 ## Phase 3 — US1 admisión local dinámica (M1)
 
-- [ ] T005 [US1] Implementar observaciones de host/cgroup con límites efectivos, cobertura y reloj explícitos en src/cli_agent_orchestrator/services/admission_resources.py y test/services/test_admission_resources.py.
+- [x] T005 [US1] Implementar observaciones de host/cgroup con límites efectivos, cobertura y reloj explícitos en src/cli_agent_orchestrator/services/admission_resources.py y test/services/test_admission_resources.py.
 - [ ] T006 [US1] Añadir política validada próxima-lectura, retención de última válida y muestreo acotado de presión PostgreSQL en src/cli_agent_orchestrator/services/settings_service.py, config_service.py y admission_resources.py; probar tipos, caducidad y falta de visibilidad.
 - [ ] T007 [US1] Conectar ciclo de observación/política al dueño local con reducción inmediata, recuperación estable y cierre en src/cli_agent_orchestrator/services/delivery_admission.py y test/services/test_delivery_admission.py.
 
@@ -54,3 +54,5 @@ T001→T002→T003→T004. T005/T006 permitenT007; T007→T008→T009→T010 com
 Los hitos se informan por separado. Ninguna casilla documental acredita implementación. Los valores de presupuesto de fixtures son escenarios y no constantes de capacidad del producto.
 
 T003/T004 checkpoint: políticaRED41fallos esperados; siguiente intento41políticaPASS/16reservasRED; actualGREEN59/59sin errores ni omisiones, fuente y soporte conservados (39.81s pytest). Revisión Codex de aritmética, estado físico y generación sin bloqueos. Son primitivas puras todavía sin conexión a InboxService; no acreditanM1/M2/M3. Estas pruebas usan el marcador existente offline_database porque no acceden a SQL; la aceptación nativa y sus prerrequisitos permanecen sin cambios. Recibos privados: /home/felni/.cache/caos-spec041-20261030.
+
+T005 checkpoint: observadorLinux/cgroupv2 implementado con cobertura explícita. La revisión encontró tres fronteras incorrectas y se reprodujeron4fallos antes de corregir: archivos no-root en raíz real, namespace parcial atribuido como completo, y margen aplicado después de mínimos independientes. La selección final pasa93/93, tipos en3módulos y composición5/0; revisión Codex final sin bloqueos en el alcance. La sondaLinux real lee CPU/memoria pero mantiene cobertura parcial por almacenamiento y jerarquía no verificados, sin conceder admisión. Solo un bootstrap de confianza puede atestiguar jerarquía/raíz; esa integración sigue enT006/T007. Sin conexión al consumidor ni aceptaciónM1/M2/M3.
