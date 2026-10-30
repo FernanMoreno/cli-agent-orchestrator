@@ -1,0 +1,34 @@
+{
+  "schema": "caos.temporary-namespace-correction.v1",
+  "global_acceptance": false,
+  "base_head": "725bf28045590e6f9a896e725f45a32d819334a6",
+  "workers": 8,
+  "final": {
+    "exit_code": 0,
+    "seconds": 225.607,
+    "cases": {
+      "total": 304,
+      "failure": 0,
+      "error": 0,
+      "skipped": 2
+    },
+    "source_preserved": true
+  },
+  "actual_testcases_passed": 302,
+  "case_insensitive_filesystem_skips": 2,
+  "reproduced_controls": {
+    "failed": 2,
+    "passed": 7
+  },
+  "original_vault_failed_events": 183,
+  "vault_after_correction": {
+    "passed": 181,
+    "unchanged_platform_skips": 2
+  },
+  "production_python_changed": false,
+  "native_ipc_and_docker_and_restart_selection_passed": true,
+  "original_full8_loaded_nfr_still_open": true,
+  "private_receipt_sha256": "sha256:56951b66d5b8616151a6388eb6765c4f8dfddc0c64e884a7343ee15dc8ed7763",
+  "actual_candidate_archive_sha256": "sha256:d2505f3697a1b077d5f21d506a423165d444c9d7c36363cd9441e8ae8d97d1c3",
+  "actual_candidate_patch_sha256": "sha256:0a2dee647f3a2ad64a9b09f90adf66daa6daed26c6d42fcfd1369f0e314e9e94"
+}

@@ -30,7 +30,7 @@ class OwnedPytestTemp:
 
     @property
     def basetemp(self) -> Path:
-        return self.root / "b"
+        return self.tmpdir / "b"
 
     def metadata(self) -> dict:
         info = _private_directory(self.root)

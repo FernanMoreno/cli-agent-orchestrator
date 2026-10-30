@@ -663,7 +663,7 @@ def test_legacy_assign_child_receipt_survives_server_restart(
             current_server,
             parent_id,
             child_id,
-            expected_states={"sent", "running"},
+            expected_states={"running"},
         )
         assert before_restart["parent_terminal_id"] == parent_id
         assert before_restart["state"] in {"sent", "running"}

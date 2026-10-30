@@ -579,3 +579,8 @@ T136 measured2first-load import calls within the original store body: memory_sco
 ### T138–T144 global failure corrections
 
 The actual T137 full8 run fails140calls/55setups with21438passed/256skipped and86.9212376768236%coverage against87%. Retain original records and samePG0/0/0/source integrity. Correct confirmed launcher/fixture/configuration boundaries without relaxing domain, ownership, transport, authorization, coverage or timing assertions. Unix socket tests need short owner-only TMPDIR and pytest basetemp; retain exact failed artefacts. Do not use a cached installation that lacks isolated callback modules. CAO metadata fixtures must use PostgreSQL; OpenCode-owned read-only stores remain upstream SQLite. Explicit Docker context must be verified before any engine probe even when DOCKER_HOST is inherited.
+
+
+### T145 temporary namespace containment
+
+The actual T138 full8 report contains183Vault failures/errors before the fixture creates a vault: basetemp is a sibling of TMPDIR, while the existing fixture requires its target beneath tempfile.gettempdir(). Correct the shared launcher helper so pytest basetemp is inside its stable private TMPDIR. Preserve root ownership/inode checks, fresh per-process namespaces, Unix socket budget, original arguments and the Vault fixture's confinement/symlink/nonempty checks. Reproduce with the actual fresh child environment before correction; validate both Vault consumers and native IPC consumers afterward. Full8 coverage87.09320267134663% passes, but loadedNFR1.377081821s and the remaining functional incidents remain open.

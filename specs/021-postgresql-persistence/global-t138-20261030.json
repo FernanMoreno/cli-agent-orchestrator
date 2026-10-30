@@ -1,0 +1,74 @@
+{
+  "schema": "caos.global-gate-outcome.v1",
+  "date": "2026-10-30",
+  "source_head": "725bf28045590e6f9a896e725f45a32d819334a6",
+  "source_tree_sha256": "sha256:6abb0b89ed17ab2640a2de9c4f48edff65868c2bb64068dcb650224a8d9c3b81",
+  "global_acceptance": false,
+  "cold_runs": [
+    {
+      "name": "cold-r1",
+      "exit_code": 0,
+      "original_asserted_seconds": 0.9513332109781913
+    },
+    {
+      "name": "cold-r2",
+      "exit_code": 0,
+      "original_asserted_seconds": 0.9444286359939724
+    },
+    {
+      "name": "cold-r3",
+      "exit_code": 0,
+      "original_asserted_seconds": 0.9637554700020701
+    }
+  ],
+  "backend": {
+    "workers": 8,
+    "distribution": "loadfile",
+    "unfiltered": true,
+    "counts": {
+      "passed": 21456,
+      "skipped": 254,
+      "failure": 187,
+      "error": 6
+    },
+    "seconds": 3160.49,
+    "coverage_percent": 87.09320267134663,
+    "required_coverage_percent": 87,
+    "loaded_nfr_seconds": 1.3770818209741265
+  },
+  "comparison": {
+    "prior_failed_error_events": 195,
+    "current_failed_error_events": 193,
+    "prior_unique_failed_cases": 195,
+    "current_unique_failed_cases": 193,
+    "prior_failed_cases_not_failing_now": 193,
+    "persistent_failed_nodeids": [
+      "test/services/test_memory_service_index_roundtrip.py::test_roundtrip_runs_under_one_second",
+      "test/live_provider/test_scoped_discovery_mock_api.py::test_owned_mock_api_fixture_has_real_peer_and_decoys"
+    ],
+    "new_failed_cases": 191,
+    "same_vault_temporary_containment_events": 183,
+    "remaining_non_vault_events": 10,
+    "scope": "actual completed full8 source725bf280; no final backend acceptance"
+  },
+  "closure": {
+    "exit_code": 1,
+    "seconds": 3519.604,
+    "after": {
+      "clients": 0,
+      "databases": 0,
+      "test_roles": 0
+    },
+    "operational_descriptor_closed": true,
+    "executed_and_support_bytes_preserved": true,
+    "source_tree_preserved": true,
+    "postgres_container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86"
+  },
+  "downstream_apps_ratchet_web_types": "NOT_RUN_AFTER_BACKEND_FAILURE",
+  "private_receipts": {
+    "stage_receipt": "sha256:6b4199563d1754bedab6699b67b796c35c2e24a9532f1ab4a81df7007d9b49ea",
+    "junit": "sha256:a2d4790718d97af89f67389e1ff72c1f3ec526d514adb76b8e7f099856f7b980",
+    "closure": "sha256:6e31a8dc5f6cc1556158e5e5d095fdd8390ec1db8da60d89a3d6af0b49131bb2",
+    "failure_inventory": "sha256:bc3f4b2ba4a7c416101b9d783020768cc15f3719ee2d02d3d97236aa4fbe553e"
+  }
+}
