@@ -1,0 +1,69 @@
+# Admisión dinámica y capacidad distribuida — Implementation Plan
+
+**Branch**: `main` | **Date**: 2026-10-30 | **Spec**: [spec.md](spec.md)
+
+**Goal**: Sustituir techos locales de despacho por reservas según recursos, coordinar dominios compartidos y distribuir encargos nuevos sin alterar autoridad, orden o recuperación.
+
+**Architecture**: Separar política pura, observación de recursos y dueño de reservas. M1 aplica la misma admisión a los caminos locales conservando exclusión por receptor y contabilización hasta el fin físico. M2 añade reservas PostgreSQL por dominio y encarnación; M3 conecta ese contrato a asignaciones elásticas ordinarias nuevas, sin migrar terminales ni desviar Work.
+
+**Tech Stack**: Python del proyecto, asyncio y threading existentes, PostgreSQL mediante sus adaptadores actuales, pytest y herramientas de composición actuales. Sin dependencias globales ni SQLite.
+
+## Global Constraints
+
+- Preservar deadlines, auditorías, permisos, orden por receptor, Context/registry de cada aviso y resultados inciertos.
+- Main es la única rama de integración. No tocar los doce artefactos Graphify preexistentes ni credenciales.
+- Una cancelación de awaiter no acredita fin de hilo/proceso/conexión. Reservas activas o inciertas siguen contadas.
+- M1 no completa M2/M3; una configuración variable o una prueba con20/32 agentes no acredita crecimiento ilimitado.
+- Los tamaños de prueba y los presupuestos de máquina no son techos globales del producto.
+
+## Technical Context
+
+Servicio API y proveedores locales/remotos existentes. InboxService mantiene hoy un consumidor con4slots y dos barridos con ejecutores propios; las llamadas directas son otra entrada. Un budget por cada entrada duplicaría capacidad. El pool auditado tiene su límite físico4 y checkout2s independientes: no se eleva para esconder presión. No existe un anuncio genérico de capacidad ni una reserva multinodo reutilizable.
+
+Los datos durables y la identidad de efectos siguen en PostgreSQL. Las observaciones locales son transitorias y jamás autorizan ni completan trabajo. Todo estado futuro de reserva recuperable M2 debe persistirse allí.
+
+## Constitution Check
+
+Inspección git y conocimiento: completados. Spec aprobada por el usuario; planificación y tareas antes de código. Graphify histórico consultado, relaciones contrastadas con fuente; se conserva sin regenerar los artefactos ajenos. Cada cambio usa RED/GREEN, comprobaciones de composición, revisión y evidencia de alcance. Sin excepciones a autorización ni modificaciones de credenciales.
+
+## Project Structure
+
+- `services/admission_policy.py`: modelos inmutables y decisión pura de capacidad; no I/O ni autoridad.
+- `services/admission_resources.py`: observaciones de host/cgroup y presión PostgreSQL con antigüedad y fallos explícitos.
+- `services/delivery_admission.py`: dueño común de reservas, drenaje, exclusión y estadísticas estructuradas locales.
+- `services/inbox_service.py`: consumidor, barridos y llamadas directas usan ese dueño; no generan capacidad adicional.
+- `services/settings_service.py`, `services/config_service.py`: política validada, próxima lectura y retención de última política válida.
+- `clients/admission_repository.py` y migración PostgreSQL: reservas y dominios compartidos M2, independientes del dueño de Work.
+- `services/elastic_assignment_service.py`: preparación/reserva confirmadas antes del primer efecto de colocación M3.
+- `test/services/test_admission_policy.py`, `test/services/test_delivery_admission.py`, `test/services/test_admission_resources.py`: controles puros, físicos y de cancelación.
+- Pruebas de integración en `test/integration/test_inbox_resource_admission.py`, `test/postgres/test_admission_reservations.py`, `test/integration/test_elastic_capacity_admission.py`.
+
+## Milestones and Interfaces
+
+### M1 — Política y dueño local
+
+`AdmissionPolicy` contiene costes estimados por entrega, margen de memoria/CPU/almacenamiento, frescura y estabilización. `CapacityObservation` expresa unidades disponibles con instante monotónico y cobertura. `evaluate_capacity(policy, observation, now)` devuelve `AdmissionDecision(available_slots, reason, constraints)` sin efectos. Se rechazan bools, NaN, infinitos, cantidades negativas y muestras del futuro/caducadas. Desconocido significa admisión cerrada, no capacidad infinita.
+
+La decisión expresa nuevas unidades disponibles en una observación; el dueño no puede volver a gastar una misma observación al cambiar el número de reservas. El dueño local reserva antes de enviar trabajo a un executor; cada reserva diferencia reservada, iniciada y liberada. Solo una cancelación antes de iniciar puede liberar la reserva sin fin físico. Se permiten disminuciones bajo consumo activo con deuda explícita; no nuevas admisiones hasta recuperar margen. Reservas por receptor son únicas. La política aplica a todo el conjunto de entradas, no uno por consumidor.
+
+Las medidas de CPU deben considerar afinidad/cuotas efectivas y presión; memoria debe considerar host y límites efectivos de cgroup, sin duplicar un dominio. El muestreo de PostgreSQL no consulta contenido de mensajes ni omite auditoría de operaciones funcionales. La instrumentación tiene su propio tiempo/acceso acotados y no se ejecuta por mensaje.
+
+### M2 — Dominios compartidos
+
+Cada dominio tiene identidad, encarnación, presupuesto y revisión. La reserva atómica conjunta incluye consumos de Work cuando comparten recursos, sin cambiar su dueño. Cierres inciertos y nodos perdidos no liberan por mera expiración. Una generación antigua no puede liberar reservas nuevas. Competencia entre dos procesos y fallos en adquisición/cierre son controles nativos obligatorios.
+
+### M3 — Colocación autorizada
+
+El dueño del intento durable de asignación elástica ordinaria selecciona un destino compatible con observación fresca y reserva confirmada. Infraestructura creada no es trabajador listo. Se comprueban preparación, identidad y autoridad antes del primer envío; incertidumbre posterior usa el contrato de conciliación existente. Work y terminales ya ubicados no se redirigen por esa ruta.
+
+## Validation Manifest
+
+Antes de aceptación real se congela un manifiesto con memoria en bytes, CPU en unidades normalizadas, presión de almacenamiento y plazos en segundos. Para controles de política iniciales: muestra máxima3s, reserva de memoria20%, coste estimado64MiB por entrega y250millicores por entrega. Son estimaciones de consumo configurables que requieren contraste físico; no constantes de concurrencia. Una muestra aporta unidades de almacenamiento disponibles, no permisos ni una ampliación del pool auditado.
+
+Se verifica crecimiento por cambios de recursos y política a igual código; caída inmediata de admisión ante presión/desconocido, recuperación estable y deuda activa. Los controles usan reloj/observaciones deterministas, no sleeps. Los valores finales de muestreo y aceptación física se congelan en su propio manifiesto antes de ejecutarlos; sin él no se marca aceptación.
+
+M1 requiere regresiones de orden/contexto/sink/shutdown/barridos/API, observación de recursos y un recorrido real con presupuestos contrastados. M2 exige PostgreSQL real y dos coordinadores. M3 exige nodos de ejecución reales y un resultado correlacionado. Se conservan las muestras2/4/8/12/20/32 y fallos previos; no repetirlas sin cambio relevante.
+
+## Execution
+
+Seguir [tasks.md](tasks.md). Root es único escritor; investigadores/revisores Codex solo lectura. Pruebas nativas serializadas bajo dueño PostgreSQL verificado y memoria mínima6144MiB. Ejecutar composición después de pruebas y revisar diff; registrar conclusiones durables sin duplicar esta spec en el vault.
