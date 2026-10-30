@@ -7,6 +7,9 @@
 - CapacityObservation: instante monotónico, memoria disponible y límite efectivo en bytes, CPU disponible en millicores, capacidad de almacenamiento disponible en unidades, cobertura completa o desconocida. No contiene credenciales, permisos ni texto del usuario.
 - AdmissionDecision: nuevas unidades disponibles bajo esa observación, motivo fijo y valores por recurso. Una decisión no es una concesión de autoridad.
 - DeliveryReservation: identificador opaco, receptor/encarnación, estado reserved/started/released, generación del dueño y recursos reclamados. Una reserva iniciada solo se libera al terminar físicamente; una reducción permite deuda visible.
+- ResourceAmounts: cantidades enteras no negativas e inmutables de memoria en bytes, CPU en millicores y slots de almacenamiento. Cada lease conserva su huella original y sus componentes restantes; el dueño mantiene totales incrementales bajo un lock común, sin recorrer leases por admisión. La resta del ledger rechaza underflow.
+- Reconfiguración local: CAS sobre generación capturada antes del I/O; una configuración distinta invalida muestras y cancela handoffs sin iniciar, conservando costes de trabajo iniciado. Omitir un presupuesto conserva el existente. Una recarga idéntica conserva generación y muestras válidas.
+- Liberación por etapa: solo el lease iniciado y aún registrado puede liberar almacenamiento una vez. Memoria/CPU y exclusión del receptor permanecen hasta finish físico. El snapshot distingue operaciones activas, capacidad inicial, slots adicionales y deuda por cantidades; debt expresa el máximo de unidades equivalentes con el coste actual, no un conteo de operaciones. Desconocido/caducado mantiene todas las cantidades comprometidas como deuda sin cancelar trabajo activo.
 
 ## Prerrequisito M1: atestación del operador (T007)
 

@@ -226,3 +226,163 @@ def test_future_sample_cannot_poison_the_freshness_watermark():
     assert observe(owner, 1, at=10.0)
     lease = reserve(owner, "receiver")
     assert lease.cancel_before_start()
+
+
+def test_policy_reload_preserves_original_cost_and_operator_budget():
+    from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy, ResourceAmounts
+    from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
+
+    owner = DeliveryAdmission(AdmissionPolicy(), budget=ResourceAmounts(128 * MIB, 4000, 20))
+    observe(owner, 20)
+    old = [reserve(owner, str(i)) for i in range(2)]
+    assert all(lease.start() for lease in old)
+    previous = owner.generation
+    assert (
+        owner.reconfigure(
+            AdmissionPolicy(memory_per_delivery_bytes=32 * MIB), expected_generation=previous
+        )
+        == previous + 1
+    )
+    assert not observe(owner, 20, at=11.0, generation=previous)
+    assert observe(owner, 20, at=11.0)
+    assert owner.try_reserve("blocked", now=11.0).reservation is None
+    assert old[0].footprint.memory_bytes == 64 * MIB
+    assert old[0].finish()
+    new = [reserve(owner, str(i), now=11.0) for i in (2, 3)]
+    assert owner.snapshot(now=11.0).committed.memory_bytes == 128 * MIB
+    assert owner.try_reserve("overflow", now=11.0).reservation is None
+    assert all(lease.cancel_before_start() for lease in new)
+    assert old[1].finish()
+    assert owner.snapshot(now=11.0).committed == ResourceAmounts()
+
+
+def test_storage_stage_release_keeps_receiver_memory_and_cpu_until_finish():
+    from cli_agent_orchestrator.services.admission_policy import ResourceAmounts
+
+    owner = create()
+    observe(owner, 4)
+    first = [reserve(owner, str(i)) for i in range(4)]
+    assert not first[0].release_storage()
+    for lease in first:
+        assert lease.start()
+        assert lease.release_storage()
+        assert not lease.release_storage()
+    assert owner.try_reserve("0", now=10.0).reason == "receiver_busy"
+    second = [reserve(owner, str(i)) for i in range(4, 8)]
+    assert all(lease.start() for lease in second)
+    status = owner.snapshot(now=10.0)
+    assert (status.inflight, status.available_slots, status.debt) == (8, 0, 0)
+    assert status.committed == ResourceAmounts(512 * MIB, 2000, 4)
+    assert all(lease.finish() for lease in first + second)
+    replacement = reserve(owner, "0")
+    assert not first[0].release_storage()
+    assert owner.snapshot(now=10.0).committed == ResourceAmounts(64 * MIB, 250, 1)
+    assert replacement.cancel_before_start()
+
+
+def test_reconfigure_cancels_only_unstarted_and_rejects_stale_generation():
+    from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy, ResourceAmounts
+
+    owner = create()
+    observe(owner, 4)
+    running = reserve(owner, "running")
+    queued = reserve(owner, "queued")
+    assert running.start()
+    previous = owner.generation
+    policy = AdmissionPolicy(memory_per_delivery_bytes=32 * MIB)
+    assert owner.reconfigure(policy, expected_generation=previous) == previous + 1
+    assert not queued.start()
+    assert (
+        owner.reconfigure(AdmissionPolicy(), budget=ResourceAmounts(), expected_generation=previous)
+        is None
+    )
+    assert owner.snapshot(now=10.0).committed == ResourceAmounts(64 * MIB, 250, 1)
+    assert owner.try_reserve("new", now=10.0).reason == "unknown_capacity"
+    assert observe(owner, 4, at=11.0)
+    assert owner.snapshot(now=11.0).started == 1
+    assert running.finish()
+
+
+def test_budget_reduction_reports_quantity_debt_until_original_lease_finishes():
+    from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy, ResourceAmounts
+
+    owner = create()
+    observe(owner, 4)
+    lease = reserve(owner, "running")
+    assert lease.start()
+    owner.reconfigure(
+        AdmissionPolicy(memory_per_delivery_bytes=32 * MIB),
+        budget=ResourceAmounts(16 * MIB, 100, 0),
+        expected_generation=owner.generation,
+    )
+    observe(owner, 4, at=11.0)
+    status = owner.snapshot(now=11.0)
+    assert status.resource_debt == ResourceAmounts(48 * MIB, 150, 1)
+    assert status.debt == 2
+    assert status.available_slots == 0
+    assert lease.finish()
+    assert owner.snapshot(now=11.0).resource_debt == ResourceAmounts()
+
+
+def test_concurrent_stage_and_final_completion_release_each_quantity_exactly_once():
+    from threading import Barrier
+
+    from cli_agent_orchestrator.services.admission_policy import ResourceAmounts
+
+    owner = create()
+    observe(owner, 4)
+    leases = [reserve(owner, str(i)) for i in range(4)]
+    assert all(lease.start() for lease in leases)
+    barrier = Barrier(8)
+
+    def complete(lease, storage):
+        barrier.wait(timeout=10)
+        return lease.release_storage() if storage else lease.finish()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [
+            pool.submit(complete, lease, storage) for lease in leases for storage in (True, False)
+        ]
+        results = [future.result(timeout=10) for future in futures]
+    assert all(results[i] for i in (1, 3, 5, 7))
+    assert owner.snapshot(now=10.0).committed == ResourceAmounts()
+    assert owner.snapshot(now=10.0).inflight == 0
+
+
+def test_identical_policy_reload_keeps_valid_sample_and_pending_handoffs():
+    from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy
+
+    owner = create()
+    observe(owner, 2)
+    lease = reserve(owner, "queued")
+    generation = owner.generation
+    assert owner.reconfigure(AdmissionPolicy(), expected_generation=generation) == generation
+    assert lease.start()
+    assert owner.snapshot(now=10.0).available_slots == 1
+    assert lease.finish()
+
+
+def test_concurrent_policy_updates_have_only_one_generation_winner():
+    from threading import Barrier
+
+    from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy
+
+    owner = create()
+    observe(owner, 4)
+    lease = reserve(owner, "running")
+    assert lease.start()
+    generation = owner.generation
+    barrier = Barrier(2)
+
+    def update(cost):
+        barrier.wait(timeout=10)
+        return owner.reconfigure(
+            AdmissionPolicy(memory_per_delivery_bytes=cost * MIB), expected_generation=generation
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(update, (16, 32)))
+    assert results.count(None) == 1
+    assert results.count(generation + 1) == 1
+    assert owner.snapshot(now=10.0).started == 1
+    assert lease.finish()

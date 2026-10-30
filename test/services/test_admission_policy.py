@@ -213,3 +213,47 @@ def test_domain_collections_are_immutable_validated_values():
         observation(memory_domains=[api.ResourceHeadroom(1024 * MIB, 1024 * MIB)])
     with pytest.raises(ValueError, match="immutable"):
         observation(cpu_domains=(object(),))
+
+
+@pytest.mark.parametrize("field", ["memory_bytes", "cpu_millicores", "storage_slots"])
+@pytest.mark.parametrize("value", [True, -1, 0.5, None])
+def test_resource_amounts_reject_invalid_quantities(field, value):
+    with pytest.raises(ValueError):
+        module().ResourceAmounts(**{field: value})
+
+
+def test_operator_allowance_is_applied_after_physical_safety_margin():
+    api = module()
+    allowance = api.ResourceAmounts(64 * MIB, 250, 1)
+    decision = api.evaluate_capacity(
+        api.AdmissionPolicy(), observation(), now=10.0, budget=allowance
+    )
+    assert decision.available_slots == 1
+    assert decision.resource_capacity == allowance
+    assert decision.resource_debt == api.ResourceAmounts()
+    exhausted = api.evaluate_capacity(
+        api.AdmissionPolicy(), observation(), now=10.0, budget=allowance, committed=allowance
+    )
+    assert exhausted.available_slots == 0
+    assert exhausted.resource_debt == api.ResourceAmounts()
+
+
+def test_unavailable_observation_keeps_all_committed_quantities_visible_as_debt():
+    api = module()
+    committed = api.ResourceAmounts(64 * MIB, 250, 1)
+    for sample, now in ((observation(), 14.0), (observation(coverage="partial"), 10.0)):
+        decision = api.evaluate_capacity(
+            api.AdmissionPolicy(), sample, now=now, committed=committed
+        )
+        assert decision.available_slots == 0
+        assert decision.resource_debt == committed
+
+
+def test_resource_amount_arithmetic_cannot_underflow_or_mutate_a_footprint():
+    api = module()
+    footprint = api.ResourceAmounts(1, 2, 3)
+    with pytest.raises(FrozenInstanceError):
+        footprint.storage_slots = 0
+    with pytest.raises(ValueError):
+        api.ResourceAmounts() - footprint
+    assert footprint + api.ResourceAmounts() == footprint

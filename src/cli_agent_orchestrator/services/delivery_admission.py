@@ -10,6 +10,7 @@ from cli_agent_orchestrator.services.admission_policy import (
     AdmissionPolicy,
     CapacityObservation,
     CapacityReason,
+    ResourceAmounts,
     evaluate_capacity,
     validate_clock,
 )
@@ -36,16 +37,26 @@ class AdmissionSnapshot:
     debt: int
     reason: AdmissionReason
     sample_age_s: float | None
+    committed: ResourceAmounts
+    resource_debt: ResourceAmounts
 
 
 class DeliveryReservation:
     """A handoff can be cancelled only before one physical worker starts it."""
 
-    def __init__(self, owner: "DeliveryAdmission", key: int, receiver: str):
+    def __init__(
+        self, owner: "DeliveryAdmission", key: int, receiver: str, footprint: ResourceAmounts
+    ):
         self._owner = owner
         self._key = key
         self._receiver = receiver
         self._state: ReservationState = "reserved"
+        self._footprint = footprint
+        self._remaining = footprint
+
+    @property
+    def footprint(self) -> ResourceAmounts:
+        return self._footprint
 
     @property
     def state(self) -> ReservationState:
@@ -80,6 +91,21 @@ class DeliveryReservation:
                 raise RuntimeError("delivery reservation has not started")
             return self._owner._release_locked(self)
 
+    def release_storage(self) -> bool:
+        """Physical storage-stage completion, never cancellation of its awaiter."""
+        owner = self._owner
+        with owner._guard:
+            if (
+                self._state != "started"
+                or owner._leases.get(self._key) is not self
+                or not self._remaining.storage_slots
+            ):
+                return False
+            released = ResourceAmounts(storage_slots=self._remaining.storage_slots)
+            owner._committed = owner._committed - released
+            self._remaining = self._remaining - released
+            return True
+
 
 class DeliveryAdmission:
     """One ledger shared by local entry paths; not a cluster reservation.
@@ -89,8 +115,11 @@ class DeliveryAdmission:
     Re-evaluating an old sample cannot add its capacity to this ledger again.
     """
 
-    def __init__(self, policy: AdmissionPolicy):
+    def __init__(self, policy: AdmissionPolicy, *, budget: ResourceAmounts | None = None):
+        self._validate_configuration(policy, budget)
         self._policy = policy
+        self._budget = budget
+        self._committed = ResourceAmounts()
         self._guard = threading.RLock()
         self._leases: dict[int, DeliveryReservation] = {}
         self._receivers: dict[str, int] = {}
@@ -101,6 +130,47 @@ class DeliveryAdmission:
         self._observation: CapacityObservation | None = None
         self._decision = AdmissionDecision(0, "unknown_capacity")
 
+    @staticmethod
+    def _validate_configuration(policy: AdmissionPolicy, budget: ResourceAmounts | None) -> None:
+        if not isinstance(policy, AdmissionPolicy) or (
+            budget is not None and not isinstance(budget, ResourceAmounts)
+        ):
+            raise ValueError("admission configuration must use validated policy and amounts")
+
+    def reconfigure(
+        self,
+        policy: AdmissionPolicy,
+        *,
+        expected_generation: int,
+        budget: ResourceAmounts | None = None,
+    ) -> int | None:
+        """Fence old I/O and retire handoffs; running costs remain unchanged.
+
+        Omitting a budget retains the current allowance, never removes it.
+        The caller must capture expected_generation before configuration I/O.
+        """
+        self._validate_configuration(policy, budget)
+        if (
+            isinstance(expected_generation, bool)
+            or not isinstance(expected_generation, int)
+            or expected_generation < 0
+        ):
+            raise ValueError("generation must be a nonnegative integer")
+        with self._guard:
+            if not self._accepting or expected_generation != self._generation:
+                return None
+            candidate_budget = self._budget if budget is None else budget
+            if policy == self._policy and candidate_budget == self._budget:
+                return self._generation
+            self._policy = policy
+            self._budget = candidate_budget
+            self._generation += 1
+            self._observation = None
+            for lease in tuple(self._leases.values()):
+                if lease._state == "reserved":
+                    self._release_locked(lease)
+            return self._generation
+
     @property
     def generation(self) -> int:
         with self._guard:
@@ -110,10 +180,10 @@ class DeliveryAdmission:
         validate_clock(now)
         if isinstance(generation, bool) or not isinstance(generation, int):
             raise ValueError("generation must be an integer")
-        decision = evaluate_capacity(self._policy, observation, now=now)
         with self._guard:
             if not self._accepting or generation != self._generation:
                 return False
+            decision = evaluate_capacity(self._policy, observation, now=now, budget=self._budget)
             if decision.reason == "future_observation":
                 # A corrupt future timestamp must not block later valid samples.
                 return False
@@ -126,11 +196,14 @@ class DeliveryAdmission:
             self._decision = decision
             return True
 
-    def _current_decision(self, now: float) -> AdmissionDecision:
+    def _current_decision(self, now: float, *, charged: bool = True) -> AdmissionDecision:
+        committed = self._committed if charged else ResourceAmounts()
         if self._observation is None:
-            return AdmissionDecision(0, "unknown_capacity")
+            return AdmissionDecision(0, "unknown_capacity", resource_debt=committed)
         # Re-evaluation only checks time/coverage; never adds to an old budget.
-        return evaluate_capacity(self._policy, self._observation, now=now)
+        return evaluate_capacity(
+            self._policy, self._observation, now=now, committed=committed, budget=self._budget
+        )
 
     def try_reserve(self, receiver: str, *, now: float) -> AdmissionAttempt:
         validate_clock(now)
@@ -144,10 +217,14 @@ class DeliveryAdmission:
             decision = self._current_decision(now)
             if not decision.available_slots:
                 return AdmissionAttempt(None, decision.reason)
-            if len(self._leases) >= decision.available_slots:
-                return AdmissionAttempt(None, "resource_exhausted")
             key = next(self._sequence)
-            lease = DeliveryReservation(self, key, receiver)
+            footprint = ResourceAmounts(
+                self._policy.memory_per_delivery_bytes,
+                self._policy.cpu_per_delivery_millicores,
+                1,
+            )
+            lease = DeliveryReservation(self, key, receiver, footprint)
+            self._committed = self._committed + footprint
             self._leases[key] = lease
             self._receivers[receiver] = key
             return AdmissionAttempt(lease, "capacity_available")
@@ -157,6 +234,8 @@ class DeliveryAdmission:
             return False
         if lease._state == "started":
             self._started -= 1
+        self._committed = self._committed - lease._remaining
+        lease._remaining = ResourceAmounts()
         self._leases.pop(lease._key)
         if self._receivers.get(lease._receiver) == lease._key:
             self._receivers.pop(lease._receiver)
@@ -183,13 +262,16 @@ class DeliveryAdmission:
         validate_clock(now)
         with self._guard:
             decision = self._current_decision(now)
-            limit = decision.available_slots if self._accepting else 0
+            limit = (
+                self._current_decision(now, charged=False).available_slots if self._accepting else 0
+            )
             inflight = len(self._leases)
             reason: AdmissionReason = decision.reason
             if not self._accepting:
                 reason = "stopping"
-            elif limit > 0 and inflight >= limit:
-                reason = "resource_exhausted"
+            debt = decision.resource_debt
+            if not self._accepting:
+                debt = self._committed
             age = now - self._observation.observed_at if self._observation else None
             return AdmissionSnapshot(
                 accepting=self._accepting,
@@ -198,8 +280,16 @@ class DeliveryAdmission:
                 reserved=inflight - self._started,
                 started=self._started,
                 limit=limit,
-                available_slots=max(0, limit - inflight),
-                debt=max(0, inflight - limit),
+                available_slots=decision.available_slots if self._accepting else 0,
+                debt=max(
+                    (debt.memory_bytes + self._policy.memory_per_delivery_bytes - 1)
+                    // self._policy.memory_per_delivery_bytes,
+                    (debt.cpu_millicores + self._policy.cpu_per_delivery_millicores - 1)
+                    // self._policy.cpu_per_delivery_millicores,
+                    debt.storage_slots,
+                ),
                 reason=reason,
                 sample_age_s=age if age is not None and age >= 0 else None,
+                committed=self._committed,
+                resource_debt=debt,
             )

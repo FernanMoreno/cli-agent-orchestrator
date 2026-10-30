@@ -35,6 +35,41 @@ def validate_clock(value: float, *, positive: bool = False) -> None:
 
 
 @dataclass(frozen=True)
+class ResourceAmounts:
+    """Immutable quantities, independent of the current per-delivery estimate."""
+
+    memory_bytes: int = 0
+    cpu_millicores: int = 0
+    storage_slots: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("memory_bytes", "cpu_millicores", "storage_slots"):
+            _integer(name, getattr(self, name))
+
+    def __add__(self, other: "ResourceAmounts") -> "ResourceAmounts":
+        return ResourceAmounts(
+            self.memory_bytes + other.memory_bytes,
+            self.cpu_millicores + other.cpu_millicores,
+            self.storage_slots + other.storage_slots,
+        )
+
+    def __sub__(self, other: "ResourceAmounts") -> "ResourceAmounts":
+        # A negative ledger is an invariant failure, never silently clamped.
+        return ResourceAmounts(
+            self.memory_bytes - other.memory_bytes,
+            self.cpu_millicores - other.cpu_millicores,
+            self.storage_slots - other.storage_slots,
+        )
+
+    def excess_over(self, capacity: "ResourceAmounts") -> "ResourceAmounts":
+        return ResourceAmounts(
+            max(0, self.memory_bytes - capacity.memory_bytes),
+            max(0, self.cpu_millicores - capacity.cpu_millicores),
+            max(0, self.storage_slots - capacity.storage_slots),
+        )
+
+
+@dataclass(frozen=True)
 class AdmissionPolicy:
     """Configurable consumption estimates and reserves, not a worker ceiling."""
 
@@ -135,26 +170,37 @@ class AdmissionDecision:
     reason: CapacityReason
     resource_limits: tuple[tuple[str, int], ...] = ()
     limiting_resources: tuple[str, ...] = ()
+    resource_capacity: ResourceAmounts = ResourceAmounts()
+    resource_debt: ResourceAmounts = ResourceAmounts()
 
 
-def _available_units(available: int, limit: int, reserve_percent: int, cost: int) -> int:
+def _available_units(available: int, limit: int, reserve_percent: int) -> int:
     # Ceil the safety reserve using integers: float rounding cannot mint a unit.
     reserve = (limit * reserve_percent + 99) // 100
-    return max(0, available - reserve) // cost
+    return max(0, available - reserve)
 
 
 def evaluate_capacity(
-    policy: AdmissionPolicy, observation: CapacityObservation, *, now: float
+    policy: AdmissionPolicy,
+    observation: CapacityObservation,
+    *,
+    now: float,
+    committed: ResourceAmounts = ResourceAmounts(),
+    budget: ResourceAmounts | None = None,
 ) -> AdmissionDecision:
     """Derive capacity without I/O, cancellation, persistence or identity claims."""
     validate_clock(now)
+    if not isinstance(committed, ResourceAmounts) or (
+        budget is not None and not isinstance(budget, ResourceAmounts)
+    ):
+        raise ValueError("resource quantities must be validated amounts")
     age = now - observation.observed_at
     if age < 0:
-        return AdmissionDecision(0, "future_observation")
+        return AdmissionDecision(0, "future_observation", resource_debt=committed)
     if age > policy.max_sample_age_s:
-        return AdmissionDecision(0, "stale_observation")
+        return AdmissionDecision(0, "stale_observation", resource_debt=committed)
     if observation.coverage != "known":
-        return AdmissionDecision(0, "unknown_capacity")
+        return AdmissionDecision(0, "unknown_capacity", resource_debt=committed)
     # Known observations are validated at construction; narrow optional fields.
     assert observation.memory_available_bytes is not None
     assert observation.memory_limit_bytes is not None
@@ -167,32 +213,28 @@ def evaluate_capacity(
     cpu_domains = observation.cpu_domains or (
         ResourceHeadroom(observation.cpu_available_millicores, observation.cpu_limit_millicores),
     )
+    capacity = ResourceAmounts(
+        min(
+            _available_units(d.available_units, d.limit_units, policy.memory_reserve_percent)
+            for d in memory_domains
+        ),
+        min(
+            _available_units(d.available_units, d.limit_units, policy.cpu_reserve_percent)
+            for d in cpu_domains
+        ),
+        observation.storage_available_slots,
+    )
+    if budget is not None:
+        capacity = ResourceAmounts(
+            min(capacity.memory_bytes, budget.memory_bytes),
+            min(capacity.cpu_millicores, budget.cpu_millicores),
+            min(capacity.storage_slots, budget.storage_slots),
+        )
+    remaining = capacity.excess_over(committed)
     limits = (
-        (
-            "memory",
-            min(
-                _available_units(
-                    domain.available_units,
-                    domain.limit_units,
-                    policy.memory_reserve_percent,
-                    policy.memory_per_delivery_bytes,
-                )
-                for domain in memory_domains
-            ),
-        ),
-        (
-            "cpu",
-            min(
-                _available_units(
-                    domain.available_units,
-                    domain.limit_units,
-                    policy.cpu_reserve_percent,
-                    policy.cpu_per_delivery_millicores,
-                )
-                for domain in cpu_domains
-            ),
-        ),
-        ("storage", observation.storage_available_slots),
+        ("memory", remaining.memory_bytes // policy.memory_per_delivery_bytes),
+        ("cpu", remaining.cpu_millicores // policy.cpu_per_delivery_millicores),
+        ("storage", remaining.storage_slots),
     )
     available = min(value for _, value in limits)
     return AdmissionDecision(
@@ -200,4 +242,6 @@ def evaluate_capacity(
         "capacity_available" if available else "resource_exhausted",
         limits,
         tuple(name for name, value in limits if value == available),
+        capacity,
+        committed.excess_over(capacity),
     )

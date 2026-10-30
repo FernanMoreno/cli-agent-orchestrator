@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-30",
+  "scope": "T008 immutable weighted local ledger and physical storage-stage release; monitor/consumer not wired",
+  "status": "PASS_COMPONENT_CHECKPOINT_T008_OPEN",
+  "base_head": "033994d109a4c5524690fe7d5fef7dcf1dd2c210",
+  "tests": {
+    "total": 266,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "by_module": {
+      "test.services.test_delivery_admission": 25,
+      "test.services.test_admission_policy": 63,
+      "test.services.test_admission_resources": 27,
+      "test.services.test_admission_postgres": 25,
+      "test.services.test_admission_settings": 38,
+      "test.services.test_admission_bootstrap": 46,
+      "test.postgres.test_admission_bootstrap": 40,
+      "test.postgres.test_admission_pressure": 2
+    },
+    "pytest_seconds": 60.48,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t008-ledger-expanded/t008-ledger-expanded/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    }
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t008-ledger-red",
+      "result": "4FAIL18PASS46.31s: missing ResourceAmounts/reconfigure/release_storage APIs"
+    },
+    {
+      "phase": "t008-ledger-green",
+      "result": "70PASS41.84s: initial components"
+    }
+  ],
+  "checks": {
+    "types": "PASS2sourcefiles",
+    "black_isort": "PASS4files",
+    "composition": {
+      "files": 430,
+      "dependencies": 1892,
+      "kept": 5,
+      "broken": 0
+    },
+    "independent_review": "Codex nfr_remaining_cost_read PASS arithmetic/lifecycle; no tests run by reviewer",
+    "diff_review": "PASS scoped source and tests; no unrelated changes staged"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "source_sha256": {
+    "src/cli_agent_orchestrator/services/admission_policy.py": "c352a2dde26cf3e49a4f8faf64a7d89e005f66ff03bd890f5fc008fabbb31a72",
+    "src/cli_agent_orchestrator/services/delivery_admission.py": "e4d109cce96ec6f017f3ebae903d54834dc568298739f781928ef8767ae52d77",
+    "test/services/test_admission_policy.py": "1906bc65b11cf22bd6e20c83a614dfd435027830e121b353e6d18dbbe89d0b83",
+    "test/services/test_delivery_admission.py": "b09ef8ecd7c18aad88ea267b472f7e2fe90195b016c9c116fa0b0e2ab1e8b0ea"
+  },
+  "graphify": {
+    "refresh": "deferred: generated graph files have preexisting foreign edits; source verified; no new mutating graph commands",
+    "known_prior_side_effect": "Earlier root query changed only cache/last_query_stamp; 11 other baseline tracked hashes preserved"
+  },
+  "acceptance": {
+    "T008_complete": false,
+    "monitor_connected": false,
+    "consumer_fixed_four_replaced": false,
+    "M1": false,
+    "M2": false,
+    "M3": false
+  },
+  "remaining": [
+    "Observation lifecycle and resource hysteresis",
+    "Fresh authority/view validation around resource I/O",
+    "Persistent sampler uncertainty across policy reload",
+    "Common consumer integration and operational enrollment",
+    "Shared domain reservations and real multi-node placement"
+  ]
+}
