@@ -73,6 +73,7 @@ class DeliveryReservation:
             ):
                 return False
             self._state = "started"
+            owner._pending.pop(self._key)
             owner._started += 1
             return True
 
@@ -122,12 +123,14 @@ class DeliveryAdmission:
         self._committed = ResourceAmounts()
         self._guard = threading.RLock()
         self._leases: dict[int, DeliveryReservation] = {}
+        self._pending: dict[int, DeliveryReservation] = {}
         self._receivers: dict[str, int] = {}
         self._sequence = count()
         self._started = 0
         self._accepting = True
         self._generation = 0
         self._observation: CapacityObservation | None = None
+        self._observation_ceiling: ResourceAmounts | None = None
         self._decision = AdmissionDecision(0, "unknown_capacity")
 
     @staticmethod
@@ -166,20 +169,43 @@ class DeliveryAdmission:
             self._budget = candidate_budget
             self._generation += 1
             self._observation = None
-            for lease in tuple(self._leases.values()):
-                if lease._state == "reserved":
-                    self._release_locked(lease)
+            self._observation_ceiling = None
+            for lease in tuple(self._pending.values()):
+                self._release_locked(lease)
             return self._generation
+
+    def invalidate(self, *, expected_generation: int) -> bool:
+        """Discard authority/resource knowledge without retiring started work."""
+        if isinstance(expected_generation, bool) or not isinstance(expected_generation, int):
+            raise ValueError("generation must be an integer")
+        with self._guard:
+            if not self._accepting or expected_generation != self._generation:
+                return False
+            self._generation += 1
+            self._observation = None
+            self._observation_ceiling = None
+            for lease in tuple(self._pending.values()):
+                self._release_locked(lease)
+            return True
 
     @property
     def generation(self) -> int:
         with self._guard:
             return self._generation
 
-    def observe(self, observation: CapacityObservation, *, now: float, generation: int) -> bool:
+    def observe(
+        self,
+        observation: CapacityObservation,
+        *,
+        now: float,
+        generation: int,
+        ceiling: ResourceAmounts | None = None,
+    ) -> bool:
         validate_clock(now)
         if isinstance(generation, bool) or not isinstance(generation, int):
             raise ValueError("generation must be an integer")
+        if ceiling is not None and not isinstance(ceiling, ResourceAmounts):
+            raise ValueError("observation ceiling must use validated amounts")
         with self._guard:
             if not self._accepting or generation != self._generation:
                 return False
@@ -193,16 +219,36 @@ class DeliveryAdmission:
             ):
                 return False
             self._observation = observation
+            self._observation_ceiling = ceiling
             self._decision = decision
+            # Newest unstarted handoffs yield first under pressure. Started
+            # work is never scanned or retired by a resource observation.
+            if self._current_decision(now).resource_debt != ResourceAmounts():
+                for lease in reversed(tuple(self._pending.values())):
+                    self._release_locked(lease)
+                    if self._current_decision(now).resource_debt == ResourceAmounts():
+                        break
             return True
 
     def _current_decision(self, now: float, *, charged: bool = True) -> AdmissionDecision:
         committed = self._committed if charged else ResourceAmounts()
         if self._observation is None:
             return AdmissionDecision(0, "unknown_capacity", resource_debt=committed)
-        # Re-evaluation only checks time/coverage; never adds to an old budget.
+        budget = self._budget
+        if self._observation_ceiling is not None:
+            ceiling = self._observation_ceiling
+            budget = (
+                ceiling
+                if budget is None
+                else ResourceAmounts(
+                    min(budget.memory_bytes, ceiling.memory_bytes),
+                    min(budget.cpu_millicores, ceiling.cpu_millicores),
+                    min(budget.storage_slots, ceiling.storage_slots),
+                )
+            )
+        # Re-evaluation checks freshness and subtracts immutable committed costs.
         return evaluate_capacity(
-            self._policy, self._observation, now=now, committed=committed, budget=self._budget
+            self._policy, self._observation, now=now, committed=committed, budget=budget
         )
 
     def try_reserve(self, receiver: str, *, now: float) -> AdmissionAttempt:
@@ -226,6 +272,7 @@ class DeliveryAdmission:
             lease = DeliveryReservation(self, key, receiver, footprint)
             self._committed = self._committed + footprint
             self._leases[key] = lease
+            self._pending[key] = lease
             self._receivers[receiver] = key
             return AdmissionAttempt(lease, "capacity_available")
 
@@ -237,6 +284,7 @@ class DeliveryAdmission:
         self._committed = self._committed - lease._remaining
         lease._remaining = ResourceAmounts()
         self._leases.pop(lease._key)
+        self._pending.pop(lease._key, None)
         if self._receivers.get(lease._receiver) == lease._key:
             self._receivers.pop(lease._receiver)
         lease._state = "released"
@@ -245,9 +293,8 @@ class DeliveryAdmission:
     def stop_accepting(self) -> None:
         with self._guard:
             self._accepting = False
-            for lease in tuple(self._leases.values()):
-                if lease._state == "reserved":
-                    self._release_locked(lease)
+            for lease in tuple(self._pending.values()):
+                self._release_locked(lease)
 
     def start_accepting(self) -> None:
         with self._guard:
@@ -255,6 +302,7 @@ class DeliveryAdmission:
                 raise RuntimeError("active delivery reservations must drain before restart")
             self._generation += 1
             self._observation = None
+            self._observation_ceiling = None
             self._decision = AdmissionDecision(0, "unknown_capacity")
             self._accepting = True
 

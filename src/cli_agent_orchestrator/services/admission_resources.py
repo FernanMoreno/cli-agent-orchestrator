@@ -137,6 +137,10 @@ class LinuxResourceSampler:
         self._complete_hierarchy = complete_hierarchy
         self._root_is_host = root_is_host
 
+    def reset_history(self) -> None:
+        """Called by the single sampling owner after a gap or binding change."""
+        self._previous = None
+
     def _groups(self) -> tuple[tuple[Path, ...], bool]:
         unified = []
         for line in _text(self._proc / "self/cgroup").splitlines():
@@ -332,6 +336,8 @@ class LinuxResourceSampler:
                 (issue, *issues),
             )
         cpu_domains = self._cpu_domains(reading, self._previous)
+        if cpu_domains and self._previous is not None:
+            observed_at = min(observed_at, self._previous.at)
         cpu = min(domain.available_units for domain in cpu_domains) if cpu_domains else None
         self._previous = reading
         if cpu is None:

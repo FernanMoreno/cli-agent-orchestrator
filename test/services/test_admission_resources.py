@@ -85,7 +85,17 @@ def test_effective_memory_and_cpu_include_ancestors_and_usage(linux_files):
     assert sample.cpu_limit_millicores == 500
     assert sample.cpu_available_millicores == 400
     assert sample.storage_available_slots == 8
-    assert sample.observed_at == 11.0
+    assert sample.observed_at == 10.0  # CPU delta includes the previous reading.
+
+
+def test_reset_history_requires_a_new_comparable_cpu_reading(linux_files):
+    value, clock, _, _ = warmed(linux_files)
+    value.reset_history()
+    clock[0] = 12.0
+    sample = value.sample(storage=storage(12.0))
+    assert sample.observation.cpu_available_millicores is None
+    assert sample.observation.coverage == "partial"
+    assert "cpu_warming" in sample.issues
 
 
 def test_resources_can_grow_without_restarting_the_sampler(linux_files):

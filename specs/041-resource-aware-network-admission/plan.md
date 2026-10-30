@@ -53,7 +53,7 @@ La decisión expresa nuevas unidades disponibles en una observación; el dueño 
 
 Las medidas de CPU deben considerar afinidad/cuotas efectivas y presión; memoria debe considerar host y límites efectivos de cgroup, sin duplicar un dominio. El muestreo de PostgreSQL no consulta contenido de mensajes ni omite auditoría de operaciones funcionales. La instrumentación tiene su propio tiempo/acceso acotados y no se ejecuta por mensaje.
 
-T008 conservará una huella inmutable por reserva y totales incrementales de bytes, millicores y unidades de almacenamiento. Cambiar los costes no revaloriza el trabajo activo: se restan sus cantidades originales antes de convertir el headroom restante a unidades del coste nuevo. El presupuesto del operador limita las cantidades comprometidas, además de los márgenes físicos observados. Finalizar una etapa de almacenamiento permite liberar solo ese componente mientras memoria/CPU y exclusión del receptor permanecen hasta el fin físico. La deuda se expresa también por recurso; un total de operaciones activas puede superar las unidades de arranque disponibles sin deuda cuando varias terminaron ya su etapa de almacenamiento. No se recorre el conjunto de leases por cada admisión.
+T008 conserva una huella inmutable por reserva y totales incrementales de bytes, millicores y unidades de almacenamiento. Cambiar los costes no revaloriza el trabajo activo: se restan sus cantidades originales antes de convertir el headroom restante a unidades del coste nuevo. El presupuesto del operador limita las cantidades comprometidas, además de los márgenes físicos observados. Finalizar una etapa de almacenamiento permite liberar solo ese componente mientras memoria/CPU y exclusión del receptor permanecen hasta el fin físico. La deuda se expresa también por recurso; un total de operaciones activas puede superar las unidades de arranque disponibles sin deuda cuando varias terminaron ya su etapa de almacenamiento. No se recorre el conjunto de leases por cada admisión.
 
 ### Prerrequisito de confianza para M1
 
@@ -84,3 +84,9 @@ M1 requiere regresiones de orden/contexto/sink/shutdown/barridos/API, observaci�
 ## Execution
 
 Seguir [tasks.md](tasks.md). Root es único escritor; investigadores/revisores Codex solo lectura. Pruebas nativas serializadas bajo dueño PostgreSQL verificado y memoria mínima6144MiB. Ejecutar composición después de pruebas y revisar diff; registrar conclusiones durables sin duplicar esta spec en el vault.
+
+## T008 implementado — ciclo local
+
+AdmissionMonitor mantiene un único sampler PostgreSQL, recargado bajo su lock sin olvidar cierres inciertos. Carga política y atestación antes del muestreo y revalida la misma revisión/vinculación después. Rechaza componentes futuros antes de tomar el timestamp mínimo, que incluye el inicio del intervalo CPU. Tras huecos reinicia ese historial. La recuperación actúa sobre cantidades físicas por recurso, con tres muestras sanas distintas por defecto; terminar una etapa libera su cantidad sin esperar histéresis. Una reducción retira primero los handoffs pendientes más recientes que ya no caben, sin recorrer ni retirar trabajo iniciado.
+
+El ciclo captura generación antes del I/O y publica por CAS; un ticket de lifecycle capturado antes del lock impide reanudar sondas antiguas tras stop/start. El cierre conserva referencias físicas bajo cancelación, une sondas fallidas y llamadas síncronas activas, limpia solo con testigos de retiro y propaga el error original. El componente no crea autoridad operativa ni conecta Inbox: ambos son prerrequisitos explícitos de T009 y de la aceptación M1.

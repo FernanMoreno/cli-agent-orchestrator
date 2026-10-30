@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-30",
+  "scope": "T008 local observation/policy lifecycle and weighted owner; no consumer or operational enrollment integration",
+  "status": "PASS_T008_COMPONENTS_NOT_M1",
+  "base_head": "2a205f3938ea64e07d643b203160eedcee02726e",
+  "tests": {
+    "total": 283,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "by_module": {
+      "test.services.test_delivery_admission": 25,
+      "test.services.test_admission_policy": 63,
+      "test.services.test_admission_resources": 28,
+      "test.services.test_admission_postgres": 25,
+      "test.services.test_admission_settings": 38,
+      "test.services.test_admission_bootstrap": 46,
+      "test.services.test_admission_monitor": 16,
+      "test.postgres.test_admission_bootstrap": 40,
+      "test.postgres.test_admission_pressure": 2
+    },
+    "pytest_seconds": 65.98,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t008-monitor-final/t008-monitor-final/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    }
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t008-monitor-red",
+      "result": "9FAIL42.37s: monitor absent"
+    },
+    {
+      "phase": "t008-monitor-green",
+      "result": "86PASS46.42s: initial monitor"
+    },
+    {
+      "phase": "t008-monitor-review-red",
+      "result": "4FAIL9PASS46.84s: pressure pending handoff, failed stop cleanup, future component hidden by minimum, direct physical refresh not joined"
+    },
+    {
+      "phase": "t008-monitor-review-green",
+      "result": "92PASS52.77s: first review corrections"
+    },
+    {
+      "phase": "t008-monitor-epoch-red",
+      "result": "1FAIL41.36s: paused pre-lock refresh crosses stop/start and calls PG"
+    }
+  ],
+  "checks": {
+    "types": "PASS4sourcefiles",
+    "black_isort": "PASS7files",
+    "composition": {
+      "files": 431,
+      "dependencies": 1898,
+      "kept": 5,
+      "broken": 0
+    },
+    "independent_review": "Codex nfr_boundary_read_review third code round PASS; source/control review only",
+    "diff_review": "PASS scoped source/test/docs; unrelated changes preserved"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "source_sha256": {
+    "src/cli_agent_orchestrator/services/admission_monitor.py": "4c4d38d7aeab54077d400804445e541679cf7a9454b443eb6999959112376a69",
+    "src/cli_agent_orchestrator/services/admission_resources.py": "c9d3ddf588f0f8aff7fae09470080b8756b868c15c0515316586a0b69359c66f",
+    "src/cli_agent_orchestrator/services/admission_postgres.py": "dbab975f750180412f9980a0f4881bf517c7264b5da26e9bc90648d69c883de7",
+    "src/cli_agent_orchestrator/services/delivery_admission.py": "752e032fcd17b919e1fc4112493b755118e5bbc76fab4b627a4e906c9893be66",
+    "test/services/test_admission_monitor.py": "6effc0b686ca1a4ef73092a5f9af53621d8e81acada4b1803b8bbe3a4b3587be",
+    "test/services/test_admission_resources.py": "f26090e9bc754a87a02709111300a605b457726e0e13ca4a874d02d23a5f4d92",
+    "test/services/test_admission_postgres.py": "781a3f9caa80068503506448ee6d2953b96700e0b1817cdddaa9460346293f13"
+  },
+  "graphify": {
+    "refresh": "deferred due preexisting foreign edits in generated graph; source/callers verified",
+    "known_prior_side_effect": "Earlier root query changed cache/last_query_stamp only; 11 other baseline tracked hashes preserved"
+  },
+  "composition_review": "composition-t008.md",
+  "acceptance": {
+    "T008_complete": true,
+    "consumer_integrated": false,
+    "operational_enrollment": false,
+    "M1": false,
+    "M2": false,
+    "M3": false
+  },
+  "remaining": [
+    "T009 common consumer/direct/sweep owner and operational enrollment wiring",
+    "T010 Work/remote ownership",
+    "T011 integration scenarios",
+    "M2 shared-domain durable reservations",
+    "M3 authorized ordinary elastic placement",
+    "Real M1/M2/M3 acceptance and global gates"
+  ],
+  "knowledge": {
+    "operation_id": "save-20261030-resource-amounts-and-probe-lifecycle",
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ],
+    "strict_lint_issues": 0
+  }
+}

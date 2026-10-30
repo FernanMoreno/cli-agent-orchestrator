@@ -106,6 +106,18 @@ class PostgresPressureSampler:
         self._uncertain: Connection | None = None
         self._open_cleanup_unconfirmed = False
 
+    def configure(self, policy: PostgresPressurePolicy) -> bool:
+        """Update the same owner without forgetting any physical uncertainty."""
+        if not isinstance(policy, PostgresPressurePolicy):
+            raise ValueError("PostgreSQL policy must be validated")
+        if not self._guard.acquire(blocking=False):
+            return False
+        try:
+            self._policy = policy
+            return True
+        finally:
+            self._guard.release()
+
     def _inventory(
         self, row: Record | None, target: DatabaseTarget, at: float
     ) -> PostgresPressureSample:

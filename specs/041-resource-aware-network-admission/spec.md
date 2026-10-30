@@ -1,12 +1,12 @@
 # Feature Specification: Admisión dinámica y capacidad distribuida de la red
 
-**Feature Branch**: `main` — especificación documental, sin nueva rama.
+**Feature Branch**: `main` — integración de especificación y código, sin nueva rama.
 
 **Feature Directory**: `specs/041-resource-aware-network-admission`
 
 **Created**: 2026-10-30
 
-**Status**: Draft — requisitos propuestos; implementación y aceptación pendientes.
+**Status**: Implementation in progress — componentes T001–T008 validados; integración y aceptación M1/M2/M3 pendientes.
 
 **Input**: Sustituir las cuatro entregas simultáneas fijas por admisión según recursos, presión de PostgreSQL y capacidad de cada nodo, conservando el orden por receptor. Cada máquina necesita límites; la red debe sumar nodos y repartir trabajo sin un número global fijo de agentes.
 

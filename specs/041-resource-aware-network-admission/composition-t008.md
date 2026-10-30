@@ -1,0 +1,17 @@
+# Composition Review — T008 local monitor components
+
+Verdict: **PASS for component scope**. Consumer wiring, operational enrollment and M1/M2/M3 acceptance remain pending.
+
+- Changed subsystems: resource arithmetic/lease owner, Linux CPU history, PostgreSQL pressure policy reload and the new monitor lifecycle. Upstream policy loader and bootstrap loader were inspected; downstream Inbox still has its fixed four-slot consumer and does not import this monitor.
+- State/locking: immutable original lease costs and incremental quantities; one pending index; newest unstarted handoffs yield under pressure atomically; started work remains charged. Reserve/start/stage-release/finish share the owner lock. Observation/configuration use generations captured before I/O. Lifecycle tickets fence pre-lock calls across stop/start.
+- Authority and storage: fresh sealed bootstrap before/after metrics, matching binding/claims/revision; no successful authority cache. One persistent PG sampler retains uncertain-open/close latches across policy changes. Existing PostgreSQL is reused; no migration or authority route added in T008.
+- Freshness/recovery: validate all timestamps before combining; CPU includes the earlier counter reading and resets after a gap. Immediate reduction, distinct healthy samples before resource-quantity growth; lease completion does not wait for growth recovery.
+- Failure/cancellation: stop closes admission, preserves physical task ownership, joins active synchronous probes, retains references on cancellation, cleans after retirement even on error and propagates the original error. No timeout or cancellation is treated as proof of closure.
+- Tests: 283 passed, zero failures/errors/skips across nine modules, including native PostgreSQL bootstrap/pressure tests and 16 monitor cases with physical threads and controlled interleavings. All failed development attempts remain recorded in the receipt. The CPU timestamp assertion became stricter by retaining the oldest counter timestamp; deadlines and coverage were not lowered.
+- Architecture: project-composition-check analyzed 431 files and 1898 dependencies; five contracts kept, zero broken. Four source modules pass scoped mypy; seven changed Python files pass Black/isort.
+- Contract tests: internal dataclasses/generation/state transitions are exercised directly; no independently deployed API/message contract changed, so Pact is not applicable here. Real PostgreSQL tests cover the affected sampler/authority neighbors; Linux hierarchy tests use controlled proc/cgroup fixtures, not a production-capacity acceptance run.
+- Independent review: Codex read-only review reproduced pressure/cleanup boundaries, then the pre-lock lifecycle race; third code review reports no material blockers. Root inspected the final diff and retained each RED/GREEN receipt.
+- Graphify refresh deferred because generated files contain unrelated preexisting edits. The historical graph and source were inspected; missing new modules are not treated as proof of absent behavior. The earlier root query changed only last_query_stamp; that side effect remains disclosed.
+- Durable knowledge: original-cost accounting, stage lifetime, timestamp combination and lifecycle fencing are recorded in the shared Obsidian concept. No generated graph facts or raw logs are copied there.
+
+Evidence: [final component receipt](validation-t008-monitor.json), [ledger checkpoint](validation-t008-ledger.json), [remaining tasks](tasks.md).

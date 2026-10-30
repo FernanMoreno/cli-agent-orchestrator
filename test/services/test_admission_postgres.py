@@ -209,6 +209,7 @@ def test_unconfirmed_close_blocks_new_probes_until_physical_retirement():
     first = sampler.sample()
     assert first.reason == "probe_cleanup_unconfirmed"
     assert first.observation.available_slots is None
+    assert sampler.configure(api().PostgresPressurePolicy(reserve_percent=30))
     assert sampler.sample().reason == "probe_cleanup_unconfirmed"
     assert len(opened) == 1
     opened[0].raw.closed = True
@@ -286,6 +287,7 @@ def test_failed_open_without_a_close_witness_cannot_multiply_probes(failure_stag
     )
     first = sampler.sample()
     assert first.observation.available_slots is None
+    assert sampler.configure(api().PostgresPressurePolicy(reserve_percent=30))
     for _ in range(3):
         result = sampler.sample()
         assert result.reason == "probe_cleanup_unconfirmed"
