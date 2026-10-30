@@ -1,6 +1,10 @@
 """Resource authority must remain unreadjustable by the ordinary runtime role."""
 
+import hashlib
 import importlib
+import json
+from contextlib import contextmanager
+from dataclasses import fields, replace
 from uuid import uuid4
 
 import psycopg
@@ -239,3 +243,245 @@ def test_invalid_authority_data_is_rejected_by_postgres(resource_target, invalid
     with connect(target.migration_target()) as owner:
         with pytest.raises(psycopg.errors.CheckViolation):
             insert_record(owner, record(target, **invalid))
+
+
+def resource_controller(target, *, connect_factory=connect):
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+        ResourceEnvelopeRepository,
+    )
+    from cli_agent_orchestrator.models.resource_envelope import EnvelopeClaims, ResourceBinding
+    from cli_agent_orchestrator.services.admission_bootstrap import ResourceBootstrap
+
+    values = record(target)
+    values["target_identity_sha256"] = hashlib.sha256(
+        json.dumps(target.identity, separators=(",", ":")).encode()
+    ).hexdigest()
+    current = [
+        ResourceBinding(**{field.name: values[field.name] for field in fields(ResourceBinding)})
+    ]
+    repository = ResourceEnvelopeRepository(
+        target_supplier=lambda: target, connect_factory=connect_factory
+    )
+    service = ResourceBootstrap(
+        repository=repository,
+        binding_supplier=lambda _target: current[0],
+        instance_supplier=lambda: current[0].instance_id,
+        clock=lambda: 10.0,
+    )
+    return service, repository, current, EnvelopeClaims(1024**3, 1000, 10, True, False)
+
+
+def resource_operator(*, admin=True):
+    from cli_agent_orchestrator.security.auth import _verified_principal
+
+    return _verified_principal(
+        "urn:caos:resource-native-test", "operator", ["cao:admin"] if admin else ["cao:read"], "jwt"
+    )
+
+
+def test_native_administrator_cas_load_and_revocation_use_latest_history(resource_target):
+    from cli_agent_orchestrator.services.admission_bootstrap import is_verified_resource_attestation
+
+    connections = []
+
+    @contextmanager
+    def observed_connect(selected, *, readonly=False):
+        with connect(selected, readonly=readonly) as connection:
+            connections.append(connection)
+            if readonly:
+                assert selected.user == resource_target.user and connection.read_only
+            else:
+                assert selected.user == resource_target.migration_user
+            yield connection
+
+    service, repository, current, claims = resource_controller(
+        resource_target, connect_factory=observed_connect
+    )
+    actor = resource_operator()
+    assert service.load_current().reason == "authority_missing"
+    assert service.attest_current(principal=actor, claims=claims, expected_revision=0).revision == 1
+    result = service.load_current()
+    assert is_verified_resource_attestation(result.attestation)
+    assert result.attestation.binding == current[0]
+    assert (
+        repository.read_latest(resource_target, current[0].instance_id).actor_principal_id
+        == actor.id
+    )
+    assert service.revoke_current(principal=actor, expected_revision=1).revision == 2
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+        EnvelopeRevisionConflict,
+    )
+
+    with pytest.raises(EnvelopeRevisionConflict):
+        service.revoke_current(principal=actor, expected_revision=1)
+    result = service.load_current()
+    assert result.attestation is None and result.reason == "authority_revoked"
+    with connect(resource_target, readonly=True) as reader:
+        count = reader.execute(
+            sql.SQL("SELECT count(*) FROM {}").format(
+                sql.Identifier(resource_target.schema, schema().RESOURCE_ENVELOPE_TABLE)
+            )
+        ).fetchone()[0]
+        assert count == 2
+    assert connections and all(connection.raw.closed for connection in connections)
+
+
+@pytest.mark.parametrize("isolation", ["read committed", "repeatable read"])
+def test_native_concurrent_operator_cas_has_one_winner_with_any_session_default(
+    resource_target, isolation
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+        EnvelopeRevisionConflict,
+    )
+
+    barrier = Barrier(2)
+    owner_pids = []
+    owners = []
+
+    @contextmanager
+    def configured_connect(target, *, readonly=False):
+        with connect(target, readonly=readonly) as connection:
+            if not readonly:
+                connection.execute(
+                    sql.SQL("SET default_transaction_isolation TO {}").format(
+                        sql.Literal(isolation)
+                    )
+                )
+                owner_pids.append(connection.execute("SELECT pg_backend_pid()").fetchone()[0])
+                owners.append(connection)
+                barrier.wait(timeout=5)
+            yield connection
+
+    service, repository, current, claims = resource_controller(
+        resource_target, connect_factory=configured_connect
+    )
+
+    def attempt():
+        try:
+            return service.attest_current(
+                principal=resource_operator(), claims=claims, expected_revision=0
+            ).revision
+        except EnvelopeRevisionConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(attempt) for _ in range(2)]
+        results = [future.result(timeout=20) for future in futures]
+    assert results.count(1) == 1 and results.count("conflict") == 1
+    assert len(set(owner_pids)) == 2 and all(owner.raw.closed for owner in owners)
+    assert repository.read_latest(resource_target, current[0].instance_id).revision == 1
+
+
+def test_native_non_admin_does_not_write_authority(resource_target):
+    service, repository, current, claims = resource_controller(resource_target)
+    with pytest.raises(PermissionError):
+        service.attest_current(
+            principal=resource_operator(admin=False), claims=claims, expected_revision=0
+        )
+    assert repository.read_latest(resource_target, current[0].instance_id) is None
+
+
+def test_native_binding_change_and_runtime_grant_drift_deny_authority(resource_target):
+    service, _, current, claims = resource_controller(resource_target)
+    service.attest_current(principal=resource_operator(), claims=claims, expected_revision=0)
+    current[0] = replace(current[0], process_generation=str(uuid4()))
+    assert service.load_current().reason == "binding_changed"
+    with connect(resource_target.migration_target()) as owner:
+        owner.execute(
+            sql.SQL("GRANT UPDATE(active) ON {} TO {}").format(
+                sql.Identifier(resource_target.schema, schema().RESOURCE_ENVELOPE_TABLE),
+                sql.Identifier(resource_target.user),
+            )
+        )
+    result = service.load_current()
+    assert result.attestation is None and result.reason == "authority_unavailable"
+
+
+def test_native_operator_requires_explicit_owner_credentials(resource_target):
+    from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
+
+    target = replace(resource_target, migration_user=None, migration_secret_file=None)
+    service, repository, current, claims = resource_controller(target)
+    with pytest.raises(ConfigurationError, match="Explicit PostgreSQL migration credentials"):
+        service.attest_current(principal=resource_operator(), claims=claims, expected_revision=0)
+    assert repository.read_latest(target, current[0].instance_id) is None
+
+
+def test_native_stale_operator_revision_does_not_append_history(resource_target):
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
+        EnvelopeRevisionConflict,
+    )
+
+    service, repository, current, claims = resource_controller(resource_target)
+    service.attest_current(principal=resource_operator(), claims=claims, expected_revision=0)
+    with pytest.raises(EnvelopeRevisionConflict):
+        service.attest_current(principal=resource_operator(), claims=claims, expected_revision=0)
+    assert repository.read_latest(resource_target, current[0].instance_id).revision == 1
+
+
+def test_native_empty_revocation_is_explicitly_not_found(resource_target):
+    from cli_agent_orchestrator.clients.admission_bootstrap_repository import EnvelopeNotFound
+
+    service, repository, current, claims = resource_controller(resource_target)
+    with pytest.raises(EnvelopeNotFound, match="does not exist"):
+        service.revoke_current(principal=resource_operator(), expected_revision=0)
+    assert repository.read_latest(resource_target, current[0].instance_id) is None
+    assert (
+        service.attest_current(
+            principal=resource_operator(), claims=claims, expected_revision=0
+        ).revision
+        == 1
+    )
+
+
+def test_native_configured_writer_that_does_not_own_namespace_cannot_append(
+    resource_target, postgres_targets, postgres_service
+):
+    target = resource_target
+    other = postgres_targets.auth
+    assert other.migration_user and other.migration_secret_file
+    with postgres_service.connect_admin(target.database) as admin:
+        had_connect = admin.execute(
+            "SELECT has_database_privilege(%s,%s,'CONNECT')",
+            (other.migration_user, target.database),
+        ).fetchone()[0]
+        if not had_connect:
+            admin.execute(
+                sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(target.database), sql.Identifier(other.migration_user)
+                )
+            )
+    try:
+        with connect(target.migration_target()) as owner:
+            owner.execute(
+                sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
+                    sql.Identifier(target.schema), sql.Identifier(other.migration_user)
+                )
+            )
+            owner.execute(
+                sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(
+                    sql.Identifier(target.schema), sql.Identifier(other.migration_user)
+                )
+            )
+        wrong_owner = replace(
+            target,
+            migration_user=other.migration_user,
+            migration_secret_file=other.migration_secret_file,
+        )
+        service, repository, current, claims = resource_controller(wrong_owner)
+        with pytest.raises(SchemaMismatch, match="must own its namespace and table"):
+            service.attest_current(
+                principal=resource_operator(), claims=claims, expected_revision=0
+            )
+        assert repository.read_latest(wrong_owner, current[0].instance_id) is None
+    finally:
+        if not had_connect:
+            with postgres_service.connect_admin(target.database) as admin:
+                admin.execute(
+                    sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(
+                        sql.Identifier(target.database), sql.Identifier(other.migration_user)
+                    )
+                )

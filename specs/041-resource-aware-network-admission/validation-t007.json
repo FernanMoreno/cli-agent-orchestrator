@@ -1,0 +1,131 @@
+{
+  "date": "2026-10-30",
+  "scope": "T007 trusted bootstrap writer/loader components; consumer and operational enrollment not wired",
+  "status": "PASS_T007_COMPONENTS_NOT_M1",
+  "base_head": "3a150a8ac672a392a4c6b9dbb3aa522570416b01",
+  "tests": {
+    "cases": {
+      "total": 300,
+      "failure": 0,
+      "error": 0,
+      "skipped": 0
+    },
+    "by_module": {
+      "test.services.test_admission_bootstrap": 46,
+      "test.postgres.test_admission_bootstrap": 40,
+      "test.clients.test_postgres_registry": 8,
+      "test.clients.test_postgres_role_preparation": 9,
+      "test.clients.test_postgres_migration_source_checksum": 25,
+      "test.clients.test_postgres_migration_error_contracts": 3,
+      "test.postgres.test_worker_isolation": 11,
+      "test.services.test_admission_postgres": 25,
+      "test.postgres.test_admission_pressure": 2,
+      "test.services.test_admission_settings": 38,
+      "test.services.test_admission_resources": 27,
+      "test.services.test_admission_policy": 48,
+      "test.services.test_delivery_admission": 18
+    },
+    "pytest_seconds": 120.22,
+    "controller_seconds": 122.716,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/f041-bootstrap-pressure-final-green/f041-bootstrap-pressure-final-green/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    }
+  },
+  "preserved_attempts": [
+    {
+      "phase": "f041-bootstrap-core-red",
+      "result": "33 missing-module failures before implementation"
+    },
+    {
+      "phase": "f041-bootstrap-core-green",
+      "result": "81 passes49.39s; initial implementation scope"
+    },
+    {
+      "phase": "f041-bootstrap-review-red",
+      "result": "3 expected failures38.12s: capture/instance identity RuntimeError and missing-envelope false revision0 acknowledgment"
+    },
+    {
+      "phase": "f041-bootstrap-composition-green",
+      "result": "300 passes88.44s after fixes"
+    },
+    {
+      "phase": "f041-bootstrap-final-green",
+      "result": "299 passes/1 failure95.43s; old global backend delta2to2 conflated controlled and external changes; historical external PID identity not retained"
+    },
+    {
+      "phase": "f041-pressure-snapshot-green",
+      "result": "2 native pressure passes52.97s with complete independent inventory and exact attributed change"
+    }
+  ],
+  "source_files": {
+    "src/cli_agent_orchestrator/models/resource_envelope.py": "2ede51fd1f9b70f47f6abb5da7ac074e53c7ec53a08c48fdcdee61b24f68553a",
+    "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py": "7c02c37f57c5cfdab192d410c6da06dc8955b85079b4495d9ab5e6691bccda9d",
+    "src/cli_agent_orchestrator/services/admission_bootstrap.py": "333a6ef830c11c7cf340454663f74e32c548d434f9c8135b28d5bc1754931d91",
+    "test/services/test_admission_bootstrap.py": "3218009f241fe482d8b2ac8ab6bbd259f590ea55f77ec024f4873d936e710960",
+    "test/postgres/test_admission_bootstrap.py": "f6938017a17f99a97f0654ee00d70d16dfbae9a8d6fb751c453b1576393d4630",
+    "test/postgres/test_admission_pressure.py": "e3a4b757e4556e49e8ded02973bb0bd9c3f90e4e2deeb0c287607cef6772b725"
+  },
+  "types": "mypy three new source modules PASS; not the global type gate",
+  "style": "Black/isort six changed Python files PASS before final freeze",
+  "composition": {
+    "files": 430,
+    "dependencies": 1892,
+    "kept": 5,
+    "broken": 0
+  },
+  "reviews": "Independent Codex writer/loader review PASS after identity/empty-revoke fixes; independent native-pressure witness review PASS; no Claude invoked",
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "kernel_capture": {
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/linux-binding-capture-probe.json",
+    "default_proc_view": "PASS",
+    "own_pid_and_start_observed": true,
+    "synthetic_logical_profile_and_target": true,
+    "credentials_opened": false,
+    "database_connection_opened": false,
+    "authority_granted": false
+  },
+  "composition_review": {
+    "changed": "immutable resource contracts, fresh readonly repository, explicit owner CAS writer, sealed process/view-bound loader, native pressure observation control",
+    "neighbors": "auth Principal seal, local process identity, pg schema/role guards, resource observation/policy, worker reset and receipt migration contracts",
+    "invariants": "admin before credential resolution; no implicit owner; active binding targets the configured store; single latest CAS history; no stale fallback; replay/revocation/identity drift deny; physical owner contexts close; pressure telemetry accounts all observed backends",
+    "native_scenarios": "two live owner connections with RC/RR defaults -> one revision1 and one conflict; runtime readonly/owner roles; wrong owner and no credentials refuse; revocation replay and empty NotFound; scope/permission drift; native pressure participant/inventory/formula exact",
+    "contract_tests": "Internal typed Python/SQL contracts only; no new HTTP or MCP protocol, Pact not applicable",
+    "verdict": "PASS WITH RISKS: operational producer, freshness consumption, lifecycle and all-path admission integration remain pending"
+  },
+  "acceptance": {
+    "T007_components": true,
+    "M1": false,
+    "M2": false,
+    "M3": false,
+    "consumer_fixed4_removed": false,
+    "provider_live_acceptance": false,
+    "mock32": false,
+    "global_suite": false
+  },
+  "graph_refresh_decision": "Historical graph relationships/source verified, architecture gate passed; no regeneration of foreign graph outputs. Earlier Graphify query changed only last_query_stamp metadata, excluded from commits.",
+  "knowledge": {
+    "operation_id": "save-20261030-pressure-snapshot-and-authority-failures",
+    "strict_lint_issues": 0,
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ]
+  },
+  "primary_pressure_sources": [
+    "https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/utils/adt/pgstatfuncs.c",
+    "https://raw.githubusercontent.com/postgres/postgres/REL_18_STABLE/src/backend/utils/activity/backend_status.c"
+  ]
+}

@@ -12,6 +12,16 @@ El consumidor no extrae definitivamente un aviso/contexto si no puede reservar c
 
 Aceptar un mensaje sigue confirmando su fila durable; no su ejecución física. Un aviso rechazado o descartado en cierre no pierde esa fila. Las filas inciertas no se vuelven pendientes para repetirlas ciegamente. Los registros nuevos de reservas recuperables utilizan PostgreSQL y preservan aislamiento y autoridad.
 
+## Atestación del operador (T007)
+
+El servicio recibe Principal verificado/admin, claims de presupuesto y revisión esperada. Comprueba el Principal antes de resolver el target o sus credenciales; actor, store, proceso/generación, namespaces y vista se derivan en el servidor. El writer requiere credenciales explícitas del dueño y propiedad del esquema/tabla. READ COMMITTED se fija antes de consultar dentro de su transacción; lock y lectura de última revisión son sentencias distintas. Un CAS perdido o repetido no añade historia. Si el commit no puede confirmarse, no se interpreta la excepción o cancelación del caller como rollback; la revisión durable debe consultarse antes de decidir otra escritura.
+
+Revocar un registro existente añade una revisión inactiva. Revocar sin registro con revisión esperada0 lanza EnvelopeNotFound: no confirma un efecto durable ni inventa un tombstone; una revisión esperada no vigente produce EnvelopeRevisionConflict. El lector obtiene siempre la última revisión, verifica rol/esquema en runtime readonly y compara la vinculación antes/después de la lectura. Falla sin reutilizar autoridad previa ante identidad no verificable, revocación, deriva, esquema/rol inválidos o falta de cobertura. Solo devuelve un objeto sellado internamente; una representación JSON, un dict o un objeto sin sello no es atestación válida.
+
+Los claims autorizan una declaración del operador y no prueban ancestros invisibles ni permisos para ejecutar herramientas/tareas. Estos módulos no añaden rutas HTTP/MCP ni conectan el consumidor; el productor operativo y la integración M1 permanecen pendientes.
+
+El sello y verified_at describen una lectura válida en ese instante monotónico local. El consumidor deberá aplicar frescura, generación y presupuestos antes de reservar; retener el objeto no conserva autoridad indefinidamente.
+
 ## Red
 
 Capacidad anunciada no es reserva ni permiso. El destino valida identidad, preparación, compatibilidad y reserva antes del primer efecto. La reserva de infraestructura del broker no basta. Los consumos Work cuentan en dominios compartidos conservando sus propios intentos y permisos.

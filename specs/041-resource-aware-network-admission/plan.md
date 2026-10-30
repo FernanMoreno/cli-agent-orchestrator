@@ -33,6 +33,8 @@ Inspección git y conocimiento: completados. Spec aprobada por el usuario; plani
 - `services/admission_settings.py`: política operativa privada y validada, próxima lectura y retención de última válida en el mismo ámbito; no usa el escritor genérico de ConfigService ni contiene atestaciones de jerarquía.
 - `services/admission_bootstrap.py`: verifica envelope explícito de operador persistido en PostgreSQL contra identidad/encarnación/namespaces del proceso; solo devuelve un objeto verificado al observador.
 - `clients/admission_bootstrap_schema.py`: componente main de historial de atestaciones; runtime solo lectura, con protección central de ACL después de cada migración y del reinicio de esquemas de prueba. El esquema no acredita al actor ni concede capacidad.
+- `models/resource_envelope.py`: contratos inmutables de presupuestos y vinculación, sin I/O ni dependencias de infraestructura.
+- `clients/admission_bootstrap_repository.py`: lectura runtime con verificación fresca y escritura del dueño con revisión CAS e historial; no promueve credenciales implícitamente.
 - `services/admission_resources.py`: observaciones de host/cgroup y presión PostgreSQL con antigüedad y fallos explícitos.
 - `services/delivery_admission.py`: dueño común de reservas, drenaje, exclusión y estadísticas estructuradas locales.
 - `services/inbox_service.py`: consumidor, barridos y llamadas directas usan ese dueño; no generan capacidad adicional.
@@ -58,6 +60,8 @@ La investigación no encontró una atestación de recursos reutilizable. La pres
 Antes de conectar M1 deben existir este loader y sus controles de autorización/persistencia. No se activarán los flags del observador con True para obtener pruebas verdes. Los valores de política de consumo son configuración, separados de la autoridad de atestación.
 
 El Principal acredita quién autorizó una atestación del operador, no la verdad de ancestros invisibles. La cobertura declarada requiere contraste independiente con el host/orquestador. El servidor verifica su vinculación a generación, namespaces y digest de pertenencia/vista de montaje; cualquier deriva invalida esa vinculación. Un escritor administrativo con credenciales de migración protege frente a DML del rol runtime, pero no frente a un proceso comprometido que posea esas mismas credenciales; la separación fuerte exige mantenerlas fuera del runtime.
+
+El servicio T007 comprobará Principal sellado y scope admin antes de resolver el target o sus credenciales. La solicitud aporta únicamente claims/revisión esperada; proceso, store, namespaces y vista se derivan en el servidor. La escritura CAS serializa por instancia dentro de una transacción READ COMMITTED explícita para observar el último commit después del lock, incluso si el servidor tiene otro aislamiento por defecto. Revocar añade un estado inactivo al historial; el lector consulta la última revisión, sin rescatar una atestación antigua activa. Solo una lectura runtime fresca con esquema/rol válidos y vinculación actual exacta devuelve un resultado opaco verificado. No se añade aquí una ruta HTTP ni una herramienta MCP de administración.
 
 ### M2 — Dominios compartidos
 
