@@ -597,6 +597,26 @@ class TestDeleteTerminalEndpoint:
 
 
 class TestCreateInboxMessageEndpoint:
+    def test_durable_receipt_is_not_gated_by_physical_delivery(self, client):
+        message = MagicMock()
+        message.id = 1
+        message.sender_id = "sender1"
+        message.receiver_id = "abcd1234"
+        message.created_at.isoformat.return_value = "2026-03-13T12:00:00"
+        with (
+            patch("cli_agent_orchestrator.api.main.create_inbox_message", return_value=message),
+            patch("cli_agent_orchestrator.api.main.inbox_service") as service,
+        ):
+            service.deliver_pending.side_effect = AssertionError("must use the bounded consumer")
+            response = client.post(
+                "/terminals/abcd1234/inbox/messages",
+                params={"sender_id": "sender1", "message": "hello"},
+            )
+            assert response.status_code == 200
+            assert response.json()["message_id"] == 1
+            service.queue_delivery.assert_called_once_with("abcd1234", registry=ANY)
+            service.deliver_pending.assert_not_called()
+
     """Test POST /terminals/{receiver_id}/inbox/messages endpoint."""
 
     def test_create_inbox_message_success(self, client):
@@ -628,7 +648,8 @@ class TestCreateInboxMessageEndpoint:
                 "abcd1234",
                 "hello",
             )
-            mock_inbox.deliver_pending.assert_called_once_with("abcd1234", registry=ANY)
+            mock_inbox.queue_delivery.assert_called_once_with("abcd1234", registry=ANY)
+            mock_inbox.deliver_pending.assert_not_called()
 
     def test_create_inbox_message_delivery_failure_still_succeeds(self, client):
         """Immediate delivery failure should not fail the API response."""
@@ -643,7 +664,7 @@ class TestCreateInboxMessageEndpoint:
             patch("cli_agent_orchestrator.api.main.inbox_service") as mock_inbox,
         ):
             mock_create.return_value = mock_msg
-            mock_inbox.deliver_pending.side_effect = Exception("TMux busy")
+            mock_inbox.queue_delivery.side_effect = Exception("delivery wake unavailable")
 
             response = client.post(
                 "/terminals/abcd1234/inbox/messages",

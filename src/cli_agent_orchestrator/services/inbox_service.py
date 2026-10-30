@@ -89,7 +89,7 @@ class _PendingStatusEvents:
     def __len__(self) -> int:
         return self._size
 
-    def append(self, terminal_id: str, *, busy: bool) -> None:
+    def append(self, terminal_id: str, *, busy: bool) -> int:
         ordinal = next(self._ordinals)
         events = self._events.get(terminal_id)
         if events is None:
@@ -98,17 +98,22 @@ class _PendingStatusEvents:
                 heappush(self._ready, (ordinal, terminal_id))
         events.append(ordinal)
         self._size += 1
+        return ordinal
 
     def pop(self) -> str | None:
+        event = self.pop_event()
+        return event[1] if event is not None else None
+
+    def pop_event(self) -> tuple[int, str] | None:
         if not self._ready:
             return None
-        _ordinal, terminal_id = heappop(self._ready)
+        ordinal, terminal_id = heappop(self._ready)
         events = self._events[terminal_id]
         events.popleft()
         self._size -= 1
         if not events:
             del self._events[terminal_id]
-        return terminal_id
+        return ordinal, terminal_id
 
     def completed(self, terminal_id: str) -> None:
         events = self._events.get(terminal_id)
@@ -125,6 +130,7 @@ class _StatusEventSink:
         self.ready = asyncio.Event()
         self.closed = False
         self._is_busy = is_busy
+        self._requests: dict[int, tuple[contextvars.Context, PluginRegistry | None]] = {}
 
     def qsize(self) -> int:
         return len(self.pending)
@@ -145,14 +151,37 @@ class _StatusEventSink:
         except Exception as e:
             logger.error(f"Error in InboxService: {e}")
             return
+        self.offer_pending(terminal_id)
+
+    def offer_pending(
+        self,
+        terminal_id: str,
+        request: tuple[contextvars.Context, PluginRegistry | None] | None = None,
+    ) -> bool:
+        """Offer a wake without claiming any new terminal status or delivery."""
+        if self.closed:
+            return False
         if len(self.pending) >= self.maxsize:
             raise asyncio.QueueFull
-        self.pending.append(terminal_id, busy=self._is_busy(terminal_id))
+        ordinal = self.pending.append(terminal_id, busy=self._is_busy(terminal_id))
+        if request is not None:
+            self._requests[ordinal] = request
         self.ready.set()
+        return True
+
+    def pop_delivery(
+        self,
+    ) -> tuple[str, tuple[contextvars.Context, PluginRegistry | None] | None] | None:
+        event = self.pending.pop_event()
+        if event is None:
+            return None
+        ordinal, terminal_id = event
+        return terminal_id, self._requests.pop(ordinal, None)
 
     def close(self) -> None:
         self.closed = True
         self.pending = _PendingStatusEvents()
+        self._requests.clear()
 
 
 class InboxService:
@@ -163,8 +192,8 @@ class InboxService:
         # with no atomic claim at the DB layer, so two concurrent calls for the
         # SAME terminal can both read the same oldest row before either marks it
         # and deliver one task twice. Concurrent callers are real: the status-event
-        # consumer and the immediate POST path both dispatch to worker threads, and
-        # the OpenCode poller and the reconcile sweep add more. Serialize the whole
+        # consumer handles status/API wakes, while the OpenCode poller and the
+        # reconcile sweep add independent callers. Serialize the whole
         # read→mark→send sequence per terminal; as a side effect this also keeps
         # two pastes from ever interleaving in one pane. Holders and registered
         # waiters share one entry, retired only after the final lease releases
@@ -176,6 +205,26 @@ class InboxService:
         self._accepting_operations = True
         self._active_operations = 0
         self._drain_waiters: Set[Tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]] = set()
+        self._delivery_sink: _StatusEventSink | None = None
+        self._delivery_loop: asyncio.AbstractEventLoop | None = None
+
+    def queue_delivery(self, terminal_id: str, *, registry: PluginRegistry | None) -> bool:
+        """Wake the bounded consumer after commit; SQL remains the durable queue.
+
+        Called on the owning API loop. A rejected/full wake never removes the
+        pending row; normal status/reconciliation and restart can discover it.
+        Ambient context is carried like the former immediate to_thread call,
+        and is never an authority source or a substitute for delivery checks.
+        """
+        with self._operations:
+            if not self._accepting_operations:
+                raise InboxServiceStoppingError("inbox service is stopping")
+            sink = self._delivery_sink
+            if sink is None:
+                return False
+            if asyncio.get_running_loop() is not self._delivery_loop:
+                raise RuntimeError("inbox wake must use the owning API loop")
+            return sink.offer_pending(terminal_id, (contextvars.copy_context(), registry))
 
     def start_accepting(self) -> None:
         """Open service admission for a new server lifespan.
@@ -320,6 +369,8 @@ class InboxService:
         reader: asyncio.Task | None = None
         cancelled = threading.Event()
         try:
+            self._delivery_sink = sink
+            self._delivery_loop = asyncio.get_running_loop()
             logger.info("InboxService started")
             while True:
                 with self._operations:
@@ -329,15 +380,26 @@ class InboxService:
                 # Keep every consumed ready event. Skip busy keys without
                 # occupying executor slots waiting for their per-terminal lock.
                 while len(deliveries) < _STATUS_DELIVERY_CONCURRENCY:
-                    terminal_id = sink.pending.pop()
-                    if terminal_id is None:
+                    wake = sink.pop_delivery()
+                    if wake is None:
                         break
-                    deliveries[terminal_id] = asyncio.create_task(
-                        asyncio.to_thread(
-                            self._deliver_status_pending, terminal_id, cancelled, registry=registry
-                        ),
-                        name="inbox-status-delivery",
+                    terminal_id, request = wake
+                    delivery_registry = registry if request is None else request[1]
+                    work = asyncio.to_thread(
+                        self._deliver_status_pending,
+                        terminal_id,
+                        cancelled,
+                        registry=delivery_registry,
                     )
+                    if request is None:
+                        task = asyncio.create_task(work, name="inbox-status-delivery")
+                    else:
+                        # create_task copies the context in which it is called;
+                        # to_thread then carries that task's context to its worker.
+                        task = request[0].run(
+                            asyncio.create_task, work, name="inbox-request-delivery"
+                        )
+                    deliveries[terminal_id] = task
                 if reader is None:
                     reader = asyncio.create_task(sink.ready.wait(), name="inbox-status-reader")
                 waiting = set(deliveries.values())
@@ -361,6 +423,9 @@ class InboxService:
             with self._operations:
                 cancelled.set()
             sink.close()
+            if self._delivery_sink is sink:
+                self._delivery_sink = None
+                self._delivery_loop = None
             bus.unsubscribe("terminal.*.status", sink)
             children = list(deliveries.values())
             if reader is not None:

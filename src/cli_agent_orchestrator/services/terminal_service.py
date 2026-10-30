@@ -34,7 +34,7 @@ from contextlib import ExitStack, closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, cast
 
@@ -5812,7 +5812,42 @@ class _ReceiptWitnessUnavailable(TurnResultUnavailableError):
     """History text lacks a current witness; no durable mutation was attempted."""
 
 
-@with_terminal_dispatch_lock
+def _with_receipt_verification_lock(function: Callable[..., str]) -> Callable[..., str]:
+    """Fence receipt/ownership effects without blocking plain output reads."""
+    locked = with_terminal_dispatch_lock(function)
+
+    @wraps(function)
+    def wrapped(
+        terminal_id: str,
+        provider: Any,
+        transcript: str,
+        result: str,
+        *,
+        rendered_viewport: bool = False,
+        expected_generation: str | None = None,
+        ordinary_observation: bool = False,
+    ) -> str:
+        if (
+            not ordinary_observation
+            and getattr(provider, "requires_turn_receipt", False) is not True
+        ):
+            # This branch has no receipt or ownership effects to serialize.
+            # Do not wait behind input preparation just to return captured text.
+            return result
+        return locked(
+            terminal_id,
+            provider,
+            transcript,
+            result,
+            rendered_viewport=rendered_viewport,
+            expected_generation=expected_generation,
+            ordinary_observation=ordinary_observation,
+        )
+
+    return wrapped
+
+
+@_with_receipt_verification_lock
 def _verify_receipt_bearing_result(
     terminal_id: str,
     provider: Any,

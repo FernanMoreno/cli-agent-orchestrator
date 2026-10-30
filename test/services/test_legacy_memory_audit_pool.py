@@ -21,6 +21,7 @@ from cli_agent_orchestrator.services.legacy_memory_audit_repository import (
     PooledAuditLeaseExpired,
     StaleMemoryAuditTarget,
     UnsupportedLibpqEnvironment,
+    _Entry,
     _legacy_memory_audit_manager,
     _LegacyMemoryAuditWorkRepository,
     _resolve_profile,
@@ -459,7 +460,7 @@ def test_close_failure_keeps_physical_capacity_reserved(isolated_memory_db, audi
     manager = audit_manager
     with manager.checkout(isolated_memory_db, resolver=lambda: isolated_memory_db):
         pass
-    profile, entry = next(iter(manager._entries.items()))
+    entry_key, entry = next(iter(manager._entries.items()))
     original_raw = entry.raw
 
     class FailedClose:
@@ -472,9 +473,47 @@ def test_close_failure_keeps_physical_capacity_reserved(isolated_memory_db, audi
     try:
         with manager._condition:
             with pytest.raises(OSError, match="injected close failure"):
-                manager._close_entry_locked(profile, entry)
+                manager._close_entry_locked(entry_key, entry)
         assert manager.managed_session_count == 1
-        assert manager._entries[profile] is entry
+        assert manager._entries[entry_key] is entry
         assert entry.retired is True
     finally:
         entry.raw = original_raw
+
+
+def test_retirement_marks_all_physical_peers_before_a_failed_close(isolated_memory_db):
+    manager = LegacyMemoryAuditConnectionManager(max_sessions=2)
+    resolved = _resolve_profile(isolated_memory_db, manager._profile_key)
+    resolved.parameters["password"] = ""
+
+    class Raw:
+        closed = False
+
+        def __init__(self, fail):
+            self.fail = fail
+
+        def close(self):
+            if self.fail:
+                raise OSError("injected first-peer close failure")
+            self.closed = True
+
+    first_raw, second_raw = Raw(True), Raw(False)
+    first = _Entry(resolved.profile, isolated_memory_db, cast(psycopg.Connection, first_raw))
+    second = _Entry(
+        resolved.profile, isolated_memory_db, cast(psycopg.Connection, second_raw), leased=True
+    )
+    manager._entries = {id(first): first, id(second): second}
+    manager._physical_count = 2
+    try:
+        with pytest.raises(OSError, match="first-peer close failure"):
+            manager.retire_target(isolated_memory_db)
+        assert first.retired and second.retired
+        assert manager.managed_session_count == 2
+        assert manager._entries[id(first)] is first
+        assert manager._entries[id(second)] is second
+    finally:
+        first_raw.fail = False
+        second.leased = False
+        manager.close()
+    assert first_raw.closed and second_raw.closed
+    assert manager.managed_session_count == 0

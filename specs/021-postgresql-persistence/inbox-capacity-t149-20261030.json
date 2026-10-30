@@ -1,0 +1,223 @@
+{
+  "schema": "caos.t149.inbox-capacity-correction.v1",
+  "status": "CORRECTIONS_VALIDATED_EXTENDED_CAPACITY_NOT_ACCEPTED",
+  "base_head": "da5e6bbc92a814de75f78097b5ac3bdd05f9357a",
+  "candidate_sha256": "a2adabea6e3ca94a6f46e3fa58970ffeaf84ec909afd5b3e3af4e43a58679781",
+  "changes": [
+    "physical same-profile leases within unchanged global audit pool4 and checkout2s",
+    "committed inbox receipt queues bounded tracked delivery with context/registry",
+    "nonreceipt plain output reads avoid no-op dispatch lock; receipt and ownership effects stay fenced"
+  ],
+  "controlled_red": {
+    "pool": "1failed",
+    "queue": "4failed",
+    "read": "5failed5passed"
+  },
+  "regressions": {
+    "pool": {
+      "cases": {
+        "total": 59,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 100.579,
+      "source_preserved": true,
+      "candidate_sha256": "7ace28e720493cfc78bf1423d6cffaee25788e64b872a5b1c8177a9b5dd1003d"
+    },
+    "queue": {
+      "cases": {
+        "total": 193,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 194.268,
+      "source_preserved": true,
+      "candidate_sha256": "7e7dd897c16a91f4cef17eba785ebed67d4cbca971d09184f4cef9c36e2fa3b5"
+    },
+    "read_receipt_api_restart": {
+      "cases": {
+        "total": 275,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 237.311,
+      "source_preserved": true,
+      "candidate_sha256": "a2adabea6e3ca94a6f46e3fa58970ffeaf84ec909afd5b3e3af4e43a58679781"
+    }
+  },
+  "actual_full_ramp": {
+    "pytest_result": "FAIL",
+    "controller_seconds": 610.092,
+    "source_preserved": true,
+    "rungs": [
+      {
+        "workers": 2,
+        "created": 3,
+        "ready": 3,
+        "peak_processing": 2,
+        "delivered": 4,
+        "echoed": 4,
+        "retired": 3,
+        "cleanup_confirmed": true,
+        "passed": true,
+        "total_seconds": 38.60570833698148,
+        "memory": {
+          "sample_count": 243,
+          "peak_aggregate_rss_bytes": 233144320,
+          "peak_owned_processes": 9,
+          "min_available_mib": 9759,
+          "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+        },
+        "memory_audit": {
+          "operations": 7,
+          "curated_operations": 2,
+          "complete_operations": 7
+        }
+      },
+      {
+        "workers": 4,
+        "created": 5,
+        "ready": 5,
+        "peak_processing": 4,
+        "delivered": 8,
+        "echoed": 8,
+        "retired": 5,
+        "cleanup_confirmed": true,
+        "passed": true,
+        "total_seconds": 46.78037412901176,
+        "memory": {
+          "sample_count": 330,
+          "peak_aggregate_rss_bytes": 279805952,
+          "peak_owned_processes": 15,
+          "min_available_mib": 9763,
+          "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+        },
+        "memory_audit": {
+          "operations": 13,
+          "curated_operations": 4,
+          "complete_operations": 13
+        }
+      },
+      {
+        "workers": 8,
+        "created": 9,
+        "ready": 9,
+        "peak_processing": 8,
+        "delivered": 16,
+        "echoed": 16,
+        "retired": 9,
+        "cleanup_confirmed": true,
+        "passed": true,
+        "total_seconds": 69.71988130296813,
+        "memory": {
+          "sample_count": 532,
+          "peak_aggregate_rss_bytes": 394620928,
+          "peak_owned_processes": 27,
+          "min_available_mib": 9706,
+          "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+        },
+        "memory_audit": {
+          "operations": 25,
+          "curated_operations": 8,
+          "complete_operations": 25
+        }
+      },
+      {
+        "workers": 12,
+        "created": 13,
+        "ready": 13,
+        "peak_processing": 12,
+        "delivered": 24,
+        "echoed": 24,
+        "retired": 13,
+        "cleanup_confirmed": true,
+        "passed": true,
+        "total_seconds": 96.18170054297661,
+        "memory": {
+          "sample_count": 731,
+          "peak_aggregate_rss_bytes": 423292928,
+          "peak_owned_processes": 39,
+          "min_available_mib": 9722,
+          "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+        },
+        "memory_audit": {
+          "operations": 37,
+          "curated_operations": 12,
+          "complete_operations": 37
+        }
+      },
+      {
+        "workers": 20,
+        "created": 21,
+        "ready": 21,
+        "peak_processing": 20,
+        "delivered": 40,
+        "echoed": 40,
+        "retired": 21,
+        "cleanup_confirmed": true,
+        "passed": true,
+        "total_seconds": 140.14519367500907,
+        "memory": {
+          "sample_count": 1138,
+          "peak_aggregate_rss_bytes": 545783808,
+          "peak_owned_processes": 63,
+          "min_available_mib": 9706,
+          "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+        },
+        "memory_audit": {
+          "operations": 61,
+          "curated_operations": 20,
+          "complete_operations": 61
+        }
+      },
+      {
+        "workers": 32,
+        "created": 33,
+        "ready": 33,
+        "peak_processing": 19,
+        "delivered": 0,
+        "echoed": 0,
+        "retired": 33,
+        "cleanup_confirmed": true,
+        "passed": false,
+        "total_seconds": 183.64282189699588,
+        "memory": {
+          "sample_count": 1433,
+          "peak_aggregate_rss_bytes": 645820416,
+          "peak_owned_processes": 86,
+          "min_available_mib": 9688,
+          "scope": "sampled API and pane descendants; summed RSS double counts shared pages; PostgreSQL excluded"
+        },
+        "memory_audit": null
+      }
+    ],
+    "failure": "32 requested simultaneous processing;19 observed; unchanged25s overlap window and10s workload",
+    "all_agents_retired": 84,
+    "failed_zero_delivery_counter": "final accounting was not reached; not proof of zero actual delivery"
+  },
+  "architecture": {
+    "contracts_kept": 5,
+    "broken": 0
+  },
+  "mypy": {
+    "status": "FAIL_PREEXISTING",
+    "current_errors": 10,
+    "configured_head_baseline_errors": 10,
+    "same_error_messages": true
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "independent_codex_reviews": "pool,queue,read wrapper PASS;041spec reviewed and corrected",
+  "next": "041 defines resource-aware admission; T148/T149 extended32 and global gates remain open",
+  "private_evidence_root": "/home/felni/.cache/caos-t149-delivery-20261030",
+  "global_acceptance": false
+}

@@ -140,7 +140,54 @@ def test_concurrent_memory_service_factory_initialization_uses_shared_cap(
 
     assert identities == [isolated_memory_db.identity] * 8
     assert manager.managed_session_count <= 4
-    assert manager.session_count_for(isolated_memory_db) == 1
+    assert 1 <= manager.session_count_for(isolated_memory_db) <= 4
+
+
+def test_one_profile_can_use_four_slots_but_never_a_fifth(isolated_memory_db):
+    """Spare global capacity must serve independent same-authority operations."""
+    manager = LegacyMemoryAuditConnectionManager(max_sessions=4)
+    release = threading.Event()
+    ready = threading.Event()
+    guard = threading.Lock()
+    backend_ids = set()
+
+    def borrow():
+        try:
+            with manager.checkout(isolated_memory_db, resolver=lambda: isolated_memory_db) as lease:
+                backend_id = _pid(lease)
+                with guard:
+                    backend_ids.add(backend_id)
+                    if len(backend_ids) == 4:
+                        ready.set()
+                assert release.wait(8), "held-lease controller did not release borrowers"
+                return None
+        except Exception as error:
+            return type(error).__name__
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(borrow) for _ in range(4)]
+            try:
+                all_ready = ready.wait(4)
+                observed_count = manager.managed_session_count
+                if all_ready:
+                    assert observed_count == 4
+                    assert manager.session_count_for(isolated_memory_db) == 4
+                    with pytest.raises(TimeoutError):
+                        with manager.checkout(
+                            isolated_memory_db, resolver=lambda: isolated_memory_db
+                        ):
+                            pytest.fail("fifth lease must not exceed the physical session budget")
+                    assert manager.managed_session_count == 4
+            finally:
+                release.set()
+            errors = [future.result(timeout=5) for future in futures]
+        assert all_ready, {"physical_sessions": observed_count, "borrower_errors": errors}
+        assert errors == [None] * 4
+        assert len(backend_ids) == 4
+    finally:
+        manager.close()
+    assert manager.managed_session_count == 0
 
 
 def test_reused_private_repository_rejects_schema_drift_before_side_effect(

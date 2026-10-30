@@ -7,6 +7,7 @@ import os
 import subprocess
 import time
 import uuid
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from test.fixtures import mock_capacity as capacity
@@ -240,6 +241,29 @@ def run_rung(workers, home, postgres_service, record):
             assert full.count(f"> MOCK: slept {SLEEP_SECONDS}s") == 1
             assert full.count("> MOCK: " + payloads[terminal]) == 1
             record["echoed"] += 2
+        from cli_agent_orchestrator.clients.work_repository import WorkRepository
+
+        with WorkRepository(server.database_target).read_snapshot() as connection:
+            audit_rows = connection.execute(
+                "SELECT operation_id,action,phase FROM work_memory_access_audit"
+            ).fetchall()
+        phases = defaultdict(list)
+        curated_operations = set()
+        for row in audit_rows:
+            phases[row["operation_id"]].append(row["phase"])
+            if row["action"] == "curated_context":
+                curated_operations.add(row["operation_id"])
+        record["memory_audit"] = {
+            "operations": len(phases),
+            "curated_operations": len(curated_operations),
+            "complete_operations": sum(
+                sorted(values) == ["authorized", "completed"] for values in phases.values()
+            ),
+        }
+        assert len(curated_operations) == workers, "every worker must complete live memory lookup"
+        assert phases and all(
+            sorted(values) == ["authorized", "completed"] for values in phases.values()
+        ), "memory lookup must not degrade silently after audit failure"
         record["workload_correct"] = True
     finally:
         failures = []

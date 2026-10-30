@@ -741,7 +741,9 @@ class LegacyMemoryAuditConnectionManager:
         self.checkout_timeout = checkout_timeout
         self._profile_key = secrets.token_bytes(32)
         self._condition = threading.Condition(threading.RLock())
-        self._entries: dict[_Profile, _Entry] = {}
+        # A profile is an authority/generation key, not an exclusive session.
+        # Retain each physical entry independently within the same global cap.
+        self._entries: dict[int, _Entry] = {}
         self._opening: set[_Profile] = set()
         self._latest_profiles: dict[tuple[object, ...], _Profile] = {}
         self._physical_count = 0
@@ -814,15 +816,15 @@ class LegacyMemoryAuditConnectionManager:
         profile = _resolve_profile(resolved, self._profile_key)
         return profile
 
-    def _close_entry_locked(self, profile: _Profile, entry: _Entry) -> None:
+    def _close_entry_locked(self, entry_key: int, entry: _Entry) -> None:
         entry.retired = True
         entry.leased = False
         if not entry.raw.closed:
             entry.raw.close()
         if not entry.raw.closed:
             raise RuntimeError("private PostgreSQL session remained open after close")
-        if self._entries.get(profile) is entry:
-            self._entries.pop(profile)
+        if self._entries.get(entry_key) is entry:
+            self._entries.pop(entry_key)
         self._physical_count -= 1
         self._condition.notify_all()
 
@@ -831,19 +833,24 @@ class LegacyMemoryAuditConnectionManager:
         self._retire_other_generations_locked(profile)
 
     def _retire_other_generations_locked(self, profile: _Profile) -> None:
-        for existing_profile, entry in tuple(self._entries.items()):
-            if existing_profile.base != profile.base or existing_profile == profile:
-                continue
+        retiring = [
+            (key, entry)
+            for key, entry in self._entries.items()
+            if entry.profile.base == profile.base and entry.profile != profile
+        ]
+        # A failed close must not leave a later peer eligible for reuse.
+        for _, entry in retiring:
             entry.retired = True
+        for key, entry in retiring:
             if not entry.leased:
-                self._close_entry_locked(existing_profile, entry)
+                self._close_entry_locked(key, entry)
 
     def _evict_idle_locked(self) -> bool:
-        idle = [(profile, entry) for profile, entry in self._entries.items() if not entry.leased]
+        idle = [(key, entry) for key, entry in self._entries.items() if not entry.leased]
         if not idle:
             return False
-        profile, entry = min(idle, key=lambda pair: pair[1].last_used)
-        self._close_entry_locked(profile, entry)
+        entry_key, entry = min(idle, key=lambda pair: pair[1].last_used)
+        self._close_entry_locked(entry_key, entry)
         return True
 
     def _reserve(
@@ -867,16 +874,20 @@ class LegacyMemoryAuditConnectionManager:
                     # and continue lookup under the freshly resolved profile.
                     profile = current.profile
                     self._observe_profile_locked(profile)
-                    entry = self._entries.get(profile)
+                    entry = next(
+                        (
+                            candidate
+                            for candidate in self._entries.values()
+                            if candidate.profile == profile
+                            and not candidate.retired
+                            and not candidate.leased
+                        ),
+                        None,
+                    )
                     if entry is not None:
-                        if entry.retired:
-                            self._condition.wait(max(0, deadline - time.monotonic()))
-                        elif not entry.leased:
-                            entry.leased = True
-                            keep_parameters = True
-                            return entry, current
-                        else:
-                            self._condition.wait(max(0, deadline - time.monotonic()))
+                        entry.leased = True
+                        keep_parameters = True
+                        return entry, current
                     elif profile in self._opening:
                         self._condition.wait(max(0, deadline - time.monotonic()))
                     elif self._physical_count >= self.max_sessions:
@@ -956,7 +967,7 @@ class LegacyMemoryAuditConnectionManager:
                         "database profile changed before publishing a private audit connection"
                     )
                 entry = _Entry(resolved.profile, resolved.target, raw, leased=True)
-                self._entries[resolved.profile] = entry
+                self._entries[id(entry)] = entry
                 self._condition.notify_all()
             raw = None
             return entry
@@ -973,13 +984,14 @@ class LegacyMemoryAuditConnectionManager:
                 if raw is not None and not closed:
                     # A failed close remains a counted physical session. Keep
                     # an owned entry so capacity cannot be reused unsafely.
-                    self._entries[resolved.profile] = _Entry(
+                    entry = _Entry(
                         resolved.profile,
                         resolved.target,
                         raw,
                         leased=False,
                         retired=True,
                     )
+                    self._entries[id(entry)] = entry
                 else:
                     self._physical_count -= 1
                 self._condition.notify_all()
@@ -990,14 +1002,14 @@ class LegacyMemoryAuditConnectionManager:
 
     def _release(self, entry: _Entry, reusable: bool) -> None:
         with self._condition:
-            profile = entry.profile
-            current = self._entries.get(profile)
+            entry_key = id(entry)
+            current = self._entries.get(entry_key)
             if current is not entry:
                 return
             entry.leased = False
             entry.last_used = time.monotonic()
             if self._closed or entry.retired or not reusable:
-                self._close_entry_locked(profile, entry)
+                self._close_entry_locked(entry_key, entry)
             else:
                 self._condition.notify_all()
 
@@ -1087,21 +1099,25 @@ class LegacyMemoryAuditConnectionManager:
         self._ensure_process()
         base = _target_base(target)
         with self._condition:
-            for profile, entry in tuple(self._entries.items()):
-                if profile.base != base:
-                    continue
+            retiring = [
+                (key, entry) for key, entry in self._entries.items() if entry.profile.base == base
+            ]
+            for _, entry in retiring:
                 entry.retired = True
+            for key, entry in retiring:
                 if not entry.leased:
-                    self._close_entry_locked(profile, entry)
+                    self._close_entry_locked(key, entry)
 
     def close(self) -> None:
         self._ensure_process()
         with self._condition:
             self._closed = True
-            for profile, entry in tuple(self._entries.items()):
+            retiring = tuple(self._entries.items())
+            for _, entry in retiring:
                 entry.retired = True
+            for key, entry in retiring:
                 if not entry.leased:
-                    self._close_entry_locked(profile, entry)
+                    self._close_entry_locked(key, entry)
             self._condition.notify_all()
 
 

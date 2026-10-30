@@ -10097,7 +10097,7 @@ async def create_inbox_message_endpoint(
     message: str,
     _scopes: List[str] = Depends(require_any_scope(SCOPE_WRITE, SCOPE_ADMIN)),
 ) -> Dict:
-    """Create inbox message and attempt immediate delivery."""
+    """Commit an inbox message and queue a bounded delivery attempt."""
     try:
         inbox_msg = create_inbox_message(
             sender_id,
@@ -10112,17 +10112,14 @@ async def create_inbox_message_endpoint(
             detail=f"Failed to create inbox message: {str(e)}",
         )
 
-    # Attempt immediate delivery if terminal is already IDLE.
-    # If not, InboxService will deliver on next IDLE status event.
+    # The response acknowledges the committed row, including for busy receivers.
+    # Reuse the bounded consumer rather than attach memory/transport work and
+    # one executor waiter to every HTTP request. Actual readiness, authority,
+    # FIFO and delivery checks remain in that consumer's unchanged delivery path.
     try:
-        # deliver_pending reads status_monitor.get_status() (which can fork a tmux
-        # capture-pane via the stale-PROCESSING fallback) and, on delivery, paste-bombs
-        # the pane — blocking I/O either way, so keep it off the event loop.
-        await asyncio.to_thread(
-            inbox_service.deliver_pending, receiver_id, registry=get_plugin_registry(request)
-        )
+        inbox_service.queue_delivery(receiver_id, registry=get_plugin_registry(request))
     except Exception as e:
-        logger.warning(f"Immediate delivery attempt failed for {receiver_id}: {e}")
+        logger.warning(f"Inbox delivery wake rejected for {receiver_id}: {e}")
 
     return {
         "success": True,
