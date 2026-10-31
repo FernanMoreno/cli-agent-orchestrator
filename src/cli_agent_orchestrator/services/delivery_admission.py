@@ -31,6 +31,12 @@ class AdmissionAttempt:
 
 
 @dataclass(frozen=True)
+class StorageAdmissionAttempt:
+    reservation: "StorageReservation | None"
+    reason: AdmissionReason
+
+
+@dataclass(frozen=True)
 class AdmissionSnapshot:
     accepting: bool
     generation: int
@@ -48,6 +54,16 @@ class AdmissionSnapshot:
     # Retained admitted credits include reserved handoffs not yet started.
     storage_completion_credits: int = 0
     storage_retirement_pending: int = 0
+    storage_only_inflight: int = 0
+    storage_only_started: int = 0
+
+    @property
+    def delivery_inflight(self) -> int:
+        return self.inflight - self.storage_only_inflight
+
+    @property
+    def delivery_started(self) -> int:
+        return self.started - self.storage_only_started
 
 
 @dataclass(frozen=True, eq=False)
@@ -106,7 +122,7 @@ class DeliveryReservation:
     """A handoff can be cancelled only before one physical worker starts it."""
 
     def __init__(
-        self, owner: "DeliveryAdmission", key: int, receiver: str, footprint: ResourceAmounts
+        self, owner: "DeliveryAdmission", key: int, receiver: str | None, footprint: ResourceAmounts
     ):
         self._owner = owner
         self._key = key
@@ -143,6 +159,8 @@ class DeliveryReservation:
             self._state = "started"
             owner._pending.pop(self._key)
             owner._started += 1
+            if isinstance(self, StorageReservation):
+                owner._storage_only_started += 1
             return True
 
     def cancel_before_start(self) -> bool:
@@ -172,7 +190,11 @@ class DeliveryReservation:
         """
         owner = self._owner
         with owner._guard:
-            if self._state == "released" or self._retirement_requested:
+            if (
+                owner._leases.get(self._key) is not self
+                or self._state == "released"
+                or self._retirement_requested
+            ):
                 return False
             if self._state != "started":
                 raise RuntimeError("delivery reservation has not started")
@@ -278,6 +300,13 @@ class DeliveryReservation:
         return True
 
 
+class StorageReservation(DeliveryReservation):
+    """Storage operation using the common physical lifecycle, without a receiver."""
+
+    def __init__(self, owner: "DeliveryAdmission", key: int, footprint: ResourceAmounts):
+        super().__init__(owner, key, None, footprint)
+
+
 class DeliveryAdmission:
     """One ledger shared by local entry paths; not a cluster reservation.
 
@@ -298,6 +327,8 @@ class DeliveryAdmission:
         self._receivers: dict[str, int] = {}
         self._sequence = count()
         self._started = 0
+        self._storage_only_inflight = 0
+        self._storage_only_started = 0
         self._storage_connection_loans = 0
         self._additional_storage_connections = 0
         self._storage_retirement_pending = 0
@@ -481,6 +512,35 @@ class DeliveryAdmission:
             self._receivers[receiver] = key
             return AdmissionAttempt(lease, "capacity_available")
 
+    def try_reserve_storage(self, *, now: float, storage_slots: int = 1) -> StorageAdmissionAttempt:
+        """Charge a trusted storage operation against this same resource ledger.
+
+        CPU/RAM delivery headroom does not grant or prevent a storage-only
+        operation. Fresh authority and its full storage quantities still apply.
+        """
+        validate_clock(now)
+        footprint = ResourceAmounts(storage_slots=storage_slots)
+        if storage_slots == 0:
+            raise ValueError("storage_slots must be an integer >= 1")
+        with self._guard:
+            if not self._accepting:
+                return StorageAdmissionAttempt(None, "stopping")
+            decision = self._current_decision(now)
+            if decision.reason not in {"capacity_available", "resource_exhausted"}:
+                return StorageAdmissionAttempt(None, decision.reason)
+            if (
+                self._committed.storage_slots + storage_slots
+                > decision.resource_capacity.storage_slots
+            ):
+                return StorageAdmissionAttempt(None, "resource_exhausted")
+            key = next(self._sequence)
+            lease = StorageReservation(self, key, footprint)
+            self._committed = self._committed + footprint
+            self._leases[key] = lease
+            self._pending[key] = lease
+            self._storage_only_inflight += 1
+            return StorageAdmissionAttempt(lease, "capacity_available")
+
     def _release_locked(self, lease: DeliveryReservation) -> bool:
         if self._leases.get(lease._key) is not lease:
             return False
@@ -490,11 +550,15 @@ class DeliveryAdmission:
             self._storage_retirement_pending -= 1
         if lease._state == "started":
             self._started -= 1
+            if isinstance(lease, StorageReservation):
+                self._storage_only_started -= 1
+        if isinstance(lease, StorageReservation):
+            self._storage_only_inflight -= 1
         self._committed = self._committed - lease._remaining
         lease._remaining = ResourceAmounts()
         self._leases.pop(lease._key)
         self._pending.pop(lease._key, None)
-        if self._receivers.get(lease._receiver) == lease._key:
+        if lease._receiver is not None and self._receivers.get(lease._receiver) == lease._key:
             self._receivers.pop(lease._receiver)
         lease._state = "released"
         return True
@@ -554,4 +618,6 @@ class DeliveryAdmission:
                     self._committed.storage_slots - self._additional_storage_connections
                 ),
                 storage_retirement_pending=self._storage_retirement_pending,
+                storage_only_inflight=self._storage_only_inflight,
+                storage_only_started=self._storage_only_started,
             )

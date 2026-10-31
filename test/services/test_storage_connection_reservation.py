@@ -8,6 +8,24 @@ import pytest
 pytestmark = pytest.mark.offline_database
 
 
+@pytest.mark.parametrize("with_loan", [False, True])
+def test_copied_lease_cannot_request_retirement_or_increment_pending_counter(with_loan):
+    from copy import copy
+
+    owner = create()
+    assert observe(owner, 1)
+    lease = running(owner)
+    loan = lease.try_acquire_storage_connection(now=10.0) if with_loan else None
+    try:
+        before = owner.snapshot(now=10.0)
+        assert copy(lease).finish_after_storage() is False
+        assert owner.snapshot(now=10.0) == before
+    finally:
+        if loan is not None:
+            loan.finish()
+        lease.finish_after_storage()
+
+
 def running(owner, receiver="receiver"):
     lease = reserve(owner, receiver)
     assert lease.start()

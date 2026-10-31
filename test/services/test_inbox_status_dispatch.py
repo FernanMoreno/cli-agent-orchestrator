@@ -379,8 +379,9 @@ async def test_late_worker_is_fenced_even_after_admission_reopens(monkeypatch, r
                 from cli_agent_orchestrator.services.admission_policy import CapacityObservation
 
                 owner = c.service._admission
-                owner.observe(
-                    CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, resource_slots),
+                memory = 80 * 1024**2 * resource_slots
+                assert owner.observe(
+                    CapacityObservation(10.0, memory, memory, 16000, 16000, 2 * resource_slots + 1),
                     now=10.0,
                     generation=owner.generation,
                 )

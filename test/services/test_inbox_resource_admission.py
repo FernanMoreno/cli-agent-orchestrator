@@ -14,14 +14,72 @@ from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
 pytestmark = pytest.mark.offline_database
 
 
-def service(slots=8):
+def service(slots=8, *, physical_storage_slots=None):
     owner = DeliveryAdmission(AdmissionPolicy())
-    owner.observe(
-        CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, slots),
+    memory = 80 * 1024**2 * slots
+    storage = 2 * slots + 1 if physical_storage_slots is None else physical_storage_slots
+    assert owner.observe(
+        CapacityObservation(10.0, memory, max(memory, 1024**2), 16000, 16000, storage),
         now=10.0,
         generation=owner.generation,
     )
+    assert owner.snapshot(now=10.0).limit == min(slots, storage)
     return module.InboxService(admission=owner, clock=lambda: 10.0), owner
+
+
+@pytest.mark.parametrize(
+    "method", ["deliver_pending", "poll_opencode_pending_messages", "reconcile_orphaned_messages"]
+)
+def test_one_physical_slot_cannot_enter_a_two_session_delivery(monkeypatch, method):
+    inbox, owner = service(1, physical_storage_slots=1)
+    calls = []
+    monkeypatch.setattr(inbox, "_deliver_pending_locked", lambda *a: calls.append(a))
+    monkeypatch.setattr(module, "iter_pending_receiver_ids_by_provider", lambda *_: ["pending"])
+    monkeypatch.setattr(module, "iter_pending_receiver_ids_older_than", lambda *_: ["pending"])
+    if method == "deliver_pending":
+        inbox.deliver_pending("pending")
+    else:
+        getattr(inbox, method)()
+    assert calls == []
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert inbox._delivery_locks == {}
+
+
+@pytest.mark.asyncio
+async def test_one_physical_slot_keeps_status_wake_and_request_context_pending(monkeypatch):
+    inbox, owner = service(1, physical_storage_slots=1)
+    loop = asyncio.get_running_loop()
+    subscribed, attempted = asyncio.Event(), asyncio.Event()
+    sinks, delivered = [], []
+    original_reserve = owner.try_reserve
+
+    def subscribe(_topic, sink):
+        sinks.append(sink)
+        subscribed.set()
+
+    def reserve(*args, **kwargs):
+        result = original_reserve(*args, **kwargs)
+        loop.call_soon_threadsafe(attempted.set)
+        return result
+
+    monkeypatch.setattr(owner, "try_reserve", reserve)
+    monkeypatch.setattr(
+        module, "bus", SimpleNamespace(subscribe_sink=subscribe, unsubscribe=lambda *_: None)
+    )
+    monkeypatch.setattr(inbox, "_deliver_pending_locked", lambda *args: delivered.append(args))
+    runner = asyncio.create_task(inbox.run())
+    try:
+        await asyncio.wait_for(subscribed.wait(), 5)
+        inbox.queue_delivery("pending", registry=object())
+        await asyncio.wait_for(attempted.wait(), 5)
+        assert sinks[0].qsize() == len(sinks[0]._requests) == 1
+        assert delivered == []
+        assert owner.snapshot(now=10.0).delivery_inflight == 0
+    finally:
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
+        inbox.stop_accepting()
+        await inbox.drain(timeout_s=10)
 
 
 def test_denied_direct_delivery_does_not_read_or_mark_rows(monkeypatch):
@@ -225,6 +283,7 @@ async def test_consumer_can_start_more_than_four_under_one_observed_budget(monke
         observed = {await asyncio.wait_for(started.get(), 5) for _ in range(8)}
         assert observed == {str(i) for i in range(8)}
         assert owner.snapshot(now=10.0).started == 8
+        assert owner.snapshot(now=10.0).committed.storage_slots == 16
         assert sinks[0].qsize() == 1
     finally:
         release.set()
@@ -268,7 +327,7 @@ async def test_denied_wake_retains_ordinal_context_registry_until_capacity_signa
         await asyncio.sleep(0)
         assert sinks[0].qsize() == 1 and len(sinks[0]._requests) == 1
         assert not delivered.qsize()
-        owner.observe(
+        assert owner.observe(
             CapacityObservation(11.0, 2**32, 2**32, 16000, 16000, 2),
             now=11.0,
             generation=owner.generation,

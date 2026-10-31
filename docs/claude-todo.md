@@ -540,3 +540,6 @@ Infraestructura compartida Spec041/T018 (2026-10-31): puertos PostgreSQL físico
 
 
 Spec041 T018, checkpoint transversal Work/workers/fork (2026-10-31): integración física y helpers comunes validados; finales195/195 y2/2PASS, composición5/0 y PostgreSQL0/0/0. La ampliación histórica conserva1243PASS/3FAIL y sus correcciones; no equivale a aceptación nativa de claude ni a gates globales. T018/M1/M2/M3/SDK/UI siguen abiertos. Véase [evidencia y alcance](../specs/041-resource-aware-network-admission/validation-t018-work-workers.json) y [composición](../specs/041-resource-aware-network-admission/composition-t018-work-workers.md).
+
+
+Spec041 T018, Inbox/descubrimiento (2026-10-31): tres entradas con huella de dos sesiones y scanner separado en el mismo ledger, sin receptor ficticio. Retiro protegido contra copias; PG real verifica5→4 préstamos antes de join y PG1 verifica cero sesiones/checkouts. Final181/181PASS y composición5/0. Es evidencia de infraestructura común; T018/M1/M2/M3/SDK/UI y aceptación nativa/global siguen separados. [Recibo](../specs/041-resource-aware-network-admission/validation-t018-inbox-discovery.json).

@@ -204,7 +204,7 @@ class _StatusEventSink:
         | None
     ):
         while (event := self.pending.peek_event()) is not None:
-            attempt = admission.try_reserve(event[1], now=now)
+            attempt = admission.try_reserve(event[1], now=now, storage_slots=2)
             if attempt.reservation is not None:
                 wake = self.pop_delivery()
                 assert wake is not None
@@ -636,7 +636,9 @@ class InboxService:
         """
         with self._track_operation():
             if self._admission is not None:
-                attempt = self._admission.try_reserve(terminal_id, now=self._admission_clock())
+                attempt = self._admission.try_reserve(
+                    terminal_id, now=self._admission_clock(), storage_slots=2
+                )
                 if attempt.reservation is not None:
                     self._execute_reserved(attempt.reservation, terminal_id, num_messages, registry)
                 return
@@ -850,43 +852,70 @@ class InboxService:
         self, receiver_ids: Iterable[str], registry: PluginRegistry | None, label: str
     ) -> None:
         assert self._admission is not None
-        receivers = iter(receiver_ids)
+        scanner = self._admission.try_reserve_storage(now=self._admission_clock()).reservation
+        if scanner is None or not scanner.start():
+            if scanner is not None and scanner.cancel_before_start():
+                self.notify_admission_changed()
+            # Production discovery is lazy. Closing it before its first next()
+            # cannot open a checkout, including while admission is unknown.
+            close = getattr(receiver_ids, "close", None)
+            if close is not None:
+                close()
+            return
         pending: set[Future[None]] = set()
         completed: SimpleQueue[Future[None]] = SimpleQueue()
         failure: BaseException | None = None
         try:
-            if self._admission.snapshot(now=self._admission_clock()).available_slots:
-                for terminal_id in receivers:
-                    attempt = self._admission.try_reserve(terminal_id, now=self._admission_clock())
-                    if attempt.reservation is None:
-                        if attempt.reason == "receiver_busy":
-                            continue
-                        break
-                    lease = attempt.reservation
+            with physical_storage_scope(scanner, clock=self._admission_clock):
+                receivers = None
+                try:
+                    receivers = iter(receiver_ids)
+                    if self._admission.snapshot(now=self._admission_clock()).available_slots:
+                        for terminal_id in receivers:
+                            attempt = self._admission.try_reserve(
+                                terminal_id, now=self._admission_clock(), storage_slots=2
+                            )
+                            if attempt.reservation is None:
+                                if attempt.reason == "receiver_busy":
+                                    continue
+                                break
+                            lease = attempt.reservation
 
-                    def deliver_receiver(
-                        key: str = terminal_id, reservation: DeliveryReservation = lease
-                    ) -> None:
-                        self._deliver_sweep_receiver(key, registry, label, reservation)
+                            def deliver_receiver(
+                                key: str = terminal_id, reservation: DeliveryReservation = lease
+                            ) -> None:
+                                self._deliver_sweep_receiver(key, registry, label, reservation)
 
-                    future = self._submit_reserved(lease, terminal_id, deliver_receiver)
-                    pending.add(future)
-                    future.add_done_callback(completed.put)
-                    # Retire completed bookkeeping during streaming, not only at
-                    # the end; do not scan all active children per receiver.
-                    while True:
-                        try:
-                            finished = completed.get_nowait()
-                        except Empty:
-                            break
-                        pending.remove(finished)
-                        finished.result()
+                            future = self._submit_reserved(lease, terminal_id, deliver_receiver)
+                            pending.add(future)
+                            future.add_done_callback(completed.put)
+                            # O(1) retirement during streaming, before cursor close.
+                            while True:
+                                try:
+                                    finished = completed.get_nowait()
+                                except Empty:
+                                    break
+                                pending.remove(finished)
+                                finished.result()
+                except BaseException as error:
+                    failure = error
+                try:
+                    close = getattr(
+                        receivers if receivers is not None else receiver_ids, "close", None
+                    )
+                    if close is not None:
+                        close()
+                except BaseException as error:
+                    if failure is None:
+                        failure = error
         except BaseException as error:
-            failure = error
+            if failure is None:
+                failure = error
+        # Retire the physical discovery cursor before waiting for children.
+        # A failed close retains its exact loan and this scanner in the ledger.
         try:
-            close = getattr(receivers, "close", None)
-            if close is not None:
-                close()
+            if scanner.finish_after_storage():
+                self.notify_admission_changed()
         except BaseException as error:
             if failure is None:
                 failure = error

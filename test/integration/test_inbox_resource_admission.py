@@ -1,5 +1,6 @@
 """Bound Inbox admission protects actual PostgreSQL rows before any effect."""
 
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -12,10 +13,161 @@ from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy, Ca
 from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
 
 
+@pytest.mark.parametrize(
+    "method", ["poll_opencode_pending_messages", "reconcile_orphaned_messages"]
+)
+def test_one_storage_credit_cannot_open_discovery_sql_without_delivery_capacity(
+    isolated_memory_db, monkeypatch, method
+):
+    from sqlalchemy import event
+
+    db.create_terminal("no-scan", "no-scan-session", "worker", "opencode_cli", "r")
+    row = db.create_inbox_message("sender", "no-scan", "retained café")
+    owner = DeliveryAdmission(AdmissionPolicy())
+    memory = 80 * 1024**2
+    assert owner.observe(
+        CapacityObservation(10.0, memory, memory, 16000, 16000, 1),
+        now=10.0,
+        generation=owner.generation,
+    )
+    service = module.InboxService(admission=owner, clock=lambda: 10.0)
+    sessions, checkouts = [], []
+    original_factory = db.SessionLocal
+
+    def factory(*args, **kwargs):
+        sessions.append(True)
+        return original_factory(*args, **kwargs)
+
+    def checkout(*args):
+        checkouts.append(True)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "SessionLocal", factory)
+        event.listen(db.engine, "checkout", checkout)
+        try:
+            getattr(service, method)()
+            assert sessions == checkouts == []
+        finally:
+            event.remove(db.engine, "checkout", checkout)
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert owner.snapshot(now=10.0).storage_only_inflight == 0
+    assert [(message.id, message.status) for message in db.get_inbox_messages("no-scan")] == [
+        (row.id, MessageStatus.PENDING)
+    ]
+
+
+def test_real_discovery_cursor_and_deliveries_share_exact_physical_quantities(
+    isolated_memory_db, monkeypatch
+):
+    from sqlalchemy import text
+
+    from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
+
+    assert db.engine.dialect.name == "postgresql"
+    receivers = ["scanner-worker-a", "scanner-worker-b"]
+    for receiver in receivers:
+        db.create_terminal(receiver, "scan-session-" + receiver, "worker", "opencode_cli", "r")
+        db.create_inbox_message("sender", receiver, "scanner café 中文")
+    owner = DeliveryAdmission(AdmissionPolicy())
+    memory = 80 * 1024**2 * len(receivers)
+    assert owner.observe(
+        CapacityObservation(10.0, memory, memory, 16000, 16000, 1 + 2 * len(receivers)),
+        now=10.0,
+        generation=owner.generation,
+    )
+    service = module.InboxService(admission=owner, clock=lambda: 10.0)
+    all_entered, release_workers, allow_scan_close = Event(), Event(), Event()
+    closed, joining = Event(), Event()
+    guard = Lock()
+    entered, errors = [], []
+    original_list = module.iter_pending_receiver_ids_by_provider
+    original_join = service._join_deliveries
+
+    def listing(provider):
+        source = original_list(provider)
+        try:
+            for receiver in source:
+                yield receiver
+            # PostgreSQL's cursor remains owned until source.close(). Hold its
+            # last yielded row instead of exhausting it before the workers run.
+        finally:
+            source.close()
+            closed.set()
+
+    def held_listing(provider):
+        source = listing(provider)
+        try:
+            for number, receiver in enumerate(source, 1):
+                yield receiver
+                if number == len(receivers):
+                    assert all_entered.wait(10)
+                    assert allow_scan_close.wait(15)
+        finally:
+            source.close()
+
+    def send(terminal_id, *_args, **_kwargs):
+        with terminal_dispatch_lock(db.main_target(), terminal_id):
+            with db.SessionLocal() as session:
+                assert session.execute(text("SELECT 42")).scalar() == 42
+                with guard:
+                    entered.append(terminal_id)
+                    if len(entered) == len(receivers):
+                        all_entered.set()
+                assert release_workers.wait(15)
+
+    def join(pending):
+        joining.set()
+        return original_join(pending)
+
+    def run():
+        try:
+            service.poll_opencode_pending_messages()
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(module, "iter_pending_receiver_ids_by_provider", held_listing)
+    monkeypatch.setattr(service, "_join_deliveries", join)
+    monkeypatch.setattr(
+        module.provider_manager,
+        "get_provider",
+        lambda _: SimpleNamespace(has_pending_native_swarm=False),
+    )
+    monkeypatch.setattr(module.status_monitor, "get_status", lambda _: TerminalStatus.IDLE)
+    monkeypatch.setattr(module.terminal_service, "send_input", send)
+    thread = Thread(target=run)
+    thread.start()
+    try:
+        assert all_entered.wait(10), "both real delivery transactions did not enter"
+        assert not closed.is_set()
+        snapshot = owner.snapshot(now=10.0)
+        assert snapshot.delivery_started == len(receivers)
+        assert snapshot.storage_only_started == snapshot.storage_only_inflight == 1
+        assert snapshot.inflight == 1 + len(receivers)
+        assert snapshot.storage_connection_loans == snapshot.committed.storage_slots == 5
+        assert snapshot.storage_completion_credits == 5
+        allow_scan_close.set()
+        assert joining.wait(10) and closed.is_set(), "scanner was not closed before join"
+        snapshot = owner.snapshot(now=10.0)
+        assert snapshot.storage_only_inflight == snapshot.storage_only_started == 0
+        assert snapshot.delivery_started == len(receivers)
+        assert snapshot.storage_connection_loans == snapshot.committed.storage_slots == 4
+    finally:
+        allow_scan_close.set()
+        release_workers.set()
+        thread.join(10)
+    assert not thread.is_alive() and not errors
+    assert sorted(entered) == receivers
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert all(
+        db.get_inbox_messages(receiver)[0].status == MessageStatus.DELIVERED
+        for receiver in receivers
+    )
+
+
 @pytest.mark.parametrize("path", ["direct", "poll"])
-@pytest.mark.parametrize("recovered_slots", [1, 2, 7])
+@pytest.mark.parametrize("recovered_deliveries", [1, 2, 7])
 def test_real_pending_row_survives_denial_and_delivers_after_capacity(
-    isolated_memory_db, monkeypatch, path, recovered_slots
+    isolated_memory_db, monkeypatch, path, recovered_deliveries
 ):
     assert db.engine.dialect.name == "postgresql"
     db.create_terminal(
@@ -26,12 +178,15 @@ def test_real_pending_row_survives_denial_and_delivers_after_capacity(
     owner = DeliveryAdmission(AdmissionPolicy())
     clock = [10.0]
 
-    def observe(slots):
-        owner.observe(
-            CapacityObservation(clock[0], 2**32, 2**32, 16000, 16000, slots),
+    def observe(deliveries):
+        memory = 80 * 1024**2 * deliveries
+        slots = 2 * deliveries + int(path == "poll" and deliveries > 0)
+        assert owner.observe(
+            CapacityObservation(clock[0], memory, max(memory, 1024**2), 16000, 16000, slots),
             now=clock[0],
             generation=owner.generation,
         )
+        assert owner.snapshot(now=clock[0]).limit == deliveries
 
     observe(0)
     service = module.InboxService(admission=owner, clock=lambda: clock[0])
@@ -55,7 +210,7 @@ def test_real_pending_row_survives_denial_and_delivers_after_capacity(
     assert [(message.id, message.status) for message in actual] == [(row.id, MessageStatus.PENDING)]
     assert sent == []
     clock[0] = 11.0
-    observe(recovered_slots)
+    observe(recovered_deliveries)
     deliver()
     assert sent == [(("resource-receiver", payload), {"task_delivery": True})]
     assert [message.status for message in db.get_inbox_messages("resource-receiver")] == [
@@ -70,7 +225,7 @@ def test_storage_stages_between_real_transactions_keep_delivery_ownership(isolat
     assert db.engine.dialect.name == "postgresql"
     db.create_terminal("staged-receiver", "staged-session", "worker", "opencode_cli", "reviewer")
     owner = DeliveryAdmission(AdmissionPolicy())
-    owner.observe(
+    assert owner.observe(
         CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, 1),
         now=10.0,
         generation=owner.generation,
@@ -116,8 +271,8 @@ def test_inbox_real_queries_and_receipt_share_physical_storage_owner(
     )
     row = db.create_inbox_message("sender", "physical-receiver", "physical owner café")
     owner = DeliveryAdmission(AdmissionPolicy())
-    owner.observe(
-        CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, 1),
+    assert owner.observe(
+        CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, 2),
         now=10.0,
         generation=owner.generation,
     )
@@ -134,12 +289,13 @@ def test_inbox_real_queries_and_receipt_share_physical_storage_owner(
         snapshot = owner.snapshot(now=10.0)
         assert snapshot.started == 1
         assert snapshot.storage_connection_loans == 0
-        assert snapshot.storage_completion_credits == 1
+        assert snapshot.storage_completion_credits == 2
         sent.append(args)
 
     def before_query(*args):
         snapshot = owner.snapshot(now=10.0)
         assert snapshot.started == snapshot.storage_connection_loans == 1
+        assert snapshot.committed.storage_slots == 2
         statements.append(args[2])
 
     monkeypatch.setattr(module.terminal_service, "send_input", send)

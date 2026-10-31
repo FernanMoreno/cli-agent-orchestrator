@@ -1,0 +1,175 @@
+{
+  "schema": "caos.spec041.t018.inbox-discovery-checkpoint.v1",
+  "verified_utc": "2026-10-31T18:27:23.390157+00:00",
+  "base_head": "b61512b69757d6b28d0067f3e3c747fb66bf08ff",
+  "status": "PASS_LOCAL_STORAGE_ONLY_LEDGER_AND_INBOX_DISCOVERY",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_cli_executed": false,
+  "tested_files": [
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "digest": "sha256:5286dc12f541560e1c9983e1726d791b11b6f0235d32652c79fd35cc772e1eaf"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_service.py",
+      "digest": "sha256:29ff05e1738c2659a0272be5e11286d035767c07335e0d0b1d245d5e903bcfdb"
+    },
+    {
+      "path": "test/integration/test_inbox_resource_admission.py",
+      "digest": "sha256:fc25375b31cfae321158764b73d29adeb64c03bab7ce49f66053adf85ca86363"
+    },
+    {
+      "path": "test/services/test_inbox_resource_admission.py",
+      "digest": "sha256:6a2347a8c75ffaf215efd4f2fe19cdbe22ab1f47c675b2e54aafe7e3b9de1bdf"
+    },
+    {
+      "path": "test/services/test_inbox_status_dispatch.py",
+      "digest": "sha256:0a76fb675aa721fe786ec0ae869278609bf63681ae394adf23dc46f6f5cdd5c6"
+    },
+    {
+      "path": "test/services/test_storage_connection_reservation.py",
+      "digest": "sha256:a7238f3361271f10eea32450a005f67821840665fbfa1d306d16a0df5bea4af9"
+    },
+    {
+      "path": "test/services/test_storage_only_reservation.py",
+      "digest": "sha256:00b1c85a7d2639af4f655e1072a504dd7c9611294b2ae37ec87444c3d88995ce"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "t018-storage-only-red",
+      "cases": {
+        "total": 17,
+        "failure": 17,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 48.243,
+      "available_mib": 8646,
+      "candidate_digest": "sha256:71398a69aecdbc6fd73e2b4759ac962a8885c097ba45392ec38d605d09a9c511",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "15 expected failures for the not-yet-implemented storage-only API and2 actual identity/counter regressions from a copied lease. They are distinct causes."
+    },
+    {
+      "phase": "t018-storage-only-green",
+      "cases": {
+        "total": 176,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 52.889,
+      "available_mib": 8767,
+      "candidate_digest": "sha256:b8977ee85313463d672143191c16fea5ce86e30c0828f7308382e811e61af181",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "176 pure ledger/ports/policy checks; storage-only type, strict quantities, counter separation, stop/reload/pressure/closing and exact identity."
+    },
+    {
+      "phase": "t018-inbox-footprint-scan-red",
+      "cases": {
+        "total": 7,
+        "failure": 7,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 51.267,
+      "available_mib": 8994,
+      "candidate_digest": "sha256:2c8127f3da3d2ae373aa462a5e1a78737bb4404c8f8f8c4f3399d87201c03843",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "7 valid missing-wiring failures: PG1 admitted direct/status/sweeps, status ordinal popped,8callbacks committed8 not16, real cursor not accounted, real queries retained1 not2 credits."
+    },
+    {
+      "phase": "t018-inbox-footprint-scan-green",
+      "cases": {
+        "total": 138,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 66.097,
+      "available_mib": 9010,
+      "candidate_digest": "sha256:009dee21e9a624a614d385c1a9429cf3a0fd58473e017ae41555ba50d2df921b",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "138 passing core and wired Inbox cases including real PostgreSQL five-loan overlap and cursor retirement before join."
+    },
+    {
+      "phase": "t018-inbox-scan-regression-r2",
+      "cases": {
+        "total": 181,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 290.004,
+      "available_mib": 8788,
+      "candidate_digest": "sha256:bd4eae7cbcb5ec100af9f55c39d35772f63d69ec9f7c1280b573ea94be00a6b1",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "181 passing Inbox/ordering/context/lifecycle/runtime/Work and PostgreSQL cases, including two added PG1 negative checks for zero SessionLocal construction and zero checkout."
+    }
+  ],
+  "final_pytest": "181passed/0failures/0errors/0skipped/5warnings;276.83s pytest",
+  "earlier_component_checks": [
+    "176passed/0failures/0errors/0skipped/7warnings;50.95s",
+    "138passed/0failures/0errors/0skipped/7warnings;63.90s"
+  ],
+  "unused_descriptor": "t018-inbox-scan-regression was prepared but never executed; a status-reopen fixture was proactively made consistent with logical delivery capacity before preparing r2. No test failure or run is attributed to that descriptor.",
+  "format": "Black/isort7 Python files PASS; exact current source bytes match final181-case archive",
+  "types": "mypy2source modulesPASS;follow-imports=silent/defaultuntypedcoverage",
+  "architecture": {
+    "files": 439,
+    "dependencies": 1951,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": "Codex Luna Max/ECC scanner objective: design, invariant/test audit and final static code review. Identity/counter bug corrected after actual RED; requested native PG1 SQL-denial edge added and passed in final regression. Lead composition/diff review completed.",
+  "scope": [
+    "StorageReservation consumes only storage in the same ledger, requires fresh known authority/budget/ceiling and is independent of delivery RAM/CPU eligibility. No fake receiver, second ledger or fixed callback count.",
+    "Snapshot totals retain all operations for runtime retirement; separate storage_only and delivery counts are O(1).",
+    "Exact registered lease identity is checked before any retirement flag/counter mutation; copies cannot corrupt pending retirement.",
+    "Status consumer, direct delivery and sweep each reserve the complete2-session minimum before row reads/effects.",
+    "Sweep reserves1storage unit before iter/next, binds its real thread, closes its cursor within scope and requests retirement before joining children. First error survives and all known children are joined even on close/retirement/notification failure.",
+    "Real PostgreSQL scenario holds scanner1 plus two deliveries with advisory+ORM2each:5loans; scanner physically closes/retires before join, leaving4loans.",
+    "PG1 negative cases prove0SessionLocal creations and0checkouts before SQL, with durable PENDING rows preserved. Status refusal retains ordinal and request context.",
+    "Logical delivery fixture limits remain the same through RAM budgets; storage quantities declared separately, accepted observations asserted; staging-only contract still1. Pure1/5/20 scenarios are arithmetic, not20native agents."
+  ],
+  "not_accepted": [
+    "Protected SQL control budget for bootstrap/monitor and remaining ingress/control paths; further source audit pending.",
+    "Shutdown retry of exact owned uncertain closes.",
+    "Separating audited-pool capacity4 from global PostgreSQL callback capacity in monitor; pool limits unchanged.",
+    "T017 authorized cached diagnostic API.",
+    "T019 physical M1 with independent complete cgroup/namespace witness and dynamic sampler corrections.",
+    "T012–T016/T020 shared reservations M2 and authorized ordinary node placement M3.",
+    "T022 PostgreSQL policy history/API/typed SDK and T023 real administration UI.",
+    "Remaining provider/global gates."
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-storage-only-discovery",
+    "status": "applied",
+    "strict_lint_issues": 0,
+    "approval_digest": "sha256:f99d49200dcc744a942400e0e3bf97b8d8b0b22b8ac6480642016003c0bceeae"
+  }
+}
