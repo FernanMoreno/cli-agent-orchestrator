@@ -1,0 +1,113 @@
+{
+  "schema": "caos.spec041.validation.v1",
+  "verified_utc": "2026-10-31T23:53:41.963504+00:00",
+  "base_head": "47465740677fb72814e136e90c8f3643f28cc74a",
+  "status": "finite startup maintenance retirement component validated",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_provider_cli_executed": false,
+  "tested_files": {
+    "src/cli_agent_orchestrator/api/main.py": "sha256:62dc0ce33e5baeccb2c7ec0d72a79cfd3764527dd0f9dc9c055a7ca78e0ca18b",
+    "test/api/test_lifespan_inbox.py": "sha256:abdb72b004a64aa8fbe51c3cc02168a5a02aad31bf66c417167de11296a43f0c",
+    "test/api/test_startup_maintenance_lifetime.py": "sha256:c9f89b9dd0398098dcd6f1c0581a68a176bc67268c5933a2db91b647c49fc6c2"
+  },
+  "phases": [
+    {
+      "phase": "t018-startup-maintenance-red",
+      "cases": {
+        "total": 3,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 71.922,
+      "available_mib": 8677,
+      "candidate_sha256": "sha256:373f1a9c4151ed09e6342aab65b44d8b21cd21706a144152e751bdc7f319d495",
+      "candidate_archive_sha256": "sha256:7dd9160b0a17e20a4c3482647e55157188795998ef5c6a0e80fcee53a30b3ef7",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t018-startup-maintenance-green",
+      "cases": {
+        "total": 141,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 212.256,
+      "available_mib": 8647,
+      "candidate_sha256": "sha256:0d1d042f8dd3f943e28a0923f6fef426b5e0471aa07c29944d19147dad4c37ce",
+      "candidate_archive_sha256": "sha256:000df9e9159c29786c4b433a3d94d5fb952096344c1bc6a38f071f648e6efba6",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t018-startup-maintenance-acceptance",
+      "cases": {
+        "total": 143,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 212.253,
+      "available_mib": 8500,
+      "candidate_sha256": "sha256:21a61ee7f9419a134246915e44ab43f85b12ad3fbfb6040293c894ce52f24d61",
+      "candidate_archive_sha256": "sha256:7ad0779b0b37b0fc9c870a18333f1d02c6577559957f39f4bdd9e36933e0f0ce",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    }
+  ],
+  "checks": {
+    "black_isort": "3 files PASS",
+    "mypy": "1 source PASS; default annotation-unchecked notes retained",
+    "composition": "5 kept,0 broken",
+    "postgres": {
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+      "other_clients": 0,
+      "test_databases": 0,
+      "test_roles": 0,
+      "live_reuse_lease_verified": true,
+      "container_stopped": false
+    },
+    "independent_codex_read_review": "GO for bounded wiring; requested failure/cold-start cases added and final143executed"
+  },
+  "scope": [
+    "old-data, memory expiration and workflow retention have one shared lazy factory/owned-callback pattern",
+    "normal shutdown fences ingress, stops dispatcher, joins only finite maintenance, then retires resource runtime",
+    "startup failure cancels outer registered task while physical waiter stays protected; original startup exception survives and worker finishes before retirement",
+    "cold failure does not construct a maintenance coroutine; existing permanent actors keep their cancellation paths"
+  ],
+  "fixture_change": "Real Inbox lifespan fixture used an infinite cleanup_expired_memories double; corrected to finite no-op. Existing delivery/FIFO/plugins/shutdown assertions retained. New blocked callbacks independently prove maintenance drain.",
+  "evidence_limits": [
+    "five new maintenance tests use synthetic callbacks and real threads/tasks, not physical SQL admission proof",
+    "existing PG lifecycle/cleanup/retention/Work/projector regressions exercise integration separately in temporary stores on verified existing container",
+    "no maintenance algorithms, retention periods, deadlines, normal delivery limits, DB migrations or historical job recovery rules changed"
+  ],
+  "remaining": [
+    "prebind SQL resource ownership and combined physical budget",
+    "deferred initialization recovery offloads",
+    "other ingress/auth domains",
+    "M1 physical acceptance and M2/M3/SDK/UI/global gates"
+  ],
+  "knowledge_decision": "Existing durable invariant requires physical callback completion before resource retirement; no duplicate Obsidian entry.",
+  "graphify": "Read existing maintenance/retention anchors and75adjacent edges, verify source; preserve foreign generated assets. Local wrapper/list wiring does not warrant overwriting that unrelated graph work."
+}

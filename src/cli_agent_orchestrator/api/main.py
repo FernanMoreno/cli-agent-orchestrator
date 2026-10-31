@@ -20,6 +20,8 @@ from typing import (
     Annotated,
     Any,
     AsyncIterator,
+    Callable,
+    Coroutine,
     Dict,
     List,
     Literal,
@@ -1739,6 +1741,7 @@ async def lifespan(app: FastAPI):
     registry = PluginRegistry()
     local_peer_registered = False
     startup_tasks: list[asyncio.Task] = []
+    startup_maintenance_tasks: list[asyncio.Task] = []
     deferred_init_recovery_task: Optional[asyncio.Task] = None
     herdr_service_registered = False
     work_dispatcher_task: Optional[asyncio.Task] = None
@@ -1760,6 +1763,15 @@ async def lifespan(app: FastAPI):
         task = asyncio.create_task(coroutine)
         startup_tasks.append(task)
         return task
+
+    def start_maintenance_task(factory: Callable[[], Coroutine[Any, Any, Any]]) -> None:
+        async def maintain() -> None:
+            # Construct only after start: cold cancellation has no inner coroutine
+            # to abandon. Once running, join every physical maintenance callback.
+            await run_owned_async(factory())
+
+        task = start_lifespan_task(maintain())
+        startup_maintenance_tasks.append(task)
 
     async def retire_admission_runtime() -> None:
         if admission_runtime is None:
@@ -1864,14 +1876,14 @@ async def lifespan(app: FastAPI):
             inbox_service.start_accepting()
 
         # Run cleanup in background
-        start_lifespan_task(asyncio.to_thread(cleanup_old_data))
-        start_lifespan_task(cleanup_expired_memories())
+        start_maintenance_task(lambda: asyncio.to_thread(cleanup_old_data))
+        start_maintenance_task(cleanup_expired_memories)
         # Workflow run-journal retention (#504, NFR-SEC-3). Without this the sweep
         # had NO production caller and the advertised age/run-count retention never
         # ran, so the event log grew without bound. Startup-time and best-effort,
         # matching cleanup_old_data above: sweep_runs never raises (read failures
         # degrade to a 0-run no-op) and bounds are read from settings.
-        start_lifespan_task(asyncio.to_thread(_sweep_workflow_runs_at_startup))
+        start_maintenance_task(lambda: asyncio.to_thread(_sweep_workflow_runs_at_startup))
 
         # Start flow daemon as background task
         daemon_task = start_lifespan_task(flow_daemon())
@@ -2061,6 +2073,10 @@ async def lifespan(app: FastAPI):
             inbox_service.stop_accepting()
         if work_dispatcher_task is not None:
             await _stop_registered_work_dispatcher(work_dispatcher_task)
+
+        # Finite startup writers also belong to this lifespan. Permanent actors
+        # remain on their existing cancellation paths; do not gather them here.
+        await asyncio.gather(*startup_maintenance_tasks, return_exceptions=True)
 
         # Retire physical admission before releasing its process identity.
         await retire_admission_runtime()

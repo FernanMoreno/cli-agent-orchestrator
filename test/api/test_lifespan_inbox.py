@@ -379,7 +379,8 @@ def _patched_real_inbox_lifespan(monkeypatch, *, timeout_override: float | None 
 
     monkeypatch.setattr(status_monitor_module.status_monitor, "run", _wait_forever)
     monkeypatch.setattr(log_writer_module.log_writer, "run", _wait_forever)
-    monkeypatch.setattr(main_module, "cleanup_expired_memories", _wait_forever)
+    # Maintenance is finite; only the consumer actors are perpetual.
+    monkeypatch.setattr(main_module, "cleanup_expired_memories", _no_op_async)
     monkeypatch.setattr(main_module, "inbox_reconciliation_daemon", _wait_forever)
     monkeypatch.setattr(late_turn_observer, "run", _wait_forever)
     monkeypatch.setattr(observation_recovery, "run", _wait_forever)
