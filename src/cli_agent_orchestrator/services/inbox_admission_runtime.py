@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Generic, Protocol, TypeVar
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.storage_admission import storage_process_current
 from cli_agent_orchestrator.models.admission_control import AdmissionDiagnostics
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
@@ -253,6 +254,20 @@ class InboxAdmissionRuntime:
                     max(settings["provider_init_timeout"], settings["mcp_request_timeout"])
                 )
             await self.inbox.drain(timeout_s=timeout)
+        from cli_agent_orchestrator.clients.storage_admission import retry_storage_closes
+        from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+        def retire_storage() -> None:
+            # Participants have joined their physical bodies. Retry only the
+            # process registry's already requested exact closes, once per stop.
+            result = retry_storage_closes()
+            sampler_retired = self.monitor.retire_storage()
+            if not result.clean or sampler_retired is not True:
+                raise AdmissionRuntimeUnavailable("physical storage cleanup has not retired")
+
+        # A cancelled waiter never detaches the close callback or frees its
+        # retained loan; a subsequent stop may observe/retry the same owner.
+        await run_owned_async(asyncio.to_thread(retire_storage))
         if self.monitor.owner.snapshot(now=self._clock()).inflight:
             raise AdmissionRuntimeUnavailable("physical delivery reservations have not retired")
         if not self.monitor.retired:
@@ -266,6 +281,21 @@ class InboxAdmissionRuntime:
 # instance may erase an uncertain metrics connection or operator-write outcome.
 _PROCESS_PRESSURE = PostgresPressureSampler()
 _PROCESS_AUTHORITY = AuthorityMutationState()
+_INHERITED_PRESSURE: list[PostgresPressureSampler] = []
+
+
+def _after_pressure_fork_child() -> None:
+    global _PROCESS_PRESSURE
+    if _PROCESS_PRESSURE.process_current or not storage_process_current():
+        return
+    # Driver detachment and the child registry already succeeded. Retain old
+    # owners without touching their locks/handles or retiring parent tokens.
+    _INHERITED_PRESSURE.append(_PROCESS_PRESSURE)
+    _PROCESS_PRESSURE = PostgresPressureSampler()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_pressure_fork_child)
 
 
 def runtime_from_environment(
@@ -283,6 +313,8 @@ def runtime_from_environment(
 
     if not is_auth_enabled():
         raise ValueError("resource admission requires configured operator authentication")
+    if not _PROCESS_PRESSURE.process_current:
+        raise AdmissionRuntimeUnavailable("process storage ownership is unavailable")
     owner = DeliveryAdmission(AdmissionPolicy())
     bootstrap = bootstrap_factory() if bootstrap_factory is not None else ResourceBootstrap()
     monitor = AdmissionMonitor(

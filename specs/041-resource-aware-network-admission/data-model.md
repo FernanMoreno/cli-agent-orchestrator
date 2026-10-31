@@ -33,3 +33,9 @@ La reserva de colocación apunta al identificador del intento de asignación ord
 AdmissionLedgerDiagnostic congela snapshot, policy, budget, observation, ceiling y decisión bajo el mismo guard y una única observación de incertidumbre de cierre. AdmissionDiagnostics v1 es DTO estricto/inmutable process_local, con cantidades explícitas, counters de operaciones/entregas/storage/loans y capacidad nullable.
 
 CachedAdmissionConfiguration identifica configuración instalada y referencia privada de la observación que la convirtió en base; basis_current no se deriva solo de generation. CachedPostgresProbe/CachedResourceProbe y CachedMonitorResult conservan telemetría ya obtenida con procedencia y edad propias. El GET no hace I/O de recursos ni devuelve identidad/rutas/contenido. No crea registros durables ni autoridad nueva.
+
+## Cierre físico T018 (componente conocido validado)
+
+Connection distingue _owns_raw y fachada borrow. StorageCloseRegistry mantiene raw/callback/closed-witness/loans opcionales por identidad en el PID; un record sin loan sigue siendo pendiente. PostgresPressureSampler lleva PID y referencia incierta, y retire_owned solo confirma cierre tras el retry del registro. Apertura incierta sin handle conserva el latch.
+
+El lifecycle del runtime une su pasada de retry tras los cuerpos físicos, mantiene binding hasta los cuatro testigos (registry limpio/sampler/owner/monitor) y no interpreta cancelación como cierre. El fork crea sampler propio tras detach confirmado y conserva referencias extranjeras sin locks/retirar tokens.

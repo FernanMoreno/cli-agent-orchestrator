@@ -545,6 +545,10 @@ class AdmissionMonitor:
             self._stop_admission()
             raise
 
+    def retire_storage(self) -> bool:
+        """Physical sampler witness; monitor worker retirement alone is insufficient."""
+        return self._postgres.retire_owned()
+
     async def stop(self) -> None:
         self._stop_admission()
         runner = self._runner

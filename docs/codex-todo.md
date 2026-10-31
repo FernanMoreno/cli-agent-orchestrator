@@ -579,3 +579,6 @@ Spec041 T018, selección/INPUT/dominios (2026-10-31): selección Work con reserv
 
 
 Spec041 T017 local cerrado (2026-10-31): diagnóstico tipado autorizado API/Bridge, lectura cached O(1) sin consultar SQL/probes/política en cada GET. Snapshot coherente, presupuesto desconocido tras invalidación y procedencia separada de configuración/sonda/base. Final211PASS y composición5/0; HTTP/JWKS/PG reales y limpieza0/0/0. No es aceptación nativa adicional ni diagnóstico multinodo; T018/M1/M2/M3/SDK/UI y gates globales permanecen pendientes. [Recibo](../specs/041-resource-aware-network-admission/validation-t017-local-diagnostics.json).
+
+
+Spec041 T018, cierres/PID (2026-10-31): préstamo y propiedad raw separados; borrow no cierra al dueño, cierre propio sin loan también se retiene. Shutdown une un retry y exige testigo físico; fallos/cancelación preservan binding. Sampler hijo solo tras detach confirmado. Final418PASS, composición5/0 y PG0/0/0; no es nueva aceptación nativa del proveedor. Control/bootstrap/entradas SQL y M1/M2/M3/SDK/UI/global siguen pendientes. [Recibo](../specs/041-resource-aware-network-admission/validation-t018-storage-retirement.json).

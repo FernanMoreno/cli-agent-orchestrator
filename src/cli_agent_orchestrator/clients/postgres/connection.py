@@ -134,6 +134,7 @@ def record_factory(cursor: psycopg.Cursor[Any]) -> Callable[[Sequence[Any]], Rec
 class Connection:
     def __init__(self, target: DatabaseTarget, readonly: bool = False) -> None:
         self.target = target
+        self._owns_raw = True
         self._storage_pid = os.getpid()
         self._storage_loan: StorageConnectionLoan | None = acquire_storage_connection()
         raw = None
@@ -195,6 +196,7 @@ class Connection:
         connection = cls.__new__(cls)
         connection.raw = raw
         connection.target = target
+        connection._owns_raw = False
         connection._storage_loan = None  # The enclosing physical owner keeps its token.
         origin = getattr(raw, "_cao_storage_pid", None)
         if isinstance(origin, bool) or not isinstance(origin, int):
@@ -256,21 +258,25 @@ class Connection:
 
     def close(self) -> None:
         self._check_process()
+        if not getattr(self, "_owns_raw", False):
+            return  # A borrowed facade never owns physical retirement.
         loan = getattr(self, "_storage_loan", None)
         try:
             self.raw.close()
         finally:
-            if loan is not None:
-                if getattr(self.raw, "closed", False) is True:
+            if getattr(self.raw, "closed", False) is True:
+                if loan is not None:
                     self._storage_loan = None
                     loan.finish()
-                else:
-                    retain_storage_close(
-                        self.raw,
-                        close=self.close,
-                        closed=lambda: getattr(self.raw, "closed", False) is True,
-                        loan=loan,
-                    )
+            else:
+                # Process-owned cleanup includes control/probe connections
+                # that have no delivery loan. Ownership is explicit above.
+                retain_storage_close(
+                    self.raw,
+                    close=self.close,
+                    closed=lambda: getattr(self.raw, "closed", False) is True,
+                    loan=loan,
+                )
 
     @contextmanager
     def transaction(self) -> Iterator["Connection"]:

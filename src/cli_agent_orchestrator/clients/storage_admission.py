@@ -408,6 +408,11 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_after_storage_fork_child)
 
 
+def storage_process_current() -> bool:
+    """The process owns its registry; after fork this requires confirmed detach."""
+    return _PROCESS_STORAGE_CLOSES.process_current
+
+
 def storage_close_uncertainty() -> bool:
     return _PROCESS_STORAGE_CLOSES.has_pending()
 

@@ -323,3 +323,46 @@ def test_supplier_failure_before_open_can_recover_without_uncertain_physical_sta
     assert not opened
     assert sampler.sample().reason == "pressure_observed"
     assert len(opened) == 1 and opened[0].raw.closed
+
+
+def test_retirement_does_not_clear_an_open_without_an_exact_handle():
+    from unittest.mock import Mock
+
+    sampler = api().PostgresPressureSampler(
+        target_supplier=Mock(side_effect=AssertionError("retirement resolved target")),
+        connect_factory=Mock(side_effect=AssertionError("retirement opened connection")),
+    )
+    sampler._open_cleanup_unconfirmed = True
+    assert sampler.retire_owned() is False
+    assert sampler._open_cleanup_unconfirmed
+
+
+def test_retirement_only_witnesses_known_closed_probe_without_second_close():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    sampler = api().PostgresPressureSampler()
+    close = Mock(side_effect=AssertionError("sampler repeated registry close"))
+    connection = SimpleNamespace(raw=SimpleNamespace(closed=False), close=close)
+    sampler._uncertain = connection
+    assert sampler.retire_owned() is False
+    assert sampler._uncertain is connection
+    connection.raw.closed = True
+    assert sampler.retire_owned() is True
+    assert sampler._uncertain is None
+    close.assert_not_called()
+
+
+def test_retirement_rejects_foreign_process_before_touching_inherited_guard(monkeypatch):
+    import os
+
+    sampler = api().PostgresPressureSampler()
+
+    class ForbiddenGuard:
+        def acquire(self, *args, **kwargs):
+            raise AssertionError("retirement touched foreign guard")
+
+    sampler._guard = ForbiddenGuard()
+    pid = os.getpid()
+    monkeypatch.setattr(api().os, "getpid", lambda: pid + 1)
+    assert sampler.retire_owned() is False

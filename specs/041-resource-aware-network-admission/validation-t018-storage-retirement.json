@@ -1,0 +1,162 @@
+{
+  "schema": "caos.spec041.t018.exact-storage-retirement.v1",
+  "verified_utc": "2026-10-31T20:48:37.135452+00:00",
+  "base_head": "3cd5027d629d9b9d9f0a7b491d594ad5450513cc",
+  "status": "PASS_PROCESS_OWNED_EXACT_STORAGE_RETIREMENT",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_cli_executed": false,
+  "tested_files": [
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+      "digest": "sha256:3db7c008d0e055c125095f079cd793b34a9ad703aa975680d8d9437d7739072c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+      "digest": "sha256:48095249794dc4289225b39b7ffab60196ba1a0a6b1ecdb52eb608c8745385e7"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_postgres.py",
+      "digest": "sha256:24db4aa0f459d04904e4e834fe73ee4d685caa52a86306ba83f3eb95e3f8fa8a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+      "digest": "sha256:d8a1369f90fac2a69b2ede81dc24431b251173ab00bad9bd40a9aa35e35f03b8"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "digest": "sha256:b68c62359b86ccb94b308bc6a18705e19e5fbc9db0741c551f09fab0539ec8f6"
+    },
+    {
+      "path": "test/integration/test_admission_storage_retirement.py",
+      "digest": "sha256:72bfadb112590901bb67a182e2af3f246110b195e605b94ad23ae601ae5aeed6"
+    },
+    {
+      "path": "test/services/test_admission_postgres.py",
+      "digest": "sha256:f4d86957213fdc361d06910a8d22cf60aea39f2c95ed741783a23848826a924b"
+    },
+    {
+      "path": "test/services/test_admission_monitor.py",
+      "digest": "sha256:5d1c77b05cbbf6649cae5c1e3d0674cc9c13f39c679bb4fb48157f173aea7e71"
+    },
+    {
+      "path": "test/services/test_inbox_admission_runtime.py",
+      "digest": "sha256:3505f6b1b9791c771ac8ab4818caa4cb074bea13480ee8f0b098d5f610e01345"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "t018-shutdown-red-r3",
+      "cases": {
+        "total": 9,
+        "failure": 9,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 64.338,
+      "available_mib": 8648,
+      "candidate_digest": "sha256:00e85f19cd763b0191d1090855dfa7915ddb6051f2e2f28292ca61b24c1859a0",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "9fail:6real-PGcontract gaps (borrow closes owner, loanless not retained, no joined runtime retry/persistent gate) plus3missing sampler witness API cases. Fixture clocks corrected before execution."
+    },
+    {
+      "phase": "t018-shutdown-core",
+      "cases": {
+        "total": 75,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 61.49,
+      "available_mib": 8792,
+      "candidate_digest": "sha256:bdc594248a3f69b6f25d0a86f23a6df016a42e7b1e2adaa1729719784e520f56",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "75pass includes7realPGretirement cases and existing sampler/monitor/runtime controls. Overlaps final418."
+    },
+    {
+      "phase": "t018-shutdown-fork-red",
+      "cases": {
+        "total": 2,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 61.274,
+      "available_mib": 8686,
+      "candidate_digest": "sha256:4ab70535186dea2ce86f42089f36996bc97267cd4414a44c39eff6df304bc35f",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "1fail/1pass: positive detach child retains parent sampler PID and cannot retire; failed-detach negative control already passes."
+    },
+    {
+      "phase": "t018-shutdown-regression",
+      "cases": {
+        "total": 418,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 495.229,
+      "available_mib": 8556,
+      "candidate_digest": "sha256:2d1c98f5dce8fc98b66f28d20b08639289000308d376df1f2020746deb63a681",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "418pass across PostgreSQL clients/roles/schema/ORM/transactions, native/fork/storage adapters, retirement, pools/knowledge, monitor/runtime and API/Bridge/status."
+    }
+  ],
+  "unused_descriptors": [
+    "t018-shutdown-red prepared only, never executed: changed fixture to use the owner clock before any run.",
+    "t018-shutdown-red-r2 prepared only, never executed: corrected missing clock keyword parameter and AST-checked it before preparing r3. These are own preparation corrections, not product test failures."
+  ],
+  "final_pytest": "418passed/0failures/0errors/0skipped/19warnings;478.24s pytest",
+  "earlier_core": "75passed/2warnings;59.28s;overlaps418,not75extra distinct cases",
+  "format": "Black/isort9PythonPASS;exact9currentPythonfilesmatchclosed418-casearchive",
+  "types": "mypy5source modulesPASS;follow-imports=silent/defaultuntypedscope",
+  "architecture": {
+    "files": 440,
+    "dependencies": 1958,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": "Codex Luna Max/ECC scoped shutdown design and3read-review rounds. Final conditional fork finding reproduced with actual POSIX fork under held parent lock and corrected; lead rechecked source and full418 cases. No further review loops or Claude CLI. Lead composition/diff review complete.",
+  "scope": [
+    "Connection explicitly owns its raw only when constructed; borrow facade close never physically closes/registers the outer raw. Row/transaction/target identity contracts retained.",
+    "Known failed owned close is retained even with no admission loan. Registry is PROCESS-wide for all already requested server-target closes, not profile-scoped; no new target resolution, SQL authority, replacement opens or closing in-use pool entries.",
+    "Runtime stops monitor/control and drains participant bodies before one joined physical registry retry. Cancellation joins its worker; persistent failure retains binding and _retiredFalse even when inflight loans are zero.",
+    "Pressure sampler witnesses exact known wrapper closed after the single registry retry; it never issues a duplicate physical close or new probe. Unknown open without a returned handle remains blocked even if registry clean. PID checked before sampler retirement guard.",
+    "Confirmed post-fork driver detach/child registry permits a fresh default child sampler. Parent references retained without touching parent locks/handles/tokens. Own-PID hook and failed detach cannot reset it; factory refuses foreign sampler.",
+    "RealPGobserver verifies exact backend PID alive before held retry and absent only after nativeclosedTrue. Loaned/loanless transient/persistent cases and repeated cancellation preserve ownership. Actual fork and existing native/ORM child-finalizer tests execute; no model inference."
+  ],
+  "not_accepted": [
+    "T018 protected SQL control/bootstrap/monitor and remaining direct API/MCP transaction ingress, plus remaining combined-budget/physical stage acceptance.",
+    "Recovery of an unknown open without an exact returned handle; it intentionally stays blocked, not healed by time/registry.clean.",
+    "Fork during libpq/native connect before registered handle ownership, or arbitrary external unregistered handles.",
+    "T019 physicalM1 with complete hierarchy witness/dynamic cgroup sampler correction.",
+    "T012–T016/T020 shared reservations/recoveryM2 and authorized node placementM3.",
+    "T022 PostgreSQL policy history/API/typed SDK and T023 real administration UI; remaining native/global gates."
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-exact-storage-retirement",
+    "status": "applied",
+    "strict_lint_issues": 0,
+    "approval_digest": "sha256:fe99307f8dd9d4ccd3c12cb976dcf96bf483b6c94ec2d2385ab03c5c52731a4e"
+  }
+}

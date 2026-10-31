@@ -65,13 +65,22 @@ def fixture(*, local_storage_capacity=lambda: 12):
 
     class Postgres:
         def __init__(self):
+            self._pid = os.getpid()
             self.slots = 12
             self.calls = 0
             self.after = lambda: None
             self.policies = []
 
+        @property
+        def process_current(self):
+            return self._pid == os.getpid()
+
         def configure(self, policy):
             self.policies.append(policy)
+            return True
+
+        def retire_owned(self):
+            # This deterministic sampler owns telemetry only, never a handle.
             return True
 
         def sample(self):

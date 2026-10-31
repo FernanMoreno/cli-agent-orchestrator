@@ -295,3 +295,36 @@ def test_runtime_factory_does_not_use_audit_pool_as_global_delivery_capacity(
     finally:
         for lease in leases:
             assert lease.cancel_before_start()
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_forked_runtime_pressure_owner_requires_confirmed_detachment(monkeypatch, detached):
+    from test.clients.test_storage_admission import fork_with_held_locks
+
+    from cli_agent_orchestrator.clients import storage_admission
+
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    parent = api._PROCESS_PRESSURE
+    if not detached:
+        monkeypatch.setattr(storage_admission, "_FORK_STORAGE_DETACHER", lambda: False)
+
+    def child():
+        assert storage_admission._PROCESS_STORAGE_CLOSES.process_current is detached
+        if detached:
+            assert api._PROCESS_PRESSURE is not parent
+            assert api._PROCESS_PRESSURE.retire_owned() is True
+        else:
+            assert api._PROCESS_PRESSURE is parent
+        assert parent.retire_owned() is False
+
+    fork_with_held_locks(child, [parent._guard])
+    assert api._PROCESS_PRESSURE is parent
+    assert parent.retire_owned() is True
+
+
+def test_pressure_fork_hook_cannot_replace_its_current_process_owner():
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    parent = api._PROCESS_PRESSURE
+    with parent._guard:
+        api._after_pressure_fork_child()
+    assert api._PROCESS_PRESSURE is parent

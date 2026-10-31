@@ -1,5 +1,6 @@
 """Read-only pressure telemetry for one target server, not shared reservations."""
 
+import os
 import threading
 import time
 from contextlib import AbstractContextManager
@@ -98,6 +99,7 @@ class PostgresPressureSampler:
         clock: Callable[[], float] = time.monotonic,
         policy: PostgresPressurePolicy | None = None,
     ):
+        self._pid = os.getpid()
         self._target_supplier = target_supplier
         self._connect = connect_factory
         self._clock = clock
@@ -105,6 +107,10 @@ class PostgresPressureSampler:
         self._guard = threading.Lock()
         self._uncertain: Connection | None = None
         self._open_cleanup_unconfirmed = False
+
+    @property
+    def process_current(self) -> bool:
+        return self._pid == os.getpid()
 
     def configure(self, policy: PostgresPressurePolicy) -> bool:
         """Update the same owner without forgetting any physical uncertainty."""
@@ -187,5 +193,24 @@ class PostgresPressureSampler:
             if self._open_cleanup_unconfirmed or self._uncertain is not None:
                 return _unknown(at, "probe_cleanup_unconfirmed")
             return result
+        finally:
+            self._guard.release()
+
+    def retire_owned(self) -> bool:
+        """Witness exact probe retirement after the process registry's retry.
+
+        Never perform a second close, resolve a target or open a replacement.
+        An uncertain open without a returned handle cannot be proved retired.
+        """
+        if not self.process_current:
+            return False
+        if not self._guard.acquire(blocking=False):
+            return False
+        try:
+            if self._uncertain is not None:
+                if not _closed(self._uncertain):
+                    return False
+                self._uncertain = None
+            return not self._open_cleanup_unconfirmed
         finally:
             self._guard.release()
