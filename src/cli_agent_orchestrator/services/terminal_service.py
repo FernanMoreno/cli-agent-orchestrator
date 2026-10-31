@@ -83,6 +83,11 @@ from cli_agent_orchestrator.clients.database import (
     update_terminals_session_incarnation,
 )
 from cli_agent_orchestrator.clients.postgres.config import DatabaseTarget
+from cli_agent_orchestrator.clients.storage_admission import (
+    StorageAdmissionUnavailable,
+    check_storage_admission,
+    storage_admission_failed,
+)
 from cli_agent_orchestrator.constants import (
     CALLBACK_TERMINAL_ID_ENV,
     CALLBACK_URL_ENV,
@@ -726,6 +731,17 @@ DEFAULT_NATIVE_CHILD_LEASE_SECONDS = 30.0 * 60.0
 _memory_injected_terminals: set = set()
 _memory_injected_lock = threading.Lock()
 
+
+@dataclass
+class _MemoryInjectionClaim:
+    terminal_id: str
+    claimed: bool = False
+
+
+_memory_injection_call: contextvars.ContextVar[_MemoryInjectionClaim | None] = (
+    contextvars.ContextVar("memory_injection_call", default=None)
+)
+
 _CURRENT_COMPOSER_PROBE_MAX_CHARS = 64
 
 # Strong references to in-flight deferred-init background tasks. asyncio keeps
@@ -806,6 +822,9 @@ def inject_memory_context(
         if terminal_id in _memory_injected_terminals:
             return first_message
         _memory_injected_terminals.add(terminal_id)
+        claim = _memory_injection_call.get()
+        if claim is not None and claim.terminal_id == terminal_id:
+            claim.claimed = True
 
     if frozen_memory is not None:
         # "" is a SUPPLIED block, not an absent one: it means the original run
@@ -853,6 +872,10 @@ def inject_memory_context(
         if context:
             return context + "\n\n" + first_message
     except Exception as e:
+        if storage_admission_failed():
+            with _memory_injected_lock:
+                _memory_injected_terminals.discard(terminal_id)
+            raise StorageAdmissionUnavailable() from None
         logger.warning(f"Failed to inject memory context for terminal {terminal_id}: {e}")
     return first_message
 
@@ -5176,6 +5199,7 @@ def send_input(
 
     turn_sequence: int | None = None
     transport_attempted = False
+    memory_claim = _MemoryInjectionClaim(terminal_id)
     receipt_dispatch_started = False
     try:
         metadata = get_terminal_metadata(terminal_id)
@@ -5344,7 +5368,11 @@ def send_input(
         receipt_state: dict[str, str] | None = None
         receipt_claimed = False
         if not prepared_input:
-            message = inject_memory_context(message, terminal_id, frozen_memory)
+            token = _memory_injection_call.set(memory_claim)
+            try:
+                message = inject_memory_context(message, terminal_id, frozen_memory)
+            finally:
+                _memory_injection_call.reset(token)
 
             # Providers with an otherwise ambiguous terminal renderer may
             # attach a unique completion-receipt instruction to this one input
@@ -5471,6 +5499,7 @@ def send_input(
                 f"Terminal {terminal_id} disappeared before input; reconcile.", action="reconcile"
             )
         _guard_initialization_failure(terminal_id, fresh_metadata)
+        check_storage_admission()
         try:
             transport_attempted = True
             backend.send_keys(
@@ -5499,6 +5528,7 @@ def send_input(
                 ) from exc
             raise
 
+        check_storage_admission()
         status_monitor.notify_input_delivered(terminal_id)
 
         if receipt_state is not None:
@@ -5567,11 +5597,21 @@ def send_input(
                         traceparent=inject_traceparent(),
                     ),
                 )
+        check_storage_admission()
         return turn_sequence
 
     except Exception as e:
         if turn_sequence is not None and not transport_attempted:
             status_monitor.abort_turn(terminal_id, turn_sequence)
+        if isinstance(e, StorageAdmissionUnavailable) or storage_admission_failed():
+            if not transport_attempted and memory_claim.claimed:
+                with _memory_injected_lock:
+                    _memory_injected_terminals.discard(terminal_id)
+            raise TerminalInputBlockedError(
+                "Storage resources are unavailable for this input",
+                action="reconcile" if transport_attempted else "inspect",
+                delivery_may_have_occurred=transport_attempted,
+            ) from None
         logger.error(f"Failed to send input to terminal {terminal_id}: {e}")
         raise
     finally:

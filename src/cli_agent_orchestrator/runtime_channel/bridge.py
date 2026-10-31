@@ -33,6 +33,11 @@ import websockets
 from websockets.asyncio.client import ClientConnection, connect
 
 from cli_agent_orchestrator.clients import database
+from cli_agent_orchestrator.clients.storage_admission import (
+    StorageAdmissionUnavailable,
+    check_storage_admission,
+    physical_storage_scope,
+)
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER
 from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.runtime_channel.protocol import (
@@ -72,6 +77,13 @@ class _AdmittedInput:
     bridge: "Bridge"
     command: Command
     reservation: DeliveryReservation
+
+
+@dataclass
+class _InputLifetime:
+    reservation: DeliveryReservation | None = None
+    claimed: bool = False
+    settled: bool = False
 
 
 def _resource_refusal() -> TerminalInputBlockedError:
@@ -227,7 +239,45 @@ class Bridge:
             else:
                 self._terminal_locks[terminal_id] = (lock, users - 1)
 
+    async def _owned_store_call(self, lifetime, function, *args, **kwargs):
+        # Cancellation never detaches a physical journal writer from its owner.
+        from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+        def invoke():
+            reservation = lifetime.reservation
+            owner = (
+                reservation if reservation is not None and reservation.state == "started" else None
+            )
+            with physical_storage_scope(owner, clock=self._resource_clock):
+                result = function(*args, **kwargs)
+                check_storage_admission()
+                return result
+
+        return await run_owned_async(asyncio.to_thread(invoke))
+
+    @staticmethod
+    def _retire_input(lifetime: _InputLifetime) -> None:
+        reservation = lifetime.reservation
+        if reservation is not None:
+            # Every physical input/journal worker is joined before this handoff.
+            if reservation.state == "started":
+                reservation.finish_after_storage()
+            else:
+                reservation.cancel_before_start()
+            lifetime.reservation = None
+
     async def handle(self, command: Command) -> None:
+        lifetime = _InputLifetime()
+        try:
+            await self._handle_command(command, lifetime)
+        except BaseException:
+            if lifetime.claimed and not lifetime.settled:
+                await self._owned_store_call(lifetime, self.store.mark_unknown, command.op_id)
+            raise
+        finally:
+            self._retire_input(lifetime)
+
+    async def _handle_command(self, command: Command, lifetime: "_InputLifetime") -> None:
         """Durable receive claim precedes every possible native effect."""
         claimed = False
         admitted_input: _AdmittedInput | None = None
@@ -240,7 +290,8 @@ class Bridge:
                 or command.deadline <= time.time()
             ):
                 raise ValueError("Remote command authority expired or changed")
-            row = await asyncio.to_thread(
+            row = await self._owned_store_call(
+                lifetime,
                 self.store.prepare,
                 command.op_id,
                 self.runtime_id,
@@ -252,11 +303,19 @@ class Bridge:
                 deadline=command.deadline,
             )
             if row["state"] == "settled":
+                lifetime.settled = True
                 await self._send(Result.model_validate(row["result"]))
                 return
-            claimed = await asyncio.to_thread(
-                self.store.claim, command.op_id, connection_epoch=self.connection_epoch
-            )
+
+            def claim():
+                # The physical worker records the result before an interrupted
+                # await can discard it; cancellation then reconciles a real claim.
+                lifetime.claimed = self.store.claim(
+                    command.op_id, connection_epoch=self.connection_epoch
+                )
+                return lifetime.claimed
+
+            claimed = await self._owned_store_call(lifetime, claim)
             if not claimed:
                 result = Result(
                     op_id=command.op_id,
@@ -271,15 +330,17 @@ class Bridge:
                 if not command.terminal_id:
                     raise _resource_refusal()
                 attempt = self._resource_admission.try_reserve(
-                    command.terminal_id, now=self._resource_clock()
+                    command.terminal_id, now=self._resource_clock(), storage_slots=2
                 )
                 input_reservation = attempt.reservation
+                lifetime.reservation = input_reservation
                 if input_reservation is None:
                     raise _resource_refusal()
                 admitted_input = _AdmittedInput(self, command, input_reservation)
             # Cancellation/reset holds its own dispatch lock in the service.
             async with self._terminal_turn(command.terminal_id or command.op_id):
-                if not await asyncio.to_thread(
+                if not await self._owned_store_call(
+                    lifetime,
                     self.store.effect_is_current,
                     command.op_id,
                     connection_epoch=command.connection_epoch,
@@ -302,8 +363,8 @@ class Bridge:
                         payload = await self.execute(command, _admitted_input=admitted_input)
                 observed_id = command.terminal_id or payload.get("terminal", {}).get("id")
                 if observed_id:
-                    payload["revision"] = await asyncio.to_thread(
-                        self.store.next_revision, observed_id, self.incarnation_id
+                    payload["revision"] = await self._owned_store_call(
+                        lifetime, self.store.next_revision, observed_id, self.incarnation_id
                     )
             result = Result(
                 op_id=command.op_id,
@@ -311,13 +372,19 @@ class Bridge:
                 payload=payload,
                 runtime_incarnation_id=self.incarnation_id,
             )
-        except asyncio.CancelledError:
-            if claimed:
-                await asyncio.shield(asyncio.to_thread(self.store.mark_unknown, command.op_id))
-            raise
         except Exception as exc:
             from cli_agent_orchestrator.runtime_channel.errors import encode_error
 
+            if (
+                isinstance(exc, StorageAdmissionUnavailable)
+                and input_reservation is not None
+                and input_reservation.state == "started"
+            ):
+                exc = TerminalInputBlockedError(
+                    "Input storage outcome requires reconciliation",
+                    action="reconcile",
+                    delivery_may_have_occurred=True,
+                )
             kind, detail = encode_error(exc)
             result = Result(
                 op_id=command.op_id,
@@ -327,19 +394,21 @@ class Bridge:
                 error_detail=detail,
                 runtime_incarnation_id=self.incarnation_id,
             )
-        finally:
-            if input_reservation is not None:
-                # Started work retires in its physical worker. Only a handoff
-                # that never started may be cancelled by this async owner.
-                input_reservation.cancel_before_start()
         if claimed:
-            await asyncio.to_thread(
+            settled = await self._owned_store_call(
+                lifetime,
                 self.store.settle,
                 command.op_id,
                 self.runtime_id,
                 self.incarnation_id,
                 result.model_dump(mode="json"),
             )
+            if settled is not True:
+                raise RuntimeError("Remote result was not persisted")
+            lifetime.settled = True
+        # The durable result permits replay; a stalled/lost wire ACK is not SQL
+        # work and cannot retain the already completed invocation's credit.
+        self._retire_input(lifetime)
         await self._send(result)
 
     async def execute(
@@ -500,7 +569,7 @@ class Bridge:
                 lease = _admitted_input.reservation if _admitted_input is not None else None
                 if lease is not None and not lease.start():
                     raise _resource_refusal()
-                try:
+                with physical_storage_scope(lease, clock=self._resource_clock):
                     return guarded(
                         terminal_service.send_input,
                         terminal_id,
@@ -513,9 +582,6 @@ class Bridge:
                         task_delivery=payload.get("task_delivery", False),
                         attach_turn_receipt=payload.get("attach_turn_receipt", True),
                     )
-                finally:
-                    if lease is not None:
-                        lease.finish()
 
             if _admitted_input is None:
                 success = await asyncio.to_thread(send_input)
@@ -523,12 +589,22 @@ class Bridge:
                 from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
 
                 success = await run_owned_blocking(send_input)
+
+            def read_terminal():
+                lease = _admitted_input.reservation if _admitted_input is not None else None
+                with physical_storage_scope(lease, clock=self._resource_clock):
+                    terminal = _jsonable(terminal_service.get_terminal(terminal_id))
+                    check_storage_admission()
+                    return terminal
+
+            if _admitted_input is None:
+                terminal = await asyncio.to_thread(read_terminal)
+            else:
+                terminal = await run_owned_blocking(read_terminal)
             return {
                 "success": success,
                 "turn_sequence": success,
-                "terminal": _jsonable(
-                    await asyncio.to_thread(terminal_service.get_terminal, terminal_id)
-                ),
+                "terminal": terminal,
             }
         if command.type == CommandType.KEY:
             success = await asyncio.to_thread(

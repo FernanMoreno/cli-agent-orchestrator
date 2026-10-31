@@ -17,6 +17,7 @@ import stat
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, cast
@@ -29,6 +30,15 @@ from cli_agent_orchestrator.clients.postgres.connection import (
     ConnectionCursor,
     ConnectionRaw,
     record_factory,
+)
+from cli_agent_orchestrator.clients.postgres.fork_handles import track_storage_handle
+from cli_agent_orchestrator.clients.storage_admission import (
+    StorageAdmissionUnavailable,
+    StorageConnectionLoan,
+    acquire_storage_connection,
+    note_storage_denial,
+    retain_storage_close,
+    storage_close_owns_loan,
 )
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
 
@@ -61,6 +71,9 @@ _TLS_DEFAULT_FILES = (
     "postgresql.key",
 )
 _FORKED_RAW_CONNECTIONS: list[psycopg.Connection] = []
+_AUDIT_STORAGE_LOAN: ContextVar[StorageConnectionLoan | None] = ContextVar(
+    "cao_audit_storage_loan", default=None
+)
 
 
 def _target_base(target: DatabaseTarget) -> tuple[object, ...]:
@@ -749,6 +762,7 @@ class LegacyMemoryAuditConnectionManager:
         self._physical_count = 0
         self._pid = os.getpid()
         self._closed = False
+        self._storage_controlled = False
         if hasattr(os, "register_at_fork"):
             os.register_at_fork(after_in_child=self._after_fork_child)
 
@@ -827,16 +841,35 @@ class LegacyMemoryAuditConnectionManager:
         profile = _resolve_profile(resolved, self._profile_key)
         return profile
 
+    def _retry_storage_close(self, entry_key: int, entry: _Entry) -> None:
+        self._ensure_process()
+        with self._condition:
+            if self._entries.get(entry_key) is entry:
+                self._close_entry_locked(entry_key, entry)
+            elif entry.raw.closed is not True:
+                raise RuntimeError("private PostgreSQL retirement ownership changed")
+
     def _close_entry_locked(self, entry_key: int, entry: _Entry) -> None:
         entry.retired = True
         entry.leased = False
-        if not entry.raw.closed:
-            entry.raw.close()
-        if not entry.raw.closed:
-            raise RuntimeError("private PostgreSQL session remained open after close")
+        try:
+            if not entry.raw.closed:
+                entry.raw.close()
+            if not entry.raw.closed:
+                raise RuntimeError("private PostgreSQL session remained open after close")
+        finally:
+            loan = _AUDIT_STORAGE_LOAN.get()
+            if entry.raw.closed is not True and (loan is not None or self._storage_controlled):
+                held_loan = loan if loan is not None and not storage_close_owns_loan(loan) else None
+                retain_storage_close(
+                    entry.raw,
+                    close=lambda: self._retry_storage_close(entry_key, entry),
+                    closed=lambda: entry.raw.closed is True,
+                    loan=held_loan,
+                )
         if self._entries.get(entry_key) is entry:
             self._entries.pop(entry_key)
-        self._physical_count -= 1
+            self._physical_count -= 1
         self._condition.notify_all()
 
     def _observe_profile_locked(self, profile: _Profile) -> None:
@@ -956,9 +989,12 @@ class LegacyMemoryAuditConnectionManager:
         self, resolved: _ResolvedProfile, resolver: Callable[[], DatabaseTarget] | None
     ) -> _Entry:
         raw = None
+        attempted = False
         try:
             parameters = dict(resolved.parameters)
+            attempted = True
             raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
+            track_storage_handle(raw)
             current = self._resolve(resolved.target, resolver)
             try:
                 if current.profile != resolved.profile:
@@ -983,6 +1019,9 @@ class LegacyMemoryAuditConnectionManager:
             raw = None
             return entry
         except BaseException:
+            loan = _AUDIT_STORAGE_LOAN.get()
+            if raw is None and attempted and loan is not None:
+                retain_storage_close(loan, close=None, closed=lambda: False, loan=loan)
             closed = raw is None
             if raw is not None:
                 try:
@@ -1003,6 +1042,16 @@ class LegacyMemoryAuditConnectionManager:
                         retired=True,
                     )
                     self._entries[id(entry)] = entry
+                    if loan is not None or self._storage_controlled:
+                        held_loan = (
+                            loan if loan is not None and not storage_close_owns_loan(loan) else None
+                        )
+                        retain_storage_close(
+                            raw,
+                            close=lambda: self._retry_storage_close(id(entry), entry),
+                            closed=lambda: raw.closed is True,
+                            loan=held_loan,
+                        )
                 else:
                     self._physical_count -= 1
                 self._condition.notify_all()
@@ -1026,6 +1075,38 @@ class LegacyMemoryAuditConnectionManager:
 
     @contextmanager
     def checkout(
+        self,
+        target: DatabaseTarget,
+        *,
+        resolver: Callable[[], DatabaseTarget] | None = None,
+        readonly: bool = False,
+    ) -> Iterator[_PooledAuditConnection]:
+        loan = acquire_storage_connection()
+        if loan is not None:
+            self._storage_controlled = True
+        token = _AUDIT_STORAGE_LOAN.set(loan)
+        entered = False
+        try:
+            if loan is not None and self.admission_slots() is None:
+                note_storage_denial()
+                raise StorageAdmissionUnavailable()
+            with self._checkout_physical(
+                target, resolver=resolver, readonly=readonly
+            ) as connection:
+                entered = True
+                yield connection
+        except TimeoutError:
+            if loan is not None and not entered:
+                note_storage_denial()
+                raise StorageAdmissionUnavailable() from None
+            raise
+        finally:
+            _AUDIT_STORAGE_LOAN.reset(token)
+            if loan is not None and not storage_close_owns_loan(loan):
+                loan.finish()
+
+    @contextmanager
+    def _checkout_physical(
         self,
         target: DatabaseTarget,
         *,

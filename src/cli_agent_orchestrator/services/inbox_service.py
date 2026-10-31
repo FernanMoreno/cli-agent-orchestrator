@@ -25,6 +25,7 @@ from cli_agent_orchestrator.clients.database import (
     iter_pending_receiver_ids_older_than,
     update_message_status,
 )
+from cli_agent_orchestrator.clients.storage_admission import physical_storage_scope
 from cli_agent_orchestrator.constants import (
     EAGER_INBOX_DELIVERY,
     INBOX_RECONCILE_GRACE_SECONDS,
@@ -308,10 +309,11 @@ class InboxService:
                 if not acquired or not reservation.start():
                     return
                 try:
-                    self._deliver_pending_locked(terminal_id, num_messages, registry)
+                    with physical_storage_scope(reservation, clock=self._admission_clock):
+                        self._deliver_pending_locked(terminal_id, num_messages, registry)
                 finally:
                     # Includes every send, audit, receipt and status write.
-                    reservation.finish()
+                    reservation.finish_after_storage()
         finally:
             reservation.cancel_before_start()
             self.notify_admission_changed(terminal_id)

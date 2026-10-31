@@ -104,3 +104,53 @@ def test_storage_stages_between_real_transactions_keep_delivery_ownership(isolat
     assert snapshot.committed.cpu_millicores == first.footprint.cpu_millicores
     assert first.finish()
     assert owner.snapshot(now=10.0).inflight == 0
+
+
+def test_inbox_real_queries_and_receipt_share_physical_storage_owner(
+    isolated_memory_db, monkeypatch
+):
+    from sqlalchemy import event
+
+    db.create_terminal(
+        "physical-receiver", "physical-session", "worker", "opencode_cli", "reviewer"
+    )
+    row = db.create_inbox_message("sender", "physical-receiver", "physical owner café")
+    owner = DeliveryAdmission(AdmissionPolicy())
+    owner.observe(
+        CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, 1),
+        now=10.0,
+        generation=owner.generation,
+    )
+    service = module.InboxService(admission=owner, clock=lambda: 10.0)
+    monkeypatch.setattr(
+        module.provider_manager,
+        "get_provider",
+        lambda _: SimpleNamespace(has_pending_native_swarm=False),
+    )
+    monkeypatch.setattr(module.status_monitor, "get_status", lambda _: TerminalStatus.IDLE)
+    sent, statements = [], []
+
+    def send(*args, **kwargs):
+        snapshot = owner.snapshot(now=10.0)
+        assert snapshot.started == 1
+        assert snapshot.storage_connection_loans == 0
+        assert snapshot.storage_completion_credits == 1
+        sent.append(args)
+
+    def before_query(*args):
+        snapshot = owner.snapshot(now=10.0)
+        assert snapshot.started == snapshot.storage_connection_loans == 1
+        statements.append(args[2])
+
+    monkeypatch.setattr(module.terminal_service, "send_input", send)
+    event.listen(db.engine, "before_cursor_execute", before_query)
+    try:
+        service.deliver_pending("physical-receiver")
+    finally:
+        event.remove(db.engine, "before_cursor_execute", before_query)
+    assert statements and len(sent) == 1
+    actual = db.get_inbox_messages("physical-receiver")
+    assert [(message.id, message.status) for message in actual] == [
+        (row.id, MessageStatus.DELIVERED)
+    ]
+    assert owner.snapshot(now=10.0).inflight == 0

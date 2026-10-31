@@ -33,6 +33,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 from sqlalchemy.sql import Select
 
 from cli_agent_orchestrator import constants
+from cli_agent_orchestrator.clients.postgres.storage_pool import StorageQueuePool
 from cli_agent_orchestrator.clients.work_inbox_schema import ManagedInboxStoreIdentity
 from cli_agent_orchestrator.constants import DATABASE_URL, DB_DIR, DEFAULT_PROVIDER
 from cli_agent_orchestrator.models.flow import Flow
@@ -959,7 +960,12 @@ def _native_orm_connection():
     return connection
 
 
-engine = create_engine("postgresql+psycopg://", creator=_native_orm_connection, pool_pre_ping=True)
+engine = create_engine(
+    "postgresql+psycopg://",
+    creator=_native_orm_connection,
+    poolclass=StorageQueuePool,
+    pool_pre_ping=True,
+)
 
 
 @event.listens_for(engine, "connect")

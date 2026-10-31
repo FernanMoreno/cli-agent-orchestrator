@@ -109,6 +109,8 @@ Before freezing source hashes or launching a broad regression, run the commit ho
 
 When overriding an attribute already patched by another fixture, make the override a dependent fixture with a nested patch scope. Verify restoration after its consumers before broad regression; teardown from an unrelated monkeypatch fixture can resurrect a stale mock and invalidate downstream checks.
 
+Resource fixtures must assert that each injected observation was accepted. A later sample needs a strictly increasing observation timestamp and a consistent consumer clock; calling an update does not prove it changed capacity. Model delivery counts and physical connection/session quantities separately, and retain explicit insufficient-resource cases when correcting a fixture.
+
 Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics

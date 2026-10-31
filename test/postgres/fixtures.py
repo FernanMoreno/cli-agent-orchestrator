@@ -804,9 +804,12 @@ def make_orm_engine(target):
     from psycopg import sql
     from sqlalchemy import create_engine, event
 
+    from cli_agent_orchestrator.clients.postgres.storage_pool import StorageQueuePool
+
     engine = create_engine(
         "postgresql+psycopg://",
         creator=lambda: psycopg.connect(**target.connection_parameters()),
+        poolclass=StorageQueuePool,
         pool_pre_ping=True,
     )
 

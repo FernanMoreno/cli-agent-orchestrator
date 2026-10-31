@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from itertools import count
 from typing import Literal
 
+from cli_agent_orchestrator.clients.storage_admission import storage_close_uncertainty
 from cli_agent_orchestrator.services.admission_policy import (
     AdmissionDecision,
     AdmissionPolicy,
@@ -39,6 +40,10 @@ class AdmissionSnapshot:
     sample_age_s: float | None
     committed: ResourceAmounts
     resource_debt: ResourceAmounts
+    storage_connection_loans: int = 0
+    # Retained admitted credits include reserved handoffs not yet started.
+    storage_completion_credits: int = 0
+    storage_retirement_pending: int = 0
 
 
 @dataclass(frozen=True, eq=False)
@@ -58,7 +63,39 @@ class StorageStageReservation:
             ):
                 return False
             lease._storage_stage = None
-            return lease._release_storage_locked()
+            lease._release_storage_locked()
+            if lease._retirement_requested:
+                owner._release_locked(lease)
+            return True
+
+
+@dataclass(frozen=True, eq=False)
+class StorageConnectionReservation:
+    """An exact physical loan; the initial closing credit stays reserved."""
+
+    _lease: "DeliveryReservation"
+    _additional: bool
+
+    def finish(self) -> bool:
+        lease = self._lease
+        owner = lease._owner
+        with owner._guard:
+            if (
+                lease._state != "started"
+                or owner._leases.get(lease._key) is not lease
+                or self not in lease._storage_connections
+            ):
+                return False
+            lease._storage_connections.remove(self)
+            owner._storage_connection_loans -= 1
+            if self._additional:
+                owner._additional_storage_connections -= 1
+                unit = ResourceAmounts(storage_slots=1)
+                owner._committed = owner._committed - unit
+                lease._remaining = lease._remaining - unit
+            if lease._retirement_requested and not lease._storage_connections:
+                owner._release_locked(lease)
+            return True
 
 
 class DeliveryReservation:
@@ -74,6 +111,8 @@ class DeliveryReservation:
         self._footprint = footprint
         self._remaining = footprint
         self._storage_stage: StorageStageReservation | None = None
+        self._storage_connections: set[StorageConnectionReservation] = set()
+        self._retirement_requested = False
 
     @property
     def footprint(self) -> ResourceAmounts:
@@ -111,9 +150,68 @@ class DeliveryReservation:
                 return False
             if self._state != "started":
                 raise RuntimeError("delivery reservation has not started")
-            if self._storage_stage is not None:
+            if self._storage_stage is not None or self._storage_connections:
                 raise RuntimeError("active storage stage must finish physically first")
             return self._owner._release_locked(self)
+
+    def finish_after_storage(self) -> bool:
+        """Physical body is done; retain costs until its exact loans retire.
+
+        This is a handoff to already owned physical cleanup, not a timeout or
+        cancellation proof. No new loan is allowed after the handoff. A failed
+        close must keep its strong handle/token in the close registry; only a
+        later physical witness lets the last token release this invocation.
+        """
+        owner = self._owner
+        with owner._guard:
+            if self._state == "released" or self._retirement_requested:
+                return False
+            if self._state != "started":
+                raise RuntimeError("delivery reservation has not started")
+            self._retirement_requested = True
+            owner._storage_retirement_pending += 1
+            if self._storage_stage is not None or self._storage_connections:
+                return False
+            return owner._release_locked(self)
+
+    def try_acquire_storage_connection(self, *, now: float) -> StorageConnectionReservation | None:
+        """Borrow an existing closing credit, or charge one additional connection.
+
+        Reusing an already admitted credit never creates new allowance, including
+        during drain or after a stale observation. Additional physical loans need
+        a fresh decision and cannot grow after admission closes. The borrower must
+        retain its exact token through setup, SQL, reset and physical return/close.
+        """
+        validate_clock(now)
+        owner = self._owner
+        with owner._guard:
+            if (
+                self._state != "started"
+                or owner._leases.get(self._key) is not self
+                or self._storage_stage is not None
+                or self._retirement_requested
+            ):
+                return None
+            additional = self._remaining.storage_slots == len(self._storage_connections)
+            if additional:
+                if not owner._accepting:
+                    return None
+                decision = owner._current_decision(now)
+                if (
+                    decision.reason not in ("capacity_available", "resource_exhausted")
+                    or decision.resource_capacity.storage_slots <= owner._committed.storage_slots
+                ):
+                    return None
+            connection = StorageConnectionReservation(self, additional)
+            if additional:
+                unit = ResourceAmounts(storage_slots=1)
+                owner._committed = owner._committed + unit
+                self._remaining = self._remaining + unit
+            self._storage_connections.add(connection)
+            owner._storage_connection_loans += 1
+            if additional:
+                owner._additional_storage_connections += 1
+            return connection
 
     def take_storage_stage(self, *, now: float) -> StorageStageReservation | None:
         """Claim already charged storage or reserve storage alone for reentry.
@@ -129,6 +227,8 @@ class DeliveryReservation:
                 self._state != "started"
                 or owner._leases.get(self._key) is not self
                 or self._storage_stage is not None
+                or self._storage_connections
+                or self._retirement_requested
             ):
                 return None
             needs_storage = not self._remaining.storage_slots
@@ -157,6 +257,7 @@ class DeliveryReservation:
                 self._state != "started"
                 or owner._leases.get(self._key) is not self
                 or self._storage_stage is not None
+                or self._storage_connections
                 or not self._remaining.storage_slots
             ):
                 return False
@@ -188,6 +289,9 @@ class DeliveryAdmission:
         self._receivers: dict[str, int] = {}
         self._sequence = count()
         self._started = 0
+        self._storage_connection_loans = 0
+        self._additional_storage_connections = 0
+        self._storage_retirement_pending = 0
         self._accepting = True
         self._generation = 0
         self._observation: CapacityObservation | None = None
@@ -293,7 +397,7 @@ class DeliveryAdmission:
 
     def _current_decision(self, now: float, *, charged: bool = True) -> AdmissionDecision:
         committed = self._committed if charged else ResourceAmounts()
-        if self._observation is None:
+        if self._observation is None or storage_close_uncertainty():
             return AdmissionDecision(0, "unknown_capacity", resource_debt=committed)
         budget = self._budget
         if self._observation_ceiling is not None:
@@ -324,8 +428,16 @@ class DeliveryAdmission:
                 and self._current_decision(now).available_slots
             )
 
-    def try_reserve(self, receiver: str, *, now: float) -> AdmissionAttempt:
+    def try_reserve(self, receiver: str, *, now: float, storage_slots: int = 1) -> AdmissionAttempt:
+        """Reserve the trusted operation's complete minimum physical footprint.
+
+        Internal callers declare required overlapping storage stages. This is
+        consumption per operation, never a global delivery concurrency limit.
+        """
         validate_clock(now)
+        ResourceAmounts(storage_slots=storage_slots)
+        if storage_slots == 0:
+            raise ValueError("storage_slots must be an integer >= 1")
         if not isinstance(receiver, str) or not receiver.strip():
             raise ValueError("receiver must be a nonempty identity")
         with self._guard:
@@ -336,11 +448,16 @@ class DeliveryAdmission:
             decision = self._current_decision(now)
             if not decision.available_slots:
                 return AdmissionAttempt(None, decision.reason)
+            if (
+                self._committed.storage_slots + storage_slots
+                > decision.resource_capacity.storage_slots
+            ):
+                return AdmissionAttempt(None, "resource_exhausted")
             key = next(self._sequence)
             footprint = ResourceAmounts(
                 self._policy.memory_per_delivery_bytes,
                 self._policy.cpu_per_delivery_millicores,
-                1,
+                storage_slots,
             )
             lease = DeliveryReservation(self, key, receiver, footprint)
             self._committed = self._committed + footprint
@@ -352,6 +469,10 @@ class DeliveryAdmission:
     def _release_locked(self, lease: DeliveryReservation) -> bool:
         if self._leases.get(lease._key) is not lease:
             return False
+        if lease._storage_connections or lease._storage_stage is not None:
+            raise RuntimeError("active storage stage must finish physically first")
+        if lease._retirement_requested:
+            self._storage_retirement_pending -= 1
         if lease._state == "started":
             self._started -= 1
         self._committed = self._committed - lease._remaining
@@ -413,4 +534,9 @@ class DeliveryAdmission:
                 sample_age_s=age if age is not None and age >= 0 else None,
                 committed=self._committed,
                 resource_debt=debt,
+                storage_connection_loans=self._storage_connection_loans,
+                storage_completion_credits=(
+                    self._committed.storage_slots - self._additional_storage_connections
+                ),
+                storage_retirement_pending=self._storage_retirement_pending,
             )

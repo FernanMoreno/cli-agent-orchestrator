@@ -534,3 +534,6 @@ T232/T233 pendientes de aceptación externa actual:191regresionesWork/PostgreSQL
 
 
 T232/T233 cerrados en el alcance externo probado (2026-10-30, fuenteafc35283): cao.work.message real pasa en196.45s; A/respuesta perdida/replay/reinicio/G2/B/ACK, intermedio2/2/1 y final2/2/2 exactos.46fuentes/11archivos privados verificados; cuatro intentos retirados,3DB/6roles/copias propias eliminados, mismoPG0clientes/0DB/0roles.191pruebasWork y35controles previos conservan validez por igualdad de bytes; no nueva ejecución de esas suites. Fallo de carrera y rechazo por memoria históricos permanecen. No cierra gates globales ni otros proveedores/backends. [Aceptación y límites](../specs/025-provider-mcp-profiles/validation-t232.md).
+
+
+Infraestructura compartida Spec041/T018 (2026-10-31): puertos PostgreSQL físicos y scopes Inbox/Bridge, huella INPUT de advisory+SQL y rechazo/reconciliación tipados pasan422pruebas con PG real; composición5/0 y limpieza0/0/0. No es nueva aceptación nativa de este proveedor. Work/control SQL/cierre/monitor/diagnóstico, M1/M2/M3, SDK/UI y gates globales continúan pendientes. [Recibo y alcance](../specs/041-resource-aware-network-admission/validation-t018-physical-storage.json).

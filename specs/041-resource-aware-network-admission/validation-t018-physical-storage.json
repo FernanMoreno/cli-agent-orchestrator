@@ -1,0 +1,622 @@
+{
+  "schema": "caos.spec041.t018.physical-storage-checkpoint.v1",
+  "verified_utc": "2026-10-31T15:10:35.904300+00:00",
+  "base_head": "8762d43c660ea02958b0a27165a5df5063cee1cc",
+  "status": "PASS_BOUNDED_STORAGE_PORTS_INBOX_AND_BRIDGE_NOT_T018_OR_M1_COMPLETE",
+  "global_acceptance": false,
+  "tested_files": [
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/fork_handles.py",
+      "algorithm": "sha256",
+      "digest": "0c4b0e90b136087d681293f5898dc358d102d2e897031c53533101fdda46d71d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/storage_pool.py",
+      "algorithm": "sha256",
+      "digest": "d915a0c83ac2210cc73772e7bfed8ac45c1ce9e2c318be673a83948cbc3c1765"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+      "algorithm": "sha256",
+      "digest": "08d7a5cfcc25d1846b9d60b3f276e5bc34a32012fe6bd299302564b1c667f902"
+    },
+    {
+      "path": "test/clients/test_storage_admission.py",
+      "algorithm": "sha256",
+      "digest": "69e28fab706eb07b893c84d2506516b0ec971c0a96498df7d0b901ce354907cc"
+    },
+    {
+      "path": "test/integration/test_storage_adapters.py",
+      "algorithm": "sha256",
+      "digest": "f028b8c679cc7a2133ef1e7a738b9ea6ae1c9c4174be6c8cf310b59703d5159a"
+    },
+    {
+      "path": "test/services/test_storage_connection_reservation.py",
+      "algorithm": "sha256",
+      "digest": "d3df3fe61fc06c574cd665268758c1dcc0a8ca42641fc9b97ab4596f33734969"
+    },
+    {
+      "path": "test/services/test_terminal_storage_admission.py",
+      "algorithm": "sha256",
+      "digest": "6eb7e9c6954afa5abb6e411e5c0e120daf8b9d8bdaab82d70cbac5fa38a94893"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/database.py",
+      "algorithm": "sha256",
+      "digest": "23e1937302a599e461056f12841a00c7d2c9f44b2f2f6fe7fbba0eba289fe8d7"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+      "algorithm": "sha256",
+      "digest": "8e5e8cbed0d17198413e429958dc903cf139659c2a0c46abc919d6f62e1b7f62"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+      "algorithm": "sha256",
+      "digest": "93fbbbfb288bc2e42064e650ab926d9872c1a8ba48ed832821ae48faccd7b344"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "algorithm": "sha256",
+      "digest": "0b1779efe7063470030b262e06a500ed5b7226290133885550a000728f070c25"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_service.py",
+      "algorithm": "sha256",
+      "digest": "236f37855dcfb3a97e38b8b5efb734961fa36033482250f6c23989079d5735b6"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/legacy_memory_audit_repository.py",
+      "algorithm": "sha256",
+      "digest": "5367ef0505e6914a211d66bb576d10a67d04636c5084077568c837135c2cf0c1"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/terminal_service.py",
+      "algorithm": "sha256",
+      "digest": "94b32ee671e191daf8ff45b49e77e2a0794a259590440713c62240c608746a1b"
+    },
+    {
+      "path": "test/integration/test_inbox_resource_admission.py",
+      "algorithm": "sha256",
+      "digest": "b996b2b947a883b934b9d645b909a72bd06c5a1c57a7f2dd39c30db0c8cedc67"
+    },
+    {
+      "path": "test/postgres/fixtures.py",
+      "algorithm": "sha256",
+      "digest": "57b3221d3313eb5697b408de65d3a8f7621d29df8502fb38b6b288dc676cc5f4"
+    },
+    {
+      "path": "test/runtime_channel/test_bridge_resource_admission.py",
+      "algorithm": "sha256",
+      "digest": "c8169d3ba77d3d41c33baac7fe051449d67d857004ef985fca1775e71e602e50"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "t018-connection-credit-red",
+      "classification": "EXPECTED_API_RED",
+      "cases": {
+        "total": 9,
+        "failure": 9,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 47.125,
+      "available_mib": 9389,
+      "source_stamp": "dc650c681aeec4e870fa55cbf4b3ec0afd0fd0611e286f566fdc248bc5ba89ec",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-connection-credit-red/t018-connection-credit-red/receipt.json"
+    },
+    {
+      "phase": "t018-connection-credit-green",
+      "classification": "EARLIER_COMPONENT_GREEN",
+      "cases": {
+        "total": 115,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 52.576,
+      "available_mib": 9303,
+      "source_stamp": "2f1842aadde4c74ae4dc9fe87a5418200b3d8e6a4619d095ace67c3937375bf3",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-connection-credit-green/t018-connection-credit-green/receipt.json"
+    },
+    {
+      "phase": "t018-bridge-journal-red",
+      "classification": "EXPECTED_EARLY_RETIREMENT_RED",
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 66.795,
+      "available_mib": 9208,
+      "source_stamp": "4e574aa2df3edb67d4b5fb4eed059b493effa5315240f2d6e128e19c1e614148",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-bridge-journal-red/t018-bridge-journal-red/receipt.json"
+    },
+    {
+      "phase": "t018-bridge-journal-green",
+      "classification": "EARLIER_COMPONENT_GREEN",
+      "cases": {
+        "total": 12,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 81.423,
+      "available_mib": 8931,
+      "source_stamp": "de074a0f1510f2a9f9bf3bb4f0648920e14a09b2017f768e76a3abad400281b8",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-bridge-journal-green/t018-bridge-journal-green/receipt.json"
+    },
+    {
+      "phase": "t018-bridge-durable-boundary-red",
+      "classification": "EXPECTED_ACK_AND_UNCONFIRMED_SETTLEMENT_RED",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 54.344,
+      "available_mib": 9411,
+      "source_stamp": "146e11869fb69903d34bbb081618211a9438d4eafbd2fbe43479f18ef5e990a9",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-bridge-durable-boundary-red/t018-bridge-durable-boundary-red/receipt.json"
+    },
+    {
+      "phase": "t018-bridge-durable-boundary-green",
+      "classification": "EARLIER_COMPONENT_GREEN",
+      "cases": {
+        "total": 33,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 114.086,
+      "available_mib": 8966,
+      "source_stamp": "4c2d3b3a7875d481f6fd772a741773f3aeb45d2b334fcf5de1d7ec04d94a07c8",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-bridge-durable-boundary-green/t018-bridge-durable-boundary-green/receipt.json"
+    },
+    {
+      "phase": "t018-storage-port-red-r2",
+      "classification": "EXPECTED_MISSING_PORT_AND_RETIREMENT_API_RED",
+      "cases": {
+        "total": 13,
+        "failure": 13,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 40.191,
+      "available_mib": 9194,
+      "source_stamp": "00fcee024c80a708ccc6fc64e4b174991e0917483e5fbaf9b7635d31b100d057",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-storage-port-red-r2/t018-storage-port-red-r2/receipt.json"
+    },
+    {
+      "phase": "t018-storage-port-green",
+      "classification": "EARLIER_COMPONENT_GREEN",
+      "cases": {
+        "total": 128,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 51.271,
+      "available_mib": 9202,
+      "source_stamp": "95b37ff483d04dec608f5376b6aea894a07a8ed553e273a6d7dd34e50abcdcae",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-storage-port-green/t018-storage-port-green/receipt.json"
+    },
+    {
+      "phase": "t018-storage-adapters-red-r3",
+      "classification": "ADAPTER_RED_WITH_FIXTURE_TEARDOWN_ERROR_RETAINED",
+      "cases": {
+        "total": 8,
+        "failure": 7,
+        "error": 1,
+        "skipped": 0
+      },
+      "controller_seconds": 33.37,
+      "available_mib": 9213,
+      "source_stamp": "bdaf0ba85961bcf9c7259b73a776d9696d0222c330c5bf9c620ed7f2e9f486b9",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-storage-adapters-red-r3/t018-storage-adapters-red-r3/receipt.json"
+    },
+    {
+      "phase": "t018-storage-guard-and-adapter-red",
+      "classification": "EXPECTED_SCOPE_GUARD_AND_ADAPTER_RED_WITH_FIXED_TEARDOWN",
+      "cases": {
+        "total": 23,
+        "failure": 16,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 45.308,
+      "available_mib": 9272,
+      "source_stamp": "bb921be71d7151e2e085f06dfb0acae133943caad61c2679ca6c3be6b19471da",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-storage-guard-and-adapter-red/t018-storage-guard-and-adapter-red/receipt.json"
+    },
+    {
+      "phase": "t018-storage-guard-green",
+      "classification": "EARLIER_SCOPE_GUARD_GREEN",
+      "cases": {
+        "total": 134,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 53.831,
+      "available_mib": 9212,
+      "source_stamp": "613a23c90d8564e4add8cc0c19d4786692416cf6b2d35171a1b9ba4318283268",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-storage-guard-green/t018-storage-guard-green/receipt.json"
+    },
+    {
+      "phase": "t018-adapters-green-r3",
+      "classification": "EARLIER_SEVEN_ADAPTER_CASES_GREEN",
+      "cases": {
+        "total": 7,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 36.573,
+      "available_mib": 9137,
+      "source_stamp": "b96a4cf0eefbdd44014625bafd0be9cd057ffe3f10faeb015f94dd8048d29b88",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-adapters-green-r3/t018-adapters-green-r3/receipt.json"
+    },
+    {
+      "phase": "t018-inbox-binding-red",
+      "classification": "EXPECTED_UNBOUND_PHYSICAL_QUERY_RED",
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 52.254,
+      "available_mib": 9009,
+      "source_stamp": "93b0225ce4fa11133463e2ea6f91b757d3d2e24d77ef965fd17837205024bcb2",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-inbox-binding-red/t018-inbox-binding-red/receipt.json"
+    },
+    {
+      "phase": "t018-inbox-binding-green",
+      "classification": "FAILED_LEAD_ATTRIBUTE_TYPO_SELF_CLOCK_RETAINED",
+      "cases": {
+        "total": 27,
+        "failure": 15,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 90.471,
+      "available_mib": 8909,
+      "source_stamp": "9aa7ae2a11c5e8ac1d6025b6916aea336fcabd30caa72bdd5721e88511ce5c35",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-inbox-binding-green/t018-inbox-binding-green/receipt.json"
+    },
+    {
+      "phase": "t018-adapter-review-red",
+      "classification": "EXPECTED_ACTUAL_FORK_AND_LEGACY_TIMEOUT_RED",
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 35.336,
+      "available_mib": 9062,
+      "source_stamp": "f7cb28c5c8421d135b9faf0729010d67a5c205a9485fe3f62f78ba42529ec75a",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-adapter-review-red/t018-adapter-review-red/receipt.json"
+    },
+    {
+      "phase": "t018-adapter-review-green-r2",
+      "classification": "EARLIER_58_CASES_GREEN",
+      "cases": {
+        "total": 58,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 79.947,
+      "available_mib": 9002,
+      "source_stamp": "db4e0fd4380b461fc6a256d978b1af757f85bae3f6131984eed05f5630a5b3d7",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-adapter-review-green-r2/t018-adapter-review-green-r2/receipt.json"
+    },
+    {
+      "phase": "t018-audit-open-fork-red",
+      "classification": "INVALID_REPRODUCTION_PHYSICAL_COUNT_NOT_PUBLICATION_COUNT_RETAINED",
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 34.539,
+      "available_mib": 8988,
+      "source_stamp": "3764c37dcefc0605d7c0ee1f6e03c30ffa2235009ade9e4fc1e219cd3710ea0e",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-audit-open-fork-red/t018-audit-open-fork-red/receipt.json"
+    },
+    {
+      "phase": "t018-bridge-storage-red",
+      "classification": "PORT_AND_MEMORY_RED_INCLUDES_INVALID_AUDIT_ASSERTION_RETAINED",
+      "cases": {
+        "total": 9,
+        "failure": 8,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 88.484,
+      "available_mib": 9085,
+      "source_stamp": "0e5ef77b55801982afa09e2bc7740cc758f63ae6c6a01d9a9f0dda15043d8223",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-bridge-storage-red/t018-bridge-storage-red/receipt.json"
+    },
+    {
+      "phase": "t018-effect-boundary-red",
+      "classification": "EXPECTED_TWO_FALSE_SUCCESS_RESULTS_AND_ACTUAL_AUDIT_OPEN_FORK_RED",
+      "cases": {
+        "total": 3,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 72.905,
+      "available_mib": 8975,
+      "source_stamp": "02045a5a571fa64d42f6a9f73aa37e545be689583eb5163a2013b16c3e1dbacb",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-effect-boundary-red/t018-effect-boundary-red/receipt.json"
+    },
+    {
+      "phase": "t018-bridge-storage-green",
+      "classification": "FAILED_PHYSICAL_SESSION_BUDGET_CONFLATION_RETAINED",
+      "cases": {
+        "total": 92,
+        "failure": 9,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 232.02,
+      "available_mib": 8966,
+      "source_stamp": "d53730106133045ce14b2615382cc8c0783152a70d8e054898ca7562df933ea3",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-bridge-storage-green/t018-bridge-storage-green/receipt.json"
+    },
+    {
+      "phase": "t018-completion-requirements-red",
+      "classification": "FOOTPRINT_API_RED_PLUS_REVIEW_CASES_WITH_INVALID_FIXTURE_SAMPLE_RETAINED",
+      "cases": {
+        "total": 9,
+        "failure": 9,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 67.843,
+      "available_mib": 8747,
+      "source_stamp": "61d560634a3bccc1cf740a366723561d593902a634b661162e5b3780d1633a74",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-completion-requirements-red/t018-completion-requirements-red/receipt.json"
+    },
+    {
+      "phase": "t018-completion-requirements-green",
+      "classification": "FAILED_FIXTURE_IGNORED_DUPLICATE_TIMESTAMP_RETAINED",
+      "cases": {
+        "total": 39,
+        "failure": 12,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 211.819,
+      "available_mib": 8812,
+      "source_stamp": "f36e0a74de32a2c5e781b6f3ebba6f62e9b312c141001f517981d3b8814014bf",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-completion-requirements-green/t018-completion-requirements-green/receipt.json"
+    },
+    {
+      "phase": "t018-review-owned-boundary-red",
+      "classification": "VALID_CONTROLLED_RED_POST_TRANSPORT_FALSE_SUCCESS_AND_PRIOR_MEMORY_MARKER",
+      "cases": {
+        "total": 3,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 81.365,
+      "available_mib": 8915,
+      "source_stamp": "aec05a845d795ed99aff7d8a6fd654ab01e5457c2bee8efd4e3b0e0d804a2006",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-review-owned-boundary-red/t018-review-owned-boundary-red/receipt.json"
+    },
+    {
+      "phase": "t018-physical-storage-regression",
+      "classification": "FINAL_BOUNDED_REGRESSION_PASS",
+      "cases": {
+        "total": 422,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 331.745,
+      "available_mib": 8925,
+      "source_stamp": "325c33378f197cde6fb182efa900f605c7e8fdb6c8abcec0fb09179ab96bb437",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-physical-storage-regression/t018-physical-storage-regression/receipt.json"
+    }
+  ],
+  "final_pytest": "422passed/0failures/0errors/0skipped/6warnings;328.21s",
+  "format": "Black/isort17PythonfilesPASS before final freeze",
+  "types": "mypy9sourcefilesPASS;follow-imports=silent/defaultuntypedcoverage",
+  "architecture": {
+    "files": 439,
+    "dependencies": 1945,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": "Codex read-only scoped reviews; scope/fork/timeouts and Bridge ownership findings corrected with retained RED/GREEN. Three reviewer regressions were reproduced under a corrected fixture before final GREEN. No Claude invoked.",
+  "scope": [
+    "exact physical connection loans and retained completion credits",
+    "native/SQLAlchemy/audit setup,preping,return,close",
+    "PID/thread/asyncTask/lifetime guards and typed uncertain retirement",
+    "fork child FD detachment after Python handle publication,including audit pre-publication window",
+    "Inbox physical worker binding; Bridge INPUT,journal and post-input read binding",
+    "Bridge trusted two-session minimum footprint,atomic before turn/worker",
+    "typed pre-effect refusal/post-effect reconciliation and no duplicate replay",
+    "owned memory marker cleanup and strictly accepted fixture observations"
+  ],
+  "not_accepted": [
+    "Work physical scope composition",
+    "all required Inbox/Work physical operation footprints",
+    "protected control-SQL allowance",
+    "runtime shutdown retry/uncertain close recovery wiring",
+    "full dynamic monitor separation from audit pool domain",
+    "T017 authorized diagnostic",
+    "T018/T019 physical M1",
+    "T012-T016 and T020 shared-domain/network M2/M3",
+    "T022 SDK/configuration and T023 real UI",
+    "global backend/Apps/performance acceptance",
+    "fork while libpq connect is still in native C before publishing a Python handle"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-physical-storage-boundaries",
+    "status": "complete",
+    "strict_lint_issues": 0
+  }
+}
