@@ -97,6 +97,8 @@ class Bridge:
         self._token = token
         self._ready_file = ready_file
         self._ws: Optional[ClientConnection] = None
+        self._pending_ws: Optional[ClientConnection] = None
+        self._closing_tasks: Set[asyncio.Task[None]] = set()
         self._send_lock = asyncio.Lock()
         # terminal id -> (lock, number of commands holding or awaiting it)
         self._terminal_locks: Dict[str, Tuple[asyncio.Lock, int]] = {}
@@ -108,6 +110,8 @@ class Bridge:
         # Strong references: the event loop holds only weak ones to tasks.
         self._tasks: Set["asyncio.Task[None]"] = set()
         self._stop = asyncio.Event()
+        self._reader_retired = asyncio.Event()
+        self._reader_retired.set()
         self.incarnation_id = incarnation_id or uuid.uuid4().hex
         if store is None:
             from cli_agent_orchestrator.clients.database import main_target
@@ -119,6 +123,7 @@ class Bridge:
         # One trusted process owner, retained across channel epochs/reconnects.
         self._resource_admission = resource_admission
         self._resource_clock = resource_clock
+        self._resource_retirement: Callable[[], bool] | None = None
 
     def admit_epoch(self, epoch: int) -> None:
         self.store.admit_epoch(self.runtime_id, self.incarnation_id, epoch)
@@ -614,6 +619,16 @@ class Bridge:
         return {row["id"]: self._status_of(row["id"]) for row in list_all_terminals()}
 
     async def serve(self, ws: ClientConnection) -> None:
+        if self._pending_ws is not None:
+            raise RuntimeError("bridge handshake is already running")
+        # A socket awaiting Hello is owned, but is never a ready channel.
+        self._pending_ws = ws
+        try:
+            await self._serve(ws)
+        finally:
+            self._pending_ws = None
+
+    async def _serve(self, ws: ClientConnection) -> None:
         """Run one connection: hello exchange, then commands until it closes."""
         statuses = await asyncio.to_thread(self._current_statuses)
         await ws.send(
@@ -669,6 +684,27 @@ class Bridge:
             self._mark_ready(False)
 
     async def run(self) -> None:
+        if not self._reader_retired.is_set():
+            raise RuntimeError("bridge reader is already running")
+        self._reader_retired.clear()
+        try:
+            await self._run()
+        finally:
+            self._reader_retired.set()
+
+    async def drain(self) -> None:
+        from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+        async def join() -> None:
+            await self._reader_retired.wait()
+            while self._tasks or self._closing_tasks:
+                await asyncio.gather(
+                    *list(self._tasks | self._closing_tasks), return_exceptions=True
+                )
+
+        await run_owned_async(join())
+
+    async def _run(self) -> None:
         """Keep a channel open until stopped, reconnecting with backoff."""
         backoff = BACKOFF_INITIAL
         self._mark_ready(False)
@@ -680,6 +716,8 @@ class Bridge:
                     additional_headers={TOKEN_HEADER: self._token},
                     max_size=16 * 1024 * 1024,
                 ) as ws:
+                    if self._stop.is_set():
+                        break
                     await self.serve(ws)
             except ChannelRefused:
                 raise
@@ -713,9 +751,19 @@ class Bridge:
 
     def stop(self) -> None:
         self._stop.set()
-        ws = self._ws
-        if ws is not None:
-            asyncio.get_running_loop().create_task(ws.close())
+        sockets = [self._ws]
+        if self._pending_ws is not self._ws:
+            sockets.append(self._pending_ws)
+        for ws in sockets:
+            if ws is not None:
+                operation = ws.close()
+                try:
+                    task = asyncio.get_running_loop().create_task(operation)
+                except BaseException:
+                    operation.close()
+                    raise
+                self._closing_tasks.add(task)
+                task.add_done_callback(self._closing_tasks.discard)
 
     def _mark_ready(self, ready: bool) -> None:
         if self._ready_file is None:
@@ -815,21 +863,87 @@ async def _amain() -> None:
         store=store,
         incarnation_id=incarnation,
     )
-    tasks = [
-        asyncio.create_task(status_monitor.run()),
-        asyncio.create_task(log_writer.run()),
-        asyncio.create_task(bridge.forward_status()),
-    ]
+    from cli_agent_orchestrator.runtime_channel.admission import BridgeAdmissionParticipant
+    from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
+    from cli_agent_orchestrator.services.inbox_admission_runtime import (
+        AdmissionRuntimeUnavailable,
+        runtime_from_environment,
+    )
+    from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+    tasks: list[asyncio.Task] = []
+    reader: asyncio.Task | None = None
+    control = None
+    runtime = None
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, bridge.stop)
     try:
-        await bridge.run()
+        runtime = runtime_from_environment(
+            BridgeAdmissionParticipant(bridge),
+            bootstrap_factory=lambda: scoped_process_bootstrap("bridge-resource/" + runtime_id),
+        )
+        if runtime is not None:
+            from cli_agent_orchestrator.api.admission_server import AdmissionControlServer
+
+            await runtime.start()
+            control = AdmissionControlServer(runtime)
+            await control.start()
+            logger.info("runtime %s resource control at %s", runtime_id, control.url)
+
+        for operation in (status_monitor.run, log_writer.run, bridge.forward_status):
+            pending = operation()
+            try:
+                tasks.append(asyncio.create_task(pending))
+            except BaseException:
+                pending.close()
+                raise
+
+        async def read() -> None:
+            await asyncio.sleep(0)
+            await bridge.run()
+
+        pending_reader = read()
+        try:
+            reader = asyncio.create_task(pending_reader)
+        except BaseException:
+            pending_reader.close()
+            raise
+        if control is None:
+            await reader
+        else:
+            control_task = control.task
+            assert control_task is not None
+            done, _ = await asyncio.wait(
+                (reader, control_task), return_when=asyncio.FIRST_COMPLETED
+            )
+            if control_task in done:
+                error = None if control_task.cancelled() else control_task.exception()
+                raise AdmissionRuntimeUnavailable("resource control server stopped") from error
+            await reader
     finally:
-        if bridge._tasks:
-            await asyncio.shield(asyncio.gather(*list(bridge._tasks), return_exceptions=True))
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+
+        async def cleanup() -> None:
+            if runtime is not None:
+                runtime.close_admission()
+            bridge.stop()
+            try:
+                if reader is not None:
+                    await asyncio.gather(reader, return_exceptions=True)
+                await bridge.drain()
+            finally:
+                try:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                finally:
+                    try:
+                        if control is not None:
+                            await control.stop()
+                    finally:
+                        if runtime is not None:
+                            await runtime.stop()
+
+        await run_owned_async(cleanup())
 
 
 def main() -> None:

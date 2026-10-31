@@ -1,0 +1,168 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-31T10:08:48.410756+00:00",
+  "status": "PASS_T010_IMPLEMENTED_NOT_M1_ACCEPTANCE",
+  "scope": "Shared process resource controller, Bridge lifecycle participant, embedded authenticated loopback HTTP and operational _amain wiring; Work/input/identity checkpoints remain separately documented",
+  "base_head": "5784688f381cc23938bacc473c91477bfa1f23d3",
+  "candidate_source_stamp": "8b4aff8e76499d213a1222f143d40e851986a34aa1eb436f7293132c00685538",
+  "tested_files_sha256": {
+    "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": "bb36ef0df3e2b32ff9d2a5b1c5514754423a97fc567b12e9f1fc4a1f077c5d9e",
+    "src/cli_agent_orchestrator/runtime_channel/admission.py": "c7f284fe1c59e2a076044327d2138e819b929c726580400040d1f85abf0adbd2",
+    "src/cli_agent_orchestrator/api/admission_server.py": "edd4644e0da0811a92f24b85bc5ccc5c0f866ad9ce4be62b07bb7f15edaa6cb6",
+    "src/cli_agent_orchestrator/runtime_channel/bridge.py": "aafc241e13d1ad23c99e69dd27a7ac7d420bb3d262763df2811413c55324cbe2",
+    "test/services/test_admission_participant.py": "5a295b66473542fe773d87b52cd9f3f25bd4eed57c8ebfe39994ff80d571520c",
+    "test/runtime_channel/test_admission_lifecycle.py": "d5546583db615487502c8c9f498a612c142f3a2a2083d8998a2aff854aa281a8",
+    "test/postgres/test_bridge_admission_control.py": "20ad4b663c2637710634dfdb49666201fad4c2ad3007ecc6baa72b648b2ae7f2"
+  },
+  "tests": {
+    "total": 163,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 8,
+    "pytest_seconds": 197.43,
+    "controller_seconds": 214.949,
+    "available_mib": 9492,
+    "minimum_available_mib": 6144,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t010-control-final3/t010-control-final3/receipt.json"
+  },
+  "closure": {
+    "exit_code": 0,
+    "support_preserved": true,
+    "source_preserved": true,
+    "descriptor_closed": true
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t010-participant-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 4,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 52.026,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-participant-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 34,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 115.59,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-control-red3",
+      "exit_code": 1,
+      "cases": {
+        "total": 9,
+        "failure": 9,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 58.134,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-control-green",
+      "exit_code": 1,
+      "cases": {
+        "total": 59,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 129.247,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-silent-hello-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 63.673,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-participant-owner-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 54.984,
+      "source_preserved": true
+    }
+  ],
+  "architecture": {
+    "files": 436,
+    "dependencies": 1934,
+    "kept": 5,
+    "broken": 0
+  },
+  "types": "mypy4sourcePASS,follow-imports=silent/defaultuntypedcoverage",
+  "format": "Black/isort7filesPASS",
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": {
+    "reviewer": "Codex GPT6LunaMax ECC read-only",
+    "rounds": 3,
+    "result": "Design/core reviewed; final source review found blocking pending-Hello socket ownership. Lead reproduced RED, corrected ownership and rechecked all163; no uncorrected actionable peer finding.",
+    "lead_findings": "Adapter-local retirement witness allowed new adapter to replace active controller: reproduced RED and witness moved to Bridge. Synthetic reader JWT lacked required sub: fixture corrected without changing auth. Exact Uvicorn server-list annotation corrected to inherited list[asyncio.Server], no checks disabled."
+  },
+  "knowledge": {
+    "operation_id": "save-20261031-bridge-admission-lifecycle",
+    "strict_lint_exit": 0
+  },
+  "graphify": {
+    "preimplementation_nodes": 34,
+    "incident_links": 151,
+    "indexed_files": [
+      "runtime_channel/bridge.py"
+    ],
+    "limitation": "Generated graph predates new resource modules; structural assertions verified against source",
+    "refresh": "Deferred to preserve pre-existing foreign graph work; no generated files staged"
+  },
+  "operational_contract": [
+    "CAO_ADMISSION_POLICY_FILE opt-in; absent preserves compatibility; path/auth preflight precedes scoped bootstrap",
+    "Same runtime controller and JWT cao:admin checks; no Inbox singleton or central API import for control/router",
+    "_amain binds scoped real-process identity, same ledger/clock, starts runtime and loopback HTTP before channel reader",
+    "HTTP control has no central lifespan/docs/openapi; runtime token is not administrator authority; incomplete hierarchy remains zero capacity",
+    "Pending-Hello socket owned before readiness; stop closes pending/ready sockets and joins close tasks, reader and physical input handlers",
+    "Cleanup is cancellation-resistant; retires background actors then HTTP/control/monitor after handler drain",
+    "Unexpected HTTP task exit closes admission before supervisor teardown; adapter recreation cannot bypass retirement witness",
+    "Existing PID newline ready file retained; control URL property/startup log is for operators, not a parsed model contract"
+  ],
+  "provisioning": [
+    "ResourceEnvelope migrations and distinct explicitly configured owner/writer must be provisioned by installer/operator",
+    "init_runtime_db remains dependency verification only; no automatic authority bootstrap or credential expansion"
+  ],
+  "limits": [
+    "No real model/provider invocation or physical M1 acceptance in this suite",
+    "T011 and T019/M1 remain pending; M2/M3/shared domain reservations/SDK/UI/global gates not accepted",
+    "Direct fork callback from identity checkpoint remains reviewed, not physically exercised by exec-child test"
+  ],
+  "related_receipts": [
+    "validation-t010-work.json",
+    "validation-t010-bridge-scope.json",
+    "validation-t010-bridge-input.json"
+  ]
+}

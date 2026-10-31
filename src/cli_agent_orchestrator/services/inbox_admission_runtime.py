@@ -1,5 +1,7 @@
 """Trusted operational wiring; owns physical control I/O independently of HTTP waiters."""
 
+from __future__ import annotations
+
 import asyncio
 import contextvars
 import os
@@ -8,7 +10,7 @@ import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Callable, Generic, Protocol, TypeVar
 from uuid import uuid4
 
 from cli_agent_orchestrator.models.resource_envelope import (
@@ -28,9 +30,28 @@ from cli_agent_orchestrator.services.admission_settings import (
     read_private_operator_policy,
 )
 from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
-from cli_agent_orchestrator.services.inbox_service import InboxService
 
 T = TypeVar("T")
+
+
+class AdmissionParticipant(Protocol):
+    """Trusted process lifecycle port, not an administrator or a capacity claim."""
+
+    def bind_admission(
+        self,
+        admission: DeliveryAdmission | None,
+        *,
+        clock: Callable[[], float],
+        retirement: Callable[[], bool] | None,
+    ) -> None: ...
+
+    def notify_admission_changed(self, terminal_id: str | None = None) -> None: ...
+
+    def start_accepting(self) -> None: ...
+
+    def stop_accepting(self) -> None: ...
+
+    async def drain(self, *, timeout_s: float) -> None: ...
 
 
 class AdmissionRuntimeUnavailable(RuntimeError):
@@ -44,9 +65,11 @@ class _ControlCall(Generic[T]):
 
 
 class InboxAdmissionRuntime:
+    """Shared process control; retains its public Inbox name for compatibility."""
+
     def __init__(
         self,
-        inbox: InboxService,
+        inbox: AdmissionParticipant,
         *,
         monitor: AdmissionMonitor,
         bootstrap: ResourceBootstrap,
@@ -234,7 +257,11 @@ _PROCESS_PRESSURE = PostgresPressureSampler()
 _PROCESS_AUTHORITY = AuthorityMutationState()
 
 
-def runtime_from_environment(inbox: InboxService) -> InboxAdmissionRuntime | None:
+def runtime_from_environment(
+    inbox: AdmissionParticipant,
+    *,
+    bootstrap_factory: Callable[[], ResourceBootstrap] | None = None,
+) -> InboxAdmissionRuntime | None:
     if "CAO_ADMISSION_POLICY_FILE" not in os.environ:
         return None
     value = os.environ["CAO_ADMISSION_POLICY_FILE"]
@@ -250,7 +277,7 @@ def runtime_from_environment(inbox: InboxService) -> InboxAdmissionRuntime | Non
     )
 
     owner = DeliveryAdmission(AdmissionPolicy())
-    bootstrap = ResourceBootstrap()
+    bootstrap = bootstrap_factory() if bootstrap_factory is not None else ResourceBootstrap()
     monitor = AdmissionMonitor(
         owner,
         policy_loader=AdmissionPolicyLoader(source=lambda: read_private_operator_policy(path)),
