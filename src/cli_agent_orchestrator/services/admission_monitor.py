@@ -17,11 +17,16 @@ from cli_agent_orchestrator.services.admission_bootstrap import (
     is_verified_resource_attestation,
 )
 from cli_agent_orchestrator.services.admission_policy import (
+    CapacityObservation,
     ResourceAmounts,
     evaluate_capacity,
     validate_clock,
 )
-from cli_agent_orchestrator.services.admission_postgres import PostgresPressureSampler
+from cli_agent_orchestrator.services.admission_postgres import (
+    PostgresPressurePolicy,
+    PostgresPressureSample,
+    PostgresPressureSampler,
+)
 from cli_agent_orchestrator.services.admission_resources import (
     LinuxResourceSampler,
     ResourceSample,
@@ -31,7 +36,11 @@ from cli_agent_orchestrator.services.admission_settings import (
     AdmissionConfiguration,
     AdmissionPolicyLoader,
 )
-from cli_agent_orchestrator.services.delivery_admission import AdmissionReason, DeliveryAdmission
+from cli_agent_orchestrator.services.delivery_admission import (
+    AdmissionLedgerDiagnostic,
+    AdmissionReason,
+    DeliveryAdmission,
+)
 
 MonitorReason = (
     AdmissionReason
@@ -69,6 +78,46 @@ class ResourceSampler(Protocol):
 class MonitorResult:
     reason: MonitorReason
     published: bool = False
+
+
+@dataclass(frozen=True)
+class CachedAdmissionConfiguration:
+    generation: int
+    configuration: AdmissionConfiguration
+    basis: CapacityObservation | None = None
+
+
+@dataclass(frozen=True)
+class CachedPostgresProbe:
+    generation: int
+    sample: PostgresPressureSample
+    policy: PostgresPressurePolicy
+
+
+@dataclass(frozen=True)
+class CachedResourceProbe:
+    generation: int
+    sample: ResourceSample
+
+
+@dataclass(frozen=True)
+class CachedMonitorResult:
+    generation_at_completion: int
+    observed_at: float | None
+    result: MonitorResult
+
+
+@dataclass(frozen=True)
+class AdmissionMonitorDiagnostic:
+    ledger: AdmissionLedgerDiagnostic
+    configuration: CachedAdmissionConfiguration | None
+    postgres: CachedPostgresProbe | None
+    resources: CachedResourceProbe | None
+    last_cycle: CachedMonitorResult | None
+    stopping: bool
+    sampling: bool
+    authority_changing: bool
+    authority_uncertain: bool
 
 
 def _minimum(a: ResourceAmounts, b: ResourceAmounts) -> ResourceAmounts:
@@ -161,6 +210,10 @@ class AdmissionMonitor:
         )
         self._authority_tokens: set[object] = set()
         self._on_change: Callable[[], None] | None = None
+        self._last_postgres_probe: CachedPostgresProbe | None = None
+        self._last_configuration: CachedAdmissionConfiguration | None = None
+        self._last_resource_probe: CachedResourceProbe | None = None
+        self._last_cycle_result: CachedMonitorResult | None = None
 
     @property
     def retired(self) -> bool:
@@ -244,7 +297,44 @@ class AdmissionMonitor:
             self._resource_identity = None
         return MonitorResult(reason)
 
+    def diagnostic(self, *, now: float) -> AdmissionMonitorDiagnostic:
+        # Reject an inherited owner before taking a possibly inherited monitor lock.
+        self.owner.generation
+        with self._lifecycle_guard:
+            return AdmissionMonitorDiagnostic(
+                ledger=self.owner.diagnostic(now=now),
+                configuration=self._last_configuration,
+                postgres=self._last_postgres_probe,
+                resources=self._last_resource_probe,
+                last_cycle=self._last_cycle_result,
+                stopping=self._stopped,
+                sampling=self._refresh_guard.locked(),
+                authority_changing=bool(self._authority_tokens),
+                authority_uncertain=self._authority_state.uncertain,
+            )
+
+    def _remember_result(self, ticket: int, result: MonitorResult) -> None:
+        try:
+            at = self._clock()
+            validate_clock(at)
+        except Exception:
+            at = None  # Missing diagnostic timing cannot replace the cycle outcome.
+        with self._lifecycle_guard:
+            if self._lifecycle == ticket:
+                self._last_cycle_result = CachedMonitorResult(self.owner.generation, at, result)
+
     def refresh(self) -> MonitorResult:
+        with self._lifecycle_guard:
+            ticket = self._lifecycle
+        try:
+            result = self._refresh()
+        except Exception:
+            self._remember_result(ticket, MonitorResult("monitor_failed"))
+            raise
+        self._remember_result(ticket, result)
+        return result
+
+    def _refresh(self) -> MonitorResult:
         """Synchronous physical cycle, serialized independently of its awaiter."""
         with self._lifecycle_guard:
             lifecycle = self._lifecycle
@@ -314,7 +404,22 @@ class AdmissionMonitor:
             self._resources.reset_history()
         if not self._postgres.configure(configuration.postgres):
             return self._invalidate(generation, "probe_busy")
-        pressure = self._postgres.sample().observation
+        with self._lifecycle_guard:
+            applied = self._last_configuration
+            if (
+                applied is None
+                or applied.generation != generation
+                or applied.configuration != configuration
+            ):
+                # Sampler parameters are installed; a subsequent published
+                # observation must still establish their capacity basis.
+                self._last_configuration = CachedAdmissionConfiguration(generation, configuration)
+        pressure_sample = self._postgres.sample()
+        with self._lifecycle_guard:
+            self._last_postgres_probe = CachedPostgresProbe(
+                generation, pressure_sample, configuration.postgres
+            )
+        pressure = pressure_sample.observation
         # An absent supplier adds no local domain. A configured supplier
         # returning None remains unknown and must still close admission.
         local = (
@@ -329,7 +434,10 @@ class AdmissionMonitor:
         )
         storage = StorageObservation(min(pressure.observed_at, local.observed_at), slots)
         resource_started_at = self._clock()
-        sample = self._resources.sample(storage=storage).observation
+        resource_sample = self._resources.sample(storage=storage)
+        with self._lifecycle_guard:
+            self._last_resource_probe = CachedResourceProbe(generation, resource_sample)
+        sample = resource_sample.observation
         checked = self._bootstrap.load_current().attestation
         if (
             not is_verified_resource_attestation(checked)
@@ -380,6 +488,10 @@ class AdmissionMonitor:
             published = self.owner.observe(
                 observation, now=now, generation=generation, ceiling=self._recovery.current
             )
+            if published:
+                self._last_configuration = CachedAdmissionConfiguration(
+                    generation, configuration, observation
+                )
         if not published:
             if self.owner.generation != generation:
                 self._recovery = _Recovery()
@@ -404,6 +516,10 @@ class AdmissionMonitor:
             self._resource_identity = None
             self._configuration = None
             self._last_cycle_at = None
+            self._last_postgres_probe = None
+            self._last_configuration = None
+            self._last_resource_probe = None
+            self._last_cycle_result = None
             self._recovery = _Recovery()
             self._runner = asyncio.create_task(self._run())
 

@@ -546,3 +546,6 @@ Spec041 T018, Inbox/descubrimiento (2026-10-31): tres entradas con huella de dos
 
 
 Spec041 T018, selección/INPUT/dominios (2026-10-31): selección Work con reservas SQL propias90PASS; Bridge preflight, capability exacto de uso único y frontera real de transporte42PASS. Monitor/factoría ya no usan auditpool4 como techo global:95PASS más3negativos reforzados (subconjunto). Presupuestos simulados5/20/40 con dos sesiones por entrega; no aceptación física de agentes. Composición5/0 y mismoPG0/0/0; errores intermedios conservados. T018 permanece abierto por control/bootstrap/otras entradas SQL/cierre/diagnóstico; M1/M2/M3/SDK/UI y gates nativos/globales siguen separados. [Recibo](../specs/041-resource-aware-network-admission/validation-t018-selection-input-domains.json).
+
+
+Spec041 T017 local cerrado (2026-10-31): diagnóstico tipado autorizado API/Bridge, lectura cached O(1) sin consultar SQL/probes/política en cada GET. Snapshot coherente, presupuesto desconocido tras invalidación y procedencia separada de configuración/sonda/base. Final211PASS y composición5/0; HTTP/JWKS/PG reales y limpieza0/0/0. No es aceptación nativa adicional ni diagnóstico multinodo; T018/M1/M2/M3/SDK/UI y gates globales permanecen pendientes. [Recibo](../specs/041-resource-aware-network-admission/validation-t017-local-diagnostics.json).

@@ -75,6 +75,14 @@ async def test_bridge_real_http_jwt_registration_keeps_incomplete_coverage_close
                 await client.get(path, headers={"Authorization": "Bearer " + bridge._token})
             ).status_code == 401
             assert (await client.get(path, headers=admin)).status_code == 404
+            assert (await client.get("/admission/diagnostics")).status_code == 401
+            assert (await client.get("/admission/diagnostics", headers=reader)).status_code == 403
+            diagnostic = await client.get("/admission/diagnostics", headers=admin)
+            assert diagnostic.status_code == 200
+            assert diagnostic.json()["scope"] == "process_local"
+            assert diagnostic.json()["distributed_observed"] is False
+            assert diagnostic.json()["capacity"] is None
+            assert diagnostic.headers["cache-control"] == "no-store"
             response = await client.post(
                 path, headers=admin, json={"expected_revision": 0, "claims": asdict(claims)}
             )

@@ -117,6 +117,14 @@ def test_real_http_admin_registration_cas_revocation_and_runtime_acl(
             assert client.get(path).status_code == 401
             assert client.get(path, headers=reader).status_code == 403
             assert client.get(path, headers=admin).status_code == 404
+            assert client.get("/admission/diagnostics").status_code == 401
+            assert client.get("/admission/diagnostics", headers=reader).status_code == 403
+            diagnostic = client.get("/admission/diagnostics", headers=admin)
+            assert diagnostic.status_code == 200
+            assert diagnostic.json()["scope"] == "process_local"
+            assert diagnostic.json()["distributed_observed"] is False
+            assert diagnostic.json()["capacity"] is None
+            assert diagnostic.headers["cache-control"] == "no-store"
             created = client.post(
                 path, headers=admin, json={"expected_revision": 0, "claims": asdict(claims)}
             )

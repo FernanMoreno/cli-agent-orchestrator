@@ -66,6 +66,18 @@ class AdmissionSnapshot:
         return self.started - self.storage_only_started
 
 
+@dataclass(frozen=True)
+class AdmissionLedgerDiagnostic:
+    """One coherent local basis; never a grant or a count of live agents."""
+
+    snapshot: AdmissionSnapshot
+    policy: AdmissionPolicy
+    budget: ResourceAmounts | None
+    observation: CapacityObservation | None
+    ceiling: ResourceAmounts | None
+    decision: AdmissionDecision
+
+
 @dataclass(frozen=True, eq=False)
 class StorageStageReservation:
     """One physical storage stage; copies cannot retire the registered owner."""
@@ -441,9 +453,13 @@ class DeliveryAdmission:
                         break
             return True
 
-    def _current_decision(self, now: float, *, charged: bool = True) -> AdmissionDecision:
+    def _current_decision(
+        self, now: float, *, charged: bool = True, close_uncertain: bool | None = None
+    ) -> AdmissionDecision:
         committed = self._committed if charged else ResourceAmounts()
-        if self._observation is None or storage_close_uncertainty():
+        if self._observation is None or (
+            storage_close_uncertainty() if close_uncertain is None else close_uncertain
+        ):
             return AdmissionDecision(0, "unknown_capacity", resource_debt=committed)
         budget = self._budget
         if self._observation_ceiling is not None:
@@ -582,42 +598,64 @@ class DeliveryAdmission:
     def snapshot(self, *, now: float) -> AdmissionSnapshot:
         validate_clock(now)
         with self._guard:
-            decision = self._current_decision(now)
-            limit = (
-                self._current_decision(now, charged=False).available_slots if self._accepting else 0
-            )
-            inflight = len(self._leases)
-            reason: AdmissionReason = decision.reason
-            if not self._accepting:
-                reason = "stopping"
-            debt = decision.resource_debt
-            if not self._accepting:
-                debt = self._committed
-            age = now - self._observation.observed_at if self._observation else None
-            return AdmissionSnapshot(
-                accepting=self._accepting,
-                generation=self._generation,
-                inflight=inflight,
-                reserved=inflight - self._started,
-                started=self._started,
-                limit=limit,
-                available_slots=decision.available_slots if self._accepting else 0,
-                debt=max(
-                    (debt.memory_bytes + self._policy.memory_per_delivery_bytes - 1)
-                    // self._policy.memory_per_delivery_bytes,
-                    (debt.cpu_millicores + self._policy.cpu_per_delivery_millicores - 1)
-                    // self._policy.cpu_per_delivery_millicores,
-                    debt.storage_slots,
-                ),
-                reason=reason,
-                sample_age_s=age if age is not None and age >= 0 else None,
-                committed=self._committed,
-                resource_debt=debt,
-                storage_connection_loans=self._storage_connection_loans,
-                storage_completion_credits=(
-                    self._committed.storage_slots - self._additional_storage_connections
-                ),
-                storage_retirement_pending=self._storage_retirement_pending,
-                storage_only_inflight=self._storage_only_inflight,
-                storage_only_started=self._storage_only_started,
+            return self._snapshot_basis_locked(now)[0]
+
+    def _snapshot_basis_locked(self, now: float) -> tuple[AdmissionSnapshot, AdmissionDecision]:
+        """Linearize the external close flag once with the guarded ledger basis."""
+        uncertain = storage_close_uncertainty()
+        decision = self._current_decision(now, close_uncertain=uncertain)
+        limit = (
+            self._current_decision(now, charged=False, close_uncertain=uncertain).available_slots
+            if self._accepting
+            else 0
+        )
+        inflight = len(self._leases)
+        reason: AdmissionReason = decision.reason
+        if not self._accepting:
+            reason = "stopping"
+        debt = decision.resource_debt
+        if not self._accepting:
+            debt = self._committed
+        age = now - self._observation.observed_at if self._observation else None
+        snapshot = AdmissionSnapshot(
+            accepting=self._accepting,
+            generation=self._generation,
+            inflight=inflight,
+            reserved=inflight - self._started,
+            started=self._started,
+            limit=limit,
+            available_slots=decision.available_slots if self._accepting else 0,
+            debt=max(
+                (debt.memory_bytes + self._policy.memory_per_delivery_bytes - 1)
+                // self._policy.memory_per_delivery_bytes,
+                (debt.cpu_millicores + self._policy.cpu_per_delivery_millicores - 1)
+                // self._policy.cpu_per_delivery_millicores,
+                debt.storage_slots,
+            ),
+            reason=reason,
+            sample_age_s=age if age is not None and age >= 0 else None,
+            committed=self._committed,
+            resource_debt=debt,
+            storage_connection_loans=self._storage_connection_loans,
+            storage_completion_credits=(
+                self._committed.storage_slots - self._additional_storage_connections
+            ),
+            storage_retirement_pending=self._storage_retirement_pending,
+            storage_only_inflight=self._storage_only_inflight,
+            storage_only_started=self._storage_only_started,
+        )
+        return snapshot, decision
+
+    def diagnostic(self, *, now: float) -> AdmissionLedgerDiagnostic:
+        """Copy immutable quantities and O(1) counters under the same guard."""
+        validate_clock(now)
+        with self._guard:
+            snapshot, decision = self._snapshot_basis_locked(now)
+            return AdmissionLedgerDiagnostic(
+                snapshot=snapshot,
+                policy=self._policy,
+                budget=self._budget,
+                observation=self._observation,
+                ceiling=self._observation_ceiling,
+                decision=decision,
             )

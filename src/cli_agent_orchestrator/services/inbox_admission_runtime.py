@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import Any, Callable, Generic, Protocol, TypeVar
 from uuid import uuid4
 
+from cli_agent_orchestrator.models.admission_control import AdmissionDiagnostics
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
     ResourceEnvelopeRecord,
     envelope_integer,
 )
 from cli_agent_orchestrator.services.admission_bootstrap import AttestationUpdate, ResourceBootstrap
+from cli_agent_orchestrator.services.admission_diagnostics import diagnostics_response
 from cli_agent_orchestrator.services.admission_monitor import (
     AdmissionMonitor,
     AuthorityMutationState,
@@ -201,6 +203,15 @@ class InboxAdmissionRuntime:
             ),
             mutating=True,
         )
+
+    def diagnostics(self, *, principal: object) -> AdmissionDiagnostics:
+        """Read only cached process state, including while authority I/O is busy."""
+        ResourceBootstrap._administrator(principal)
+        if not self.available or asyncio.get_running_loop() is not self._loop:
+            raise AdmissionRuntimeUnavailable("admission runtime is unavailable")
+
+        now = self._clock()
+        return diagnostics_response(self.monitor.diagnostic(now=now), now=now)
 
     async def registered(self, *, principal: object) -> ResourceEnvelopeRecord:
         return await self._execute(

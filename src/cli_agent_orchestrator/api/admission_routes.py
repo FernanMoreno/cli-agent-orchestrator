@@ -15,6 +15,7 @@ from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.clients.postgres.connection import DatabaseError
 from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
 from cli_agent_orchestrator.models.admission_control import (
+    AdmissionDiagnostics,
     RegisteredResourceEnvelope,
     ResourceAttestationRequest,
     ResourceClaims,
@@ -146,3 +147,16 @@ async def revoke(
         raise control_error(error) from None
     response.headers["Cache-Control"] = "no-store"
     return ResourceUpdate(revision=update.revision, active=update.active)
+
+
+@router.get("/diagnostics", response_model=AdmissionDiagnostics)
+async def diagnostics(
+    request: Request, response: Response, principal: Principal = Depends(operator)
+):
+    value = runtime(request)
+    try:
+        result = value.diagnostics(principal=principal)
+    except _EXPECTED as error:
+        raise control_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result

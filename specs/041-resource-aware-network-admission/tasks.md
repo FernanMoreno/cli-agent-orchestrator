@@ -39,7 +39,7 @@
 
 ## Phase 8 — US6 diagnóstico
 
-- [ ] T017 [US6] Exponer diagnóstico estructurado autorizado de política, presión, reservas y cobertura sin secretos en src/cli_agent_orchestrator/api/main.py y test/api/test_admission_status.py.
+- [x] T017 [US6] Exponer diagnóstico estructurado autorizado de política, presión, reservas y cobertura sin secretos en src/cli_agent_orchestrator/api/main.py y test/api/test_admission_status.py.
 - [ ] T018 [US6] Probar liberación por etapa, trabajo por mensaje acotado, contaminación de diagnóstico y presupuestos combinados en test/integration/test_inbox_resource_admission.py y test/api/test_admission_status.py.
 
 ## Phase 9 — Aceptación e integración
@@ -101,3 +101,6 @@ T018 checkpoint Inbox/descubrimiento (2026-10-31): StorageReservation comparte l
 Spec041 T018, selección/INPUT/dominios (2026-10-31): selección Work con reservas SQL propias90PASS; Bridge preflight, capability exacto de uso único y frontera real de transporte42PASS. Monitor/factoría ya no usan auditpool4 como techo global:95PASS más3negativos reforzados (subconjunto). Presupuestos simulados5/20/40 con dos sesiones por entrega; no aceptación física de agentes. Composición5/0 y mismoPG0/0/0; errores intermedios conservados. T018 permanece abierto por control/bootstrap/otras entradas SQL/cierre/diagnóstico; M1/M2/M3/SDK/UI y gates nativos/globales siguen separados. [Recibo](validation-t018-selection-input-domains.json).
 
 No se marca T018/T021 ni otro gate pendiente como terminado por este componente.
+
+
+T017 local cerrado (2026-10-31): GET /admission/diagnostics compartido API/Bridge, JWT admin verificado antes de resolver runtime, DTO estricto y snapshot O(1) sin SQL/probes/loader/import tardío. La caché de sonda no se confunde con autoridad ni con la base actual; configuración instalada y observación publicada tienen testigo separado aunque compartan generación. Final211/211PASS (núcleo22 previo se solapa), tipos6/formato10/composición440/1956/5KEPT/0BROKEN y mismoPG0/0/0. REDs de borrador6/4/2 conservados. [Validación](validation-t017-local-diagnostics.json), [composición](composition-t017-local-diagnostics.md). T018, aceptación físicaM1, M2/M3, SDK/UI y US6distribuida/gates globales siguen abiertos.

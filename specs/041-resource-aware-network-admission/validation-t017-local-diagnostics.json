@@ -1,0 +1,182 @@
+{
+  "schema": "caos.spec041.t017.local-diagnostics.v1",
+  "verified_utc": "2026-10-31T20:04:20.462747+00:00",
+  "base_head": "e2f5d6da6f303a78d04f3df6f587161191dff08f",
+  "status": "PASS_AUTHORIZED_CACHED_PROCESS_DIAGNOSTICS",
+  "t017_local_complete": true,
+  "us6_network_complete": false,
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_cli_executed": false,
+  "endpoint": "GET /admission/diagnostics",
+  "tested_files": [
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_control.py",
+      "digest": "sha256:ff730a706d1c0bc906039bc66c97d3764ed69999a1d759dd0ba57e93e02e590b"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "digest": "sha256:505a09d06fbc51dfdfbae77061a7724fda04ddff947c0a3564f7f6f7727e6ebe"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+      "digest": "sha256:16828e7f804da88ea77c7e18ff6679977ff723adf698b7d794565b3dba7f676c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_diagnostics.py",
+      "digest": "sha256:b26ef550f79f29263f2cb49cdd598ba0123e578dbe1fdf77594945a294a2e3c8"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "digest": "sha256:3003faa520645e95b219ccc0b9856a083aff48732e9471e4393bca4dceef9b5c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+      "digest": "sha256:e5092ae7e63d6a8c9d348c11d032d3e39134871602b07fa2bf7864511eb875b7"
+    },
+    {
+      "path": "test/api/test_admission_status.py",
+      "digest": "sha256:7a338aa51e85bdf36a0c80ad2dfa8b513efd6475329ac06ae0fa76cf3d10147e"
+    },
+    {
+      "path": "test/services/test_admission_diagnostics.py",
+      "digest": "sha256:60c5498164c3ac05c80a4f10e5b5ef4e4083c61a07932281148a89fb8e90bf96"
+    },
+    {
+      "path": "test/postgres/test_admission_control_http.py",
+      "digest": "sha256:ec9a9189db8927f4bf8b96d54eed533794f8888d2daf3a0455edc3f386c1da72"
+    },
+    {
+      "path": "test/postgres/test_bridge_admission_control.py",
+      "digest": "sha256:420e6f06315d445a0e80c1109e8068e8a3f4fa9bf9e0bbfa7356f3c0e05ec6a7"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "t017-diagnostics-red",
+      "cases": {
+        "total": 6,
+        "failure": 6,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 71.987,
+      "available_mib": 8428,
+      "candidate_digest": "sha256:ff6347c9f1dc32acc02bc15c8b25fecf584527d4a0558eb6707db9ed91d61a34",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "6missing-route/API contracts fail before implementation; not native provider failures."
+    },
+    {
+      "phase": "t017-diagnostics-boundaries-red",
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 76.274,
+      "available_mib": 8384,
+      "candidate_digest": "sha256:70f4599ec4a5764aadd9925d4feb372049251517584c18581d60b8cd37bbfe8e",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "4draft regressions reproduce mixed close-uncertainty basis, retained old budget and first-request projection import. Source preserved."
+    },
+    {
+      "phase": "t017-diagnostics-core-r2",
+      "cases": {
+        "total": 22,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 66.229,
+      "available_mib": 8327,
+      "candidate_digest": "sha256:fde5cda25dff4a7b5d3a55e02e4cb4f28e8dd4e8c54597461d618e9db93a6a4e",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "22unit/API cases pass after shared snapshot basis, eager mapper and invalid-budget fixes. These overlap final211."
+    },
+    {
+      "phase": "t017-diagnostics-configuration-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 51.495,
+      "available_mib": 8383,
+      "candidate_digest": "sha256:901c02e7f53c561c85247c822fb1cf6b287a2a05b88a3100b3691feb87e55d44",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "2draft metadata races: new PG-only configuration was exposed before PG configure confirms (success/failure variants)."
+    },
+    {
+      "phase": "t017-diagnostics-regression",
+      "cases": {
+        "total": 211,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 281.149,
+      "available_mib": 8302,
+      "candidate_digest": "sha256:77b38859ea7307f1d30093970387b763f94b3bc0664d20f00e8f6f5b6538d7f0",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "211pass across diagnostics, owner/loans, monitor/runtime, API, real HTTP/JWKS/PostgreSQL/Bridge, Inbox and Work. Includes installed-configuration versus exact published-basis witness."
+    }
+  ],
+  "unused_descriptor": "t017-diagnostics-core was prepared but never executed. Review findings were reproduced separately before preparing/executing core-r2; no outcome attributed to unused descriptor.",
+  "final_pytest": "211passed/0failures/0errors/0skipped/8warnings;267.67s pytest",
+  "earlier_core": "22passed/6warnings;53.51s;subset/earlier candidate,not22additional distinct cases",
+  "format": "Black/isort10PythonPASS;all10currentPythonfiles equal closed211-casearchive",
+  "types": "mypy6source modulesPASS;follow-imports=silent/defaultuntypedscope",
+  "architecture": {
+    "files": 440,
+    "dependencies": 1956,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": "Codex Luna Max/ECC scoped T017 design and3review rounds, final findings corrected/reproduced then rechecked by lead and actual tests. No extra review loops; no Claude CLI. Lead composition/diff review complete.",
+  "scope": [
+    "Strict immutable version1process_local DTO; distributed_observedFalse, no fabricated agents/messages/nodes. Verified JWT admin before runtime resolution, no-store on successful/fixed-control responses. Same router used by API and Bridge loopback.",
+    "Getter does not call resource SQL/probes/loaders/bootstrap/registered/_execute/refresh; mapper is loaded before firstGET. Usual authentication mechanism retained. Snapshot uses incremental counters and cannot iterate lease table.",
+    "One close-uncertainty observation defines both charged and uncharged ledger decisions; owner quantities, policy and counter snapshot share same guard. Known zero differs from unknown null; prior budget is not presented current after invalidate/stale/stop.",
+    "Sampler configuration is cached only after PG configure succeeds; basis_current binds its exact frozen observation accepted by owner. Policy-only reload can retain generation, so generation equality is explicitly separate from causal basis.",
+    "Cached PostgreSQL and local-resource probes retain independent generation/age/policy/issues; stale/future/unknown and pending physical-loan counts remain visible. Probe telemetry does not authorize effects or reserve a shared domain.",
+    "RealHTTP/JWKS/PG and Bridge tests preserve no-authority/partial-hierarchy refusal, admin/readerscope rejection, CAS/revocation/ACL and exact teardown. No completion claim for physicalM1."
+  ],
+  "not_accepted": [
+    "T018 protected SQL control/bootstrap/monitor, remaining API/MCP ingress transactions and shutdown exact-close retry.",
+    "T019 physicalM1, complete hierarchy witness and dynamic cgroup sampler correction.",
+    "T012–T016/T020 shared reservations/recoveryM2 and authorized ordinary node placementM3.",
+    "T022 PostgreSQL configuration history/API/typed SDK and T023 real administration UI.",
+    "US6 distributed network diagnosis and remaining native provider/global gates."
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-local-admission-diagnostics",
+    "status": "applied",
+    "strict_lint_issues": 0,
+    "approval_digest": "sha256:6ae89c864062f48b5eae7f98c9c89cae9181906153c0525573d0608a18719b6b"
+  }
+}

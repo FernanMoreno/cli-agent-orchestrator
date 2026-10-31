@@ -27,3 +27,9 @@ ResourceDomain identifica host/nodo/almacenamiento/cuota con presupuesto y revis
 ## M3: identidad de asignación
 
 La reserva de colocación apunta al identificador del intento de asignación ordinaria y al trabajador/encarnación preparados. No cambia el dueño de Work ni el destinatario de mensajes existentes. Infraestructura concedida, destino preparado, entrada enviada y resultado confirmado son estados distintos.
+
+## Diagnóstico local T017 (implementado/validado)
+
+AdmissionLedgerDiagnostic congela snapshot, policy, budget, observation, ceiling y decisión bajo el mismo guard y una única observación de incertidumbre de cierre. AdmissionDiagnostics v1 es DTO estricto/inmutable process_local, con cantidades explícitas, counters de operaciones/entregas/storage/loans y capacidad nullable.
+
+CachedAdmissionConfiguration identifica configuración instalada y referencia privada de la observación que la convirtió en base; basis_current no se deriva solo de generation. CachedPostgresProbe/CachedResourceProbe y CachedMonitorResult conservan telemetría ya obtenida con procedencia y edad propias. El GET no hace I/O de recursos ni devuelve identidad/rutas/contenido. No crea registros durables ni autoridad nueva.

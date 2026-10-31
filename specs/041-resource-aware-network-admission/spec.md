@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Implementation in progress — T001–T011 validados; T018 conecta puertos físicos PostgreSQL, Inbox y Bridge con regresión acotada422PASS. Faltan composición física Work/huellas, control SQL, diagnóstico y cierre antes de completar T018. Aceptación física M1/T019 y desarrollo/aceptación M2/M3/SDK/UI pendientes.
+**Status**: Implementation in progress — T001–T011 y T017 local validados. T018 integra ownership PostgreSQL/Inbox/Work/Bridge y separa auditpool4 del techo global; faltan control/bootstrap/otras entradas SQL y cierre. El diagnóstico local tipado pasa211pruebas; no equivale a US6 de red completa. Aceptación físicaM1/T019 y M2/M3/SDK/UI pendientes.
 
 **Input**: Sustituir las cuatro entregas simultáneas fijas por admisión según recursos, presión de PostgreSQL y capacidad de cada nodo, conservando el orden por receptor. Cada máquina necesita límites; la red debe sumar nodos y repartir trabajo sin un número global fijo de agentes.
 
