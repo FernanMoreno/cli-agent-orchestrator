@@ -20,7 +20,9 @@ def journal(postgres_runtime_channel, monkeypatch):
 
     from cli_agent_orchestrator.backends import registry
 
-    monkeypatch.setattr(registry, "get_backend", lambda: Mock())
+    # Keep imported consumers on the canonical ContextVar-aware getter. A lazy
+    # import under a replaced function can retain that fake after teardown.
+    monkeypatch.setattr(registry, "_backend", Mock())
     return store
 
 

@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-31T01:28:05.831300+00:00",
+  "status": "PASS_INPUT_DI_COMPONENT_T010_OPEN",
+  "scope": "Bridge INPUT admission with trusted injected process ledger, controlled capacity/backend and real PostgreSQL; not production activation or M1",
+  "base_head": "250daab1795f2c0740fd3c1ecfa523ce4885a9ff",
+  "candidate_source_stamp": "c0aedb89428a05bbe1ed5e809cf767d619b566cd81fa4ec7b78e02af14f1e651",
+  "tested_files_sha256": {
+    "src/cli_agent_orchestrator/runtime_channel/bridge.py": "629836ca9cacc3f4e42a4e18b71c1bb8c33f04a2deed71f2d6583efa741fb67e",
+    "test/runtime_channel/test_bridge_resource_admission.py": "93d24a5ad83c9e87d5b9283823e5baade5252d707261ee933925370b8e9a7a7c",
+    "test/runtime_channel/test_remote_integration.py": "c1837748e539cbe133563a68257d9b3b9353e48c4c8433a9d56b89210d01f5d3"
+  },
+  "tests": {
+    "total": 38,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 3,
+    "pytest_seconds": 116.75,
+    "controller_seconds": 119.45,
+    "selected_files": 5,
+    "new_cases": 8,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t010-bridge-input-final2/t010-bridge-input-final2/receipt.json"
+  },
+  "closure": {
+    "exit_code": 0,
+    "support_preserved": true,
+    "source_preserved": true,
+    "descriptor_closed": true
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t010-bridge-input-red2",
+      "exit_code": 1,
+      "cases": {
+        "total": 6,
+        "failure": 6,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 56.372,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-input-green2",
+      "exit_code": 1,
+      "cases": {
+        "total": 36,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 120.326,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-backend-port-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 41.585,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-input-final",
+      "exit_code": 0,
+      "cases": {
+        "total": 38,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 113.773,
+      "source_preserved": true
+    }
+  ],
+  "architecture": {
+    "files": 434,
+    "dependencies": 1926,
+    "kept": 5,
+    "broken": 0
+  },
+  "types": "mypy1sourcePASS; follow-imports=silent; default untyped-method coverage. Existing DELETE no-any-return independently reproduced against HEAD using shadow-file, then callback dictionary type preserved through legacy Any worker helper without disabling checks.",
+  "format": "Black/isort3filesPASS",
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": {
+    "reviewer": "Codex GPT6LunaMax ECC read-only",
+    "rounds": 3,
+    "verdict": "GO_INPUT_DI_GATE_ONLY",
+    "finding": "Fixture replaced canonical getter; lazy recovery import retained fake after teardown, bypassing backend ContextVar. Focused RED confirmed; fixed backing instance and kept original reset==1 assertion. Pending lease guarded before capability construction.",
+    "last_static_only_change": "Lead reviewed DELETE type-preserving cast after peer gate review; final38 revalidated resulting source bytes."
+  },
+  "knowledge": {
+    "operation_id": "save-20261031-backend-port-fixture-boundary",
+    "strict_lint_exit": 0
+  },
+  "graphify": {
+    "preimplementation_nodes": 34,
+    "incident_links": 151,
+    "verified_against_source": true,
+    "refresh": "Deferred to preserve unrelated generated graph work; new runtime\u2192delivery_admission/work_blocking edges verified from source"
+  },
+  "boundaries": [
+    "Claim/prepare and transport result/revision SQL are coordination outside the input footprint",
+    "INPUT lease reserved after claim before terminal turn; worker starts and finishes through send_input and durable local receipts",
+    "Async cancellation joins the physical worker; async cleanup only cancels unstarted handoffs",
+    "Typed no-effect denial survives actual central routing and leaves real Inbox PostgreSQL row PENDING; lost reply remains existing RECONCILE semantics",
+    "Replay across epoch does not repeat an effect; direct bound execute needs the private command handoff"
+  ],
+  "limits": [
+    "Bridge._amain still constructs an unbound Bridge: control producer, activation and lifecycle drain not integrated",
+    "Capacity observations and native backend are controlled fixtures, not real model/provider or host hierarchy acceptance",
+    "No M1/M2/M3, shared domain reservations, new global acceptance, SDK/UI acceptance"
+  ]
+}

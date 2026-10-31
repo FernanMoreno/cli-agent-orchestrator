@@ -22,15 +22,16 @@ import re
 import signal
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, cast
 
 import websockets
 from websockets.asyncio.client import ClientConnection, connect
 
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.constants import CAO_HOME_DIR, DEFAULT_PROVIDER
-from cli_agent_orchestrator.models.terminal import TerminalStatus
+from cli_agent_orchestrator.models.terminal import TerminalInputBlockedError, TerminalStatus
 from cli_agent_orchestrator.runtime_channel.protocol import (
     PROTOCOL_VERSION,
     RUNTIME_ID_PATTERN,
@@ -43,6 +44,10 @@ from cli_agent_orchestrator.runtime_channel.protocol import (
     encode,
 )
 from cli_agent_orchestrator.runtime_channel.token import TOKEN_HEADER, runtime_token
+from cli_agent_orchestrator.services.delivery_admission import (
+    DeliveryAdmission,
+    DeliveryReservation,
+)
 from cli_agent_orchestrator.services.event_bus import bus
 from cli_agent_orchestrator.services.provider_lifecycle import retirement_scope
 
@@ -59,6 +64,21 @@ class ChannelRefused(Exception):
     """The server refused this runtime (token or protocol version). Retrying cannot help."""
 
 
+@dataclass(frozen=True)
+class _AdmittedInput:
+    bridge: "Bridge"
+    command: Command
+    reservation: DeliveryReservation
+
+
+def _resource_refusal() -> TerminalInputBlockedError:
+    return TerminalInputBlockedError(
+        "Execution resources are unavailable",
+        action="inspect",
+        delivery_may_have_occurred=False,
+    )
+
+
 class Bridge:
     def __init__(
         self,
@@ -69,6 +89,8 @@ class Bridge:
         *,
         store=None,
         incarnation_id: Optional[str] = None,
+        resource_admission: DeliveryAdmission | None = None,
+        resource_clock: Callable[[], float] = time.monotonic,
     ):
         self.server_url = server_url
         self.runtime_id = runtime_id
@@ -94,6 +116,9 @@ class Bridge:
             store = RemoteOperationStore(main_target())
         self.store = store
         self.connection_epoch: int | None = None
+        # One trusted process owner, retained across channel epochs/reconnects.
+        self._resource_admission = resource_admission
+        self._resource_clock = resource_clock
 
     def admit_epoch(self, epoch: int) -> None:
         self.store.admit_epoch(self.runtime_id, self.incarnation_id, epoch)
@@ -197,6 +222,8 @@ class Bridge:
     async def handle(self, command: Command) -> None:
         """Durable receive claim precedes every possible native effect."""
         claimed = False
+        admitted_input: _AdmittedInput | None = None
+        input_reservation: DeliveryReservation | None = None
         try:
             if (
                 command.runtime_incarnation_id != self.incarnation_id
@@ -232,6 +259,16 @@ class Bridge:
                 )
                 await self._send(result)
                 return
+            if self._resource_admission is not None and command.type == CommandType.INPUT:
+                if not command.terminal_id:
+                    raise _resource_refusal()
+                attempt = self._resource_admission.try_reserve(
+                    command.terminal_id, now=self._resource_clock()
+                )
+                input_reservation = attempt.reservation
+                if input_reservation is None:
+                    raise _resource_refusal()
+                admitted_input = _AdmittedInput(self, command, input_reservation)
             # Cancellation/reset holds its own dispatch lock in the service.
             async with self._terminal_turn(command.terminal_id or command.op_id):
                 if not await asyncio.to_thread(
@@ -251,7 +288,10 @@ class Bridge:
                         get_backend(), self.store, command.op_id, command.connection_epoch
                     )
                 ):
-                    payload = await self.execute(command)
+                    if admitted_input is None:
+                        payload = await self.execute(command)
+                    else:
+                        payload = await self.execute(command, _admitted_input=admitted_input)
                 observed_id = command.terminal_id or payload.get("terminal", {}).get("id")
                 if observed_id:
                     payload["revision"] = await asyncio.to_thread(
@@ -279,6 +319,11 @@ class Bridge:
                 error_detail=detail,
                 runtime_incarnation_id=self.incarnation_id,
             )
+        finally:
+            if input_reservation is not None:
+                # Started work retires in its physical worker. Only a handoff
+                # that never started may be cancelled by this async owner.
+                input_reservation.cancel_before_start()
         if claimed:
             await asyncio.to_thread(
                 self.store.settle,
@@ -289,7 +334,17 @@ class Bridge:
             )
         await self._send(result)
 
-    async def execute(self, command: Command) -> Dict[str, Any]:
+    async def execute(
+        self, command: Command, *, _admitted_input: _AdmittedInput | None = None
+    ) -> Dict[str, Any]:
+        if self._resource_admission is not None and command.type == CommandType.INPUT:
+            if (
+                type(_admitted_input) is not _AdmittedInput
+                or _admitted_input.bridge is not self
+                or _admitted_input.command is not command
+                or _admitted_input.reservation.state != "reserved"
+            ):
+                raise _resource_refusal()
         # Imported here: the provider stack is only needed once work arrives.
         from cli_agent_orchestrator.clients.database import get_terminal_metadata
         from cli_agent_orchestrator.models.inbox import OrchestrationType
@@ -432,17 +487,34 @@ class Bridge:
 
                 raise TerminalInputBlockedError("Native swarm is still running", action="reconcile")
             orchestration = payload.get("orchestration_type")
-            success = await asyncio.to_thread(
-                guarded,
-                terminal_service.send_input,
-                terminal_id,
-                payload["message"],
-                sender_id=payload.get("sender_id"),
-                orchestration_type=OrchestrationType(orchestration) if orchestration else None,
-                frozen_memory=payload.get("frozen_memory"),
-                task_delivery=payload.get("task_delivery", False),
-                attach_turn_receipt=payload.get("attach_turn_receipt", True),
-            )
+
+            def send_input():
+                lease = _admitted_input.reservation if _admitted_input is not None else None
+                if lease is not None and not lease.start():
+                    raise _resource_refusal()
+                try:
+                    return guarded(
+                        terminal_service.send_input,
+                        terminal_id,
+                        payload["message"],
+                        sender_id=payload.get("sender_id"),
+                        orchestration_type=(
+                            OrchestrationType(orchestration) if orchestration else None
+                        ),
+                        frozen_memory=payload.get("frozen_memory"),
+                        task_delivery=payload.get("task_delivery", False),
+                        attach_turn_receipt=payload.get("attach_turn_receipt", True),
+                    )
+                finally:
+                    if lease is not None:
+                        lease.finish()
+
+            if _admitted_input is None:
+                success = await asyncio.to_thread(send_input)
+            else:
+                from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
+                success = await run_owned_blocking(send_input)
             return {
                 "success": success,
                 "turn_sequence": success,
@@ -489,7 +561,7 @@ class Bridge:
             from cli_agent_orchestrator.backends.base import TerminalCleanupResult
             from cli_agent_orchestrator.backends.registry import get_backend
 
-            def delete_local():
+            def delete_local() -> Dict[str, Any]:
                 with retirement_scope(terminal_id) as admitted:
                     if not admitted:
                         return {"deleted": False}
@@ -526,7 +598,10 @@ class Bridge:
                     )
                     return {"deleted": bool(deleted)}
 
-            return await terminal_service._await_provider_operation(delete_local)
+            # The legacy worker helper erases its callback's return type.
+            return cast(
+                Dict[str, Any], await terminal_service._await_provider_operation(delete_local)
+            )
         raise ValueError(f"unsupported command: {command.type.value}")
 
     # --- connection ---
