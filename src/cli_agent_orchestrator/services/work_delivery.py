@@ -25,6 +25,7 @@ class DeliveryAdapter:
     terminal_identity: Callable[..., str] | None = None
     validate_contract: Callable[..., None] | None = None
     terminal_target: Callable[..., tuple[str, str, str]] | None = None
+    transactional_terminal_target: Callable[..., tuple[str, str, str]] | None = None
 
     def __post_init__(self):
         if (
@@ -35,6 +36,10 @@ class DeliveryAdapter:
             or not callable(self.send)
             or (self.terminal_identity is not None and not callable(self.terminal_identity))
             or (self.terminal_target is not None and not callable(self.terminal_target))
+            or (
+                self.transactional_terminal_target is not None
+                and not callable(self.transactional_terminal_target)
+            )
             or (self.validate_contract is not None and not callable(self.validate_contract))
         ):
             raise ValueError("delivery adapter requires a closed frozen payload model and sender")
@@ -375,6 +380,9 @@ class WorkDeliveries:
         self, connection: Connection, binding: WorkContractBinding
     ) -> str | None:
         adapter, payload = self._restore(connection, binding)
+        if adapter.transactional_terminal_target is not None:
+            target = self._terminal_target(connection, binding)
+            return target[0] if target is not None else None
         if adapter.terminal_identity is None:
             return None
         return adapter.terminal_identity(payload)
@@ -384,9 +392,13 @@ class WorkDeliveries:
     ) -> tuple[str, str, str] | None:
         """Return the sealed Work terminal/session/window tuple for a new launch."""
         adapter, payload = self._restore(connection, binding)
-        if adapter.terminal_target is None:
+        if adapter.terminal_target is None and adapter.transactional_terminal_target is None:
             return None
-        target = adapter.terminal_target(payload)
+        if adapter.transactional_terminal_target is not None:
+            target = adapter.transactional_terminal_target(connection, payload)
+        else:
+            assert adapter.terminal_target is not None
+            target = adapter.terminal_target(payload)
         if (
             not isinstance(target, tuple)
             or len(target) != 3

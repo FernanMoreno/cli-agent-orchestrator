@@ -30,7 +30,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Sequence, TypeVar
 
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.mcp_interactions import (
@@ -154,6 +154,9 @@ class TurnResultUnavailableError(OutputExtractionError):
     """Expected absence of proof for an active receipt, distinct from I/O failure."""
 
 
+_BlockingResult = TypeVar("_BlockingResult")
+
+
 class BaseProvider(ABC):
     """Abstract base class for CLI tool providers.
 
@@ -203,6 +206,14 @@ class BaseProvider(ABC):
             "enforcement_owner": "backend",
             "continuity": "unverified",
         }
+
+    async def _run_blocking(
+        self, function: Callable[..., _BlockingResult], /, *args: Any, **kwargs: Any
+    ) -> _BlockingResult:
+        """Share storage-aware I/O ownership across every provider adapter."""
+        from cli_agent_orchestrator.services.work_blocking import run_storage_aware_blocking
+
+        return await run_storage_aware_blocking(function, *args, **kwargs)
 
     def __init__(
         self,

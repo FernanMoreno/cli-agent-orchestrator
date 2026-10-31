@@ -4,6 +4,8 @@ import os
 import weakref
 from typing import Any
 
+from cli_agent_orchestrator.clients.storage_admission import _register_storage_fork_detacher
+
 # Weak references do not extend normal connection lifetimes. Fork callbacks
 # must never acquire a lock which another parent thread might have held.
 _HANDLES: dict[int, weakref.ReferenceType[Any]] = {}
@@ -20,7 +22,7 @@ def track_storage_handle(raw: Any) -> None:
     _HANDLES[key] = weakref.ref(raw, forgotten)
 
 
-def _after_fork_child() -> None:
+def _after_fork_child() -> bool:
     global _HANDLES
     inherited = tuple(_HANDLES.values())
     _HANDLES = {}
@@ -41,9 +43,10 @@ def _after_fork_child() -> None:
                 os.close(replacement)
         except BaseException:
             # Keep failed detachments alive instead of invoking libpq finalizers.
-            # No admission owner, reservation or parent state is reset here.
+            # No inherited owner, reservation or parent state is reset here.
             _UNDETACHED.append(raw)
 
+    return not _UNDETACHED
 
-if hasattr(os, "register_at_fork"):
-    os.register_at_fork(after_in_child=_after_fork_child)
+
+_register_storage_fork_detacher(_after_fork_child)

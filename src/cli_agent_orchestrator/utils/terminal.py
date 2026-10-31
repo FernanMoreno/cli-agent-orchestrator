@@ -127,6 +127,7 @@ async def wait_for_shell(
     """
     from cli_agent_orchestrator.backends.registry import get_backend
     from cli_agent_orchestrator.services.status_monitor import status_monitor
+    from cli_agent_orchestrator.services.work_blocking import run_storage_aware_blocking
 
     backend = get_backend()
     # AIPM_SHELL_READY_V1: inspect the rendered pane for tmux too. A generic
@@ -165,7 +166,7 @@ async def wait_for_shell(
     last_change = time.monotonic()
 
     while time.monotonic() < deadline:
-        buf = await asyncio.to_thread(read_buffer)
+        buf = await run_storage_aware_blocking(read_buffer)
 
         if buf != previous_buffer:
             previous_buffer = buf
@@ -209,6 +210,7 @@ async def wait_until_status(
     reset while the previous task receipt must remain fenced.
     """
     from cli_agent_orchestrator.services.status_monitor import status_monitor
+    from cli_agent_orchestrator.services.work_blocking import run_storage_aware_blocking
 
     targets = target_status if isinstance(target_status, set) else {target_status}
     target_str = ", ".join(s.value for s in targets)
@@ -221,19 +223,19 @@ async def wait_until_status(
             # An acknowledged reset can retain a semantic task fence while its
             # replacement becomes ready. Its scoped transport probe is the sole
             # readiness source; cached task status must not satisfy this wait.
-            detected = await asyncio.to_thread(initialization_probe)
+            detected = await run_storage_aware_blocking(initialization_probe)
             if detected in targets:
                 return True
             await asyncio.sleep(polling_interval)
             continue
-        current = await asyncio.to_thread(status_monitor.get_status, terminal_id)
+        current = await run_storage_aware_blocking(status_monitor.get_status, terminal_id)
         if current in targets:
             logger.info(f"wait_until_status [{terminal_id}]: reached {current.value}")
             return True
         # A complete first TUI repaint can arrive before the FIFO produces a
         # parseable frame. Providers opt into this rendered-screen probe; it is
         # disabled after task dispatch, so it cannot settle an active turn.
-        initial_viewport = await asyncio.to_thread(
+        initial_viewport = await run_storage_aware_blocking(
             status_monitor.observe_initial_viewport, terminal_id
         )
         if initial_viewport in targets:

@@ -7,7 +7,9 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, TypeVar
+
+_WorkerResult = TypeVar("_WorkerResult")
 
 
 class StorageConnectionLoan(Protocol):
@@ -15,6 +17,9 @@ class StorageConnectionLoan(Protocol):
 
 
 class StorageConnectionOwner(Protocol):
+    @property
+    def storage_process_current(self) -> bool: ...
+
     def try_acquire_storage_connection(self, *, now: float) -> StorageConnectionLoan | None: ...
 
 
@@ -33,19 +38,14 @@ def _current_task() -> object | None:
 
 
 @dataclass(repr=False)
-class _PhysicalScope:
-    owner: StorageConnectionOwner
-    clock: Callable[[], float]
+class _StorageDenial:
     pid: int = field(default_factory=os.getpid)
-    thread: int = field(default_factory=threading.get_ident)
-    task: object | None = field(default_factory=_current_task)
-    active: bool = True
     denied: bool = False
     guard: threading.Lock = field(default_factory=threading.Lock)
 
     def fail(self) -> None:
         if self.pid != os.getpid():
-            self.denied = True  # Child copy only; never touch an inherited lock.
+            self.denied = True
             return
         with self.guard:
             self.denied = True
@@ -55,6 +55,30 @@ class _PhysicalScope:
             return True
         with self.guard:
             return self.denied
+
+
+@dataclass(repr=False)
+class _PhysicalScope:
+    owner: StorageConnectionOwner
+    clock: Callable[[], float]
+    pid: int = field(default_factory=os.getpid)
+    thread: int = field(default_factory=threading.get_ident)
+    task: object | None = field(default_factory=_current_task)
+    active: bool = True
+    _denial: _StorageDenial = field(default_factory=_StorageDenial)
+    guard: threading.Lock = field(default_factory=threading.Lock)
+    _handoffs: set[object] = field(default_factory=set)
+
+    def fail(self) -> None:
+        if self.pid != os.getpid():
+            self._denial.denied = True  # Child copy only; never touch an inherited lock.
+            return
+        self._denial.fail()
+
+    def failed(self) -> bool:
+        if self.pid != os.getpid():
+            return True
+        return self._denial.failed()
 
     def is_current(self) -> bool:
         if self.pid != os.getpid():
@@ -72,6 +96,7 @@ class _PhysicalScope:
             return
         with self.guard:
             self.active = False
+            self._handoffs.clear()
 
 
 _CURRENT: ContextVar[_PhysicalScope | None] = ContextVar("cao_physical_storage_scope", default=None)
@@ -79,7 +104,10 @@ _CURRENT: ContextVar[_PhysicalScope | None] = ContextVar("cao_physical_storage_s
 
 @contextmanager
 def physical_storage_scope(
-    owner: StorageConnectionOwner | None, *, clock: Callable[[], float]
+    owner: StorageConnectionOwner | None,
+    *,
+    clock: Callable[[], float],
+    _denial: _StorageDenial | None = None,
 ) -> Iterator[None]:
     """Bind inside an admitted physical worker, never around its async waiter.
 
@@ -91,10 +119,15 @@ def physical_storage_scope(
     if owner is None:
         yield
         return
+    if owner.storage_process_current is not True:
+        note_storage_denial()
+        raise StorageAdmissionUnavailable()
     if current is not None and current.owner is owner and current.is_current():
         yield
         return
     scope = _PhysicalScope(owner, clock)
+    if _denial is not None:
+        scope._denial = _denial
     token = _CURRENT.set(scope)
     try:
         yield
@@ -111,9 +144,13 @@ def acquire_storage_connection() -> StorageConnectionLoan | None:
     The reserved closing credit may still be used to record a prior denial.
     """
     scope = _CURRENT.get()
+    if not _PROCESS_STORAGE_CLOSES.process_current:
+        if scope is not None:
+            scope.fail()
+        raise StorageAdmissionUnavailable()
     if scope is None:
         return None
-    if not _PROCESS_STORAGE_CLOSES.process_current or not scope.is_current():
+    if not scope.is_current():
         scope.fail()
         raise StorageAdmissionUnavailable()
     try:
@@ -139,6 +176,65 @@ def check_storage_admission() -> None:
         scope.fail()
     if storage_admission_failed():
         raise StorageAdmissionUnavailable()
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class _StorageWorkerHandoff:
+    """One exact transfer, used only by a harness which joins its real worker."""
+
+    _parent: _PhysicalScope
+
+    def run(self, function: Callable[..., _WorkerResult], *args, **kwargs) -> _WorkerResult:
+        parent = self._parent
+        if parent.pid != os.getpid() or not _PROCESS_STORAGE_CLOSES.process_current:
+            raise StorageAdmissionUnavailable()
+        with parent.guard:
+            if not parent.active or self not in parent._handoffs:
+                parent.fail()
+                raise StorageAdmissionUnavailable()
+            parent._handoffs.remove(self)
+            if parent.failed():
+                raise StorageAdmissionUnavailable()
+        with physical_storage_scope(parent.owner, clock=parent.clock, _denial=parent._denial):
+            try:
+                check_storage_admission()
+                result = function(*args, **kwargs)
+                if parent.failed():
+                    note_storage_denial()
+                check_storage_admission()
+                return result
+            except StorageAdmissionUnavailable:
+                note_storage_denial()
+                raise
+            finally:
+                if storage_admission_failed():
+                    parent.fail()
+
+
+def capture_storage_worker() -> _StorageWorkerHandoff | None:
+    """Capture inside the authorized caller, before submitting an owned worker.
+
+    The caller must join that worker before its parent scope/lease retires.
+    Absence preserves legacy execution; stale/copied scopes cannot fall back.
+    """
+    scope = _CURRENT.get()
+    if scope is None:
+        return None
+    if scope.pid != os.getpid() or not _PROCESS_STORAGE_CLOSES.process_current:
+        scope._denial.denied = True  # Foreign process: never acquire an inherited lock.
+        raise StorageAdmissionUnavailable()
+    with scope.guard:
+        if (
+            not scope.active
+            or scope.thread != threading.get_ident()
+            or scope.task is not _current_task()
+            or scope.failed()
+        ):
+            scope.fail()
+            raise StorageAdmissionUnavailable()
+        handoff = _StorageWorkerHandoff(scope)
+        scope._handoffs.add(handoff)
+        return handoff
 
 
 @dataclass(frozen=True)
@@ -277,6 +373,39 @@ class StorageCloseRegistry:
 
 
 _PROCESS_STORAGE_CLOSES = StorageCloseRegistry()
+_FORK_STORAGE_DETACHER: Callable[[], bool] | None = None
+_INHERITED_STORAGE_CLOSES: list[StorageCloseRegistry] = []
+
+
+def _register_storage_fork_detacher(detacher: Callable[[], bool]) -> None:
+    """Driver setup registers before any product PostgreSQL handle can open."""
+    global _FORK_STORAGE_DETACHER
+    if not callable(detacher):
+        raise ValueError("storage fork detacher must be callable")
+    if _FORK_STORAGE_DETACHER is not None and _FORK_STORAGE_DETACHER is not detacher:
+        raise RuntimeError("storage fork detacher is already registered")
+    _FORK_STORAGE_DETACHER = detacher
+
+
+def _after_storage_fork_child() -> None:
+    global _PROCESS_STORAGE_CLOSES
+    inherited = _PROCESS_STORAGE_CLOSES
+    if inherited.process_current:
+        return  # Calling the hook in its own process cannot clear uncertainty.
+    try:
+        if _FORK_STORAGE_DETACHER is not None and _FORK_STORAGE_DETACHER() is not True:
+            return
+    except BaseException:
+        return  # Foreign registry keeps even unbound child opens closed.
+    # Retain copied owners without taking their locks or releasing their tokens.
+    # The old objects remain foreign; only the child's new registry is current.
+    _INHERITED_STORAGE_CLOSES.append(inherited)
+    _PROCESS_STORAGE_CLOSES = StorageCloseRegistry()
+    # Keep _CURRENT: an inherited scope is still foreign, never legacy fallback.
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_storage_fork_child)
 
 
 def storage_close_uncertainty() -> bool:

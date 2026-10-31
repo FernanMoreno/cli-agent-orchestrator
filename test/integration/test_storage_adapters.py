@@ -42,7 +42,7 @@ def native_driver_spy(monkeypatch, physical):
 @contextmanager
 def admitted(slots=3):
     owner = create()
-    observe(owner, slots)
+    assert observe(owner, slots)
     lease = reserve(owner, "storage-adapter")
     assert lease.start()
     try:
@@ -344,3 +344,58 @@ def test_unbound_pool_exhaustion_preserves_existing_timeout_contract(postgres_ta
                     engine.connect()
         finally:
             engine.dispose()
+
+
+def test_fork_child_can_open_own_native_connection_but_not_use_parent_connection(postgres_targets):
+    from test.clients.test_storage_admission import fork_with_held_locks
+
+    with connect(postgres_targets.main) as parent:
+        parent_pid = parent.execute("SELECT pg_backend_pid()").fetchone()[0]
+
+        def child():
+            with pytest.raises(StorageAdmissionUnavailable):
+                parent.execute("SELECT 42")
+            with admitted(2) as (child_owner, child_lease):
+                with connect(postgres_targets.main) as fresh:
+                    assert fresh.execute("SELECT 42").fetchone()[0] == 42
+                    assert fresh.execute("SELECT pg_backend_pid()").fetchone()[0] != parent_pid
+                    assert child_owner.snapshot(now=10.0).storage_connection_loans == 1
+                assert child_owner.snapshot(now=10.0).storage_connection_loans == 0
+            assert child_owner.snapshot(now=10.0).inflight == 0
+
+        fork_with_held_locks(child, [])
+        assert parent.execute("SELECT pg_backend_pid()").fetchone()[0] == parent_pid
+
+
+@pytest.mark.parametrize("failure", ["false", "exception"])
+def test_failed_fork_detachment_refuses_before_native_driver_open(
+    postgres_targets, monkeypatch, failure
+):
+    from test.clients.test_storage_admission import fork_with_held_locks
+
+    from cli_agent_orchestrator.clients import storage_admission as storage
+
+    calls = []
+
+    def detach():
+        if failure == "exception":
+            raise OSError("controlled-fork-detachment-failure")
+        return False
+
+    def forbidden(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("failed fork detachment reached the native connector")
+
+    def child():
+        assert not storage._PROCESS_STORAGE_CLOSES.process_current
+        with pytest.raises(StorageAdmissionUnavailable):
+            connect(postgres_targets.main)
+        assert calls == []  # Assert in the child, where its spy actually runs.
+
+    with connect(postgres_targets.main) as parent:
+        backend = parent.execute("SELECT pg_backend_pid()").fetchone()[0]
+        with monkeypatch.context() as patch:
+            patch.setattr(storage, "_FORK_STORAGE_DETACHER", detach)
+            with native_driver_spy(patch, forbidden):
+                fork_with_held_locks(child, [])
+        assert parent.execute("SELECT pg_backend_pid()").fetchone()[0] == backend

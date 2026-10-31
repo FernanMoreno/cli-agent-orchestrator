@@ -374,3 +374,198 @@ def test_forked_scope_refuses_before_touching_its_inherited_lock():
             fork_with_held_locks(child, [scope.guard])
     finally:
         lease.finish_after_storage()
+
+
+def test_explicit_owned_worker_handoff_is_single_use_and_cannot_be_copied():
+    from dataclasses import replace
+
+    module = port()
+    owner, lease = owner_and_lease()
+    with module.physical_storage_scope(lease, clock=lambda: 10.0):
+        handoff = module.capture_storage_worker()
+        assert handoff is not None
+        copied = replace(handoff)
+
+        def physical():
+            loan = module.acquire_storage_connection()
+            assert owner.snapshot(now=10.0).storage_connection_loans == 1
+            assert loan is not None and loan.finish()
+            return 42
+
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            assert workers.submit(handoff.run, physical).result(timeout=5) == 42
+        for candidate in (handoff, copied):
+            with pytest.raises(module.StorageAdmissionUnavailable):
+                candidate.run(physical)
+    assert owner.snapshot(now=10.0).storage_connection_loans == 0
+    assert lease.finish()
+
+
+def test_owned_worker_handoff_propagates_swallowed_storage_denial():
+    module = port()
+    owner, lease = owner_and_lease()
+    with module.physical_storage_scope(lease, clock=lambda: 10.0):
+        handoff = module.capture_storage_worker()
+        assert handoff is not None
+
+        def physical():
+            module.note_storage_denial()
+            return "optional failure was swallowed"
+
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            with pytest.raises(module.StorageAdmissionUnavailable):
+                workers.submit(handoff.run, physical).result(timeout=5)
+        assert module.storage_admission_failed()
+        with pytest.raises(module.StorageAdmissionUnavailable):
+            module.check_storage_admission()
+    assert lease.finish()
+
+
+def test_owned_worker_handoff_rejects_capture_and_use_after_parent_scope_ends():
+    module = port()
+    owner, lease = owner_and_lease()
+    with module.physical_storage_scope(lease, clock=lambda: 10.0):
+        stale = contextvars.copy_context()
+        handoff = module.capture_storage_worker()
+        assert handoff is not None
+    with pytest.raises(module.StorageAdmissionUnavailable):
+        stale.run(module.capture_storage_worker)
+    with pytest.raises(module.StorageAdmissionUnavailable):
+        handoff.run(module.acquire_storage_connection)
+    assert owner.snapshot(now=10.0).storage_connection_loans == 0
+    assert lease.finish()
+
+
+def test_unbound_legacy_execution_has_no_worker_handoff():
+    assert port().capture_storage_worker() is None
+
+
+@pytest.mark.parametrize("denied_before_capture", [False, True])
+def test_worker_handoff_denial_precedes_any_callable_effect(denied_before_capture):
+    module = port()
+    _, lease = owner_and_lease()
+    effects = []
+    try:
+        with module.physical_storage_scope(lease, clock=lambda: 10.0):
+            if denied_before_capture:
+                module.note_storage_denial()
+                with pytest.raises(module.StorageAdmissionUnavailable):
+                    module.capture_storage_worker()
+            else:
+                handoff = module.capture_storage_worker()
+                assert handoff is not None
+                module.note_storage_denial()
+                with pytest.raises(module.StorageAdmissionUnavailable):
+                    handoff.run(lambda: effects.append("effect"))
+            assert effects == []
+    finally:
+        lease.finish_after_storage()
+
+
+def test_worker_effect_guard_observes_parent_denial_during_execution():
+    module = port()
+    _, lease = owner_and_lease()
+    entered, release = Event(), Event()
+    effects = []
+    try:
+        with module.physical_storage_scope(lease, clock=lambda: 10.0):
+            handoff = module.capture_storage_worker()
+            assert handoff is not None
+
+            def physical():
+                entered.set()
+                assert release.wait(5), "parent denial test did not release worker"
+                module.check_storage_admission()
+                effects.append("effect")
+
+            with ThreadPoolExecutor(max_workers=1) as workers:
+                future = workers.submit(handoff.run, physical)
+                try:
+                    assert entered.wait(5)
+                    module.note_storage_denial()
+                finally:
+                    release.set()
+                with pytest.raises(module.StorageAdmissionUnavailable):
+                    future.result(timeout=5)
+            assert effects == []
+    finally:
+        release.set()
+        lease.finish_after_storage()
+
+
+def test_fork_child_gets_fresh_registry_without_retiring_parent_pending_close(monkeypatch):
+    module = port()
+    registry = module.StorageCloseRegistry()
+    owner, lease = owner_and_lease()
+    loan = lease.try_acquire_storage_connection(now=10.0)
+    assert loan is not None
+    closed, calls = [False], []
+
+    def close():
+        calls.append(True)
+        closed[0] = True
+
+    registry.retain(object(), close=close, closed=lambda: closed[0], loan=loan)
+
+    def child():
+        assert module._PROCESS_STORAGE_CLOSES is not registry
+        assert module._PROCESS_STORAGE_CLOSES.process_current
+        assert not module.storage_close_uncertainty()
+        assert registry.pending_count is None
+        child_owner = create()
+        assert observe(child_owner, 1)
+        child_lease = reserve(child_owner, "child-owned")
+        assert child_lease.start()
+        with module.physical_storage_scope(child_lease, clock=lambda: 10.0):
+            child_loan = module.acquire_storage_connection()
+            assert child_loan is not None and child_loan.finish()
+        assert child_lease.finish_after_storage()
+        assert child_owner.snapshot(now=10.0).inflight == 0
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(module, "_PROCESS_STORAGE_CLOSES", registry)
+            fork_with_held_locks(child, [registry._guard, registry._retry_guard])
+        assert calls == []
+        assert registry.pending_count == 1
+        assert owner.snapshot(now=10.0).storage_connection_loans == 1
+    finally:
+        closed[0] = True
+        lease.finish_after_storage()
+        registry.retry_owned()
+
+
+def test_fork_child_cannot_rebind_parent_lease_or_touch_parent_ledger_lock():
+    module = port()
+    owner, lease = owner_and_lease()
+
+    def child():
+        with pytest.raises(module.StorageAdmissionUnavailable):
+            with module.physical_storage_scope(lease, clock=lambda: 10.0):
+                pass
+        with pytest.raises(module.StorageAdmissionUnavailable):
+            lease.try_acquire_storage_connection(now=10.0)
+
+    try:
+        fork_with_held_locks(child, [owner._guard])
+        assert owner.snapshot(now=10.0).started == 1
+    finally:
+        lease.finish_after_storage()
+
+
+def test_failed_fork_detachment_blocks_even_unbound_child_checkout(monkeypatch):
+    module = port()
+
+    def child():
+        assert not module._PROCESS_STORAGE_CLOSES.process_current
+        assert module.storage_close_uncertainty()
+        with pytest.raises(module.StorageAdmissionUnavailable):
+            module.acquire_storage_connection()
+
+    with monkeypatch.context() as patch:
+        # Also forms a valid RED against the former implementation, which had
+        # no coordinator and returned legacy None before checking its PID.
+        patch.setattr(module, "_FORK_STORAGE_DETACHER", lambda: False, raising=False)
+        fork_with_held_locks(child, [])
+    assert module._PROCESS_STORAGE_CLOSES.process_current
+    assert not module.storage_close_uncertainty()

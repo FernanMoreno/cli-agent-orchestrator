@@ -87,6 +87,7 @@ from cli_agent_orchestrator.clients.storage_admission import (
     StorageAdmissionUnavailable,
     check_storage_admission,
     storage_admission_failed,
+    storage_scope_present,
 )
 from cli_agent_orchestrator.constants import (
     CALLBACK_TERMINAL_ID_ENV,
@@ -1446,6 +1447,10 @@ async def _await_provider_operation(function: Callable[..., Any], *args: Any, **
     stays private (not a separately cancellable asyncio Task); cancellation of
     this caller must not report completion while publication/cleanup still runs.
     """
+    if storage_scope_present():
+        from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
+        return await run_owned_blocking(function, *args, **kwargs)
     context = contextvars.copy_context()
     worker = asyncio.get_running_loop().run_in_executor(
         None, partial(context.run, function, *args, **kwargs)
@@ -2016,6 +2021,8 @@ async def create_terminal(
             server.max_terminals; unset = unlimited) is already reached
         TimeoutError: If provider initialization times out
     """
+    from cli_agent_orchestrator.services.work_blocking import run_storage_aware_blocking
+
     if new_session and managed_launch_required():
         from cli_agent_orchestrator.services.work_terminal import current_managed_terminal_id
 
@@ -2231,7 +2238,7 @@ async def create_terminal(
                 yolo=True,
             )
             probe = kiro_capability_probe or probe_kiro_capabilities
-            await asyncio.to_thread(probe, resolved_engine, requested)
+            await run_storage_aware_blocking(probe, resolved_engine, requested)
             if resolved_engine == KiroEngine.KAS:
                 from cli_agent_orchestrator.services.kiro_profiles import resolve_kas_launch_profile
                 from cli_agent_orchestrator.utils.kiro_launch_guard import assert_kas_launch_allowed
@@ -2264,7 +2271,7 @@ async def create_terminal(
         if provider == ProviderType.OPENCODE_CLI.value:
             from cli_agent_orchestrator.providers.opencode_cli import OpenCodeCliProvider
 
-            opencode_native_profile = await asyncio.to_thread(
+            opencode_native_profile = await run_storage_aware_blocking(
                 OpenCodeCliProvider.load_native_profile, agent_profile
             )
 
@@ -2333,7 +2340,7 @@ async def create_terminal(
             # delivery, unrelated terminal calls) for the duration. Offload to a
             # thread, same posture as `delete_terminal`'s own blocking subprocess
             # work (see its `run_in_executor` call site in api/main.py).
-            worktree_repo_root = await asyncio.to_thread(
+            worktree_repo_root = await run_storage_aware_blocking(
                 worktree_service.find_repo_root, working_directory or os.getcwd()
             )
 
@@ -2378,7 +2385,7 @@ async def create_terminal(
                 reconcile_native_skill_projection,
             )
 
-            await asyncio.to_thread(reconcile_native_skill_projection)
+            await run_storage_aware_blocking(reconcile_native_skill_projection)
 
         # Step 3: Build a runtime skill catalog only for providers that consume
         # it at launch time (see RUNTIME_SKILL_PROMPT_PROVIDERS).
@@ -2696,24 +2703,24 @@ async def create_terminal(
             create_outcome.set_result(result)
             return result
 
-        create_context = contextvars.copy_context()
-        # Once submitted, backend compensation owns the outcome and may retain
-        # a live/uncertain runtime. Row absence alone cannot authorize removing
-        # its working directory after cancellation.
         backend_create_submitted = True
-        create_worker = asyncio.get_running_loop().run_in_executor(
-            None, create_context.run, create_with_outcome
-        )
-        try:
-            window_name, session_created, window_created = await asyncio.shield(create_worker)
-        except asyncio.CancelledError:
-            if not create_worker.cancelled():
+        if storage_scope_present():
+            from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
+            try:
+                window_name, session_created, window_created = await run_owned_blocking(
+                    create_with_outcome
+                )
+            except asyncio.CancelledError as cancellation:
+                # run_owned_blocking has joined the actual create worker. If it
+                # never entered, cancellation is now an exact no-start witness.
+                if not create_outcome.done():
+                    backend_create_submitted = False
+                    create_outcome.cancel()
+                    raise cancellation
                 startup_transferred = True
-                compensation_context = contextvars.copy_context()
-                compensator = asyncio.get_running_loop().run_in_executor(
-                    None,
-                    compensation_context.run,
-                    partial(
+                try:
+                    await _await_provider_operation(
                         _finish_and_roll_back_cancelled_create,
                         create_outcome,
                         session_name,
@@ -2721,18 +2728,50 @@ async def create_terminal(
                         startup_owner_getter=lambda: startup_owner,
                         release_startup_marks=release_created_init_marks,
                         expected_binding_getter=lambda: created_binding,
-                    ),
-                )
-                _create_compensations.add(compensator)
-                compensator.add_done_callback(_create_compensations.discard)
-                try:
-                    await asyncio.shield(compensator)
+                    )
                 except asyncio.CancelledError:
-                    # A repeat cancellation landed while the compensator ran;
-                    # the owned executor compensation still completes. The
-                    # ORIGINAL cancellation is re-raised below either way.
+                    # The owned helper joins compensation through repeated
+                    # cancellation; the original cancellation stays primary.
                     pass
-            raise
+                raise cancellation
+        else:
+            create_context = contextvars.copy_context()
+            # Once submitted, backend compensation owns the outcome and may retain
+            # a live/uncertain runtime. Row absence alone cannot authorize removing
+            # its working directory after cancellation.
+            backend_create_submitted = True
+            create_worker = asyncio.get_running_loop().run_in_executor(
+                None, create_context.run, create_with_outcome
+            )
+            try:
+                window_name, session_created, window_created = await asyncio.shield(create_worker)
+            except asyncio.CancelledError:
+                if not create_worker.cancelled():
+                    startup_transferred = True
+                    compensation_context = contextvars.copy_context()
+                    compensator = asyncio.get_running_loop().run_in_executor(
+                        None,
+                        compensation_context.run,
+                        partial(
+                            _finish_and_roll_back_cancelled_create,
+                            create_outcome,
+                            session_name,
+                            terminal_id,
+                            startup_owner_getter=lambda: startup_owner,
+                            release_startup_marks=release_created_init_marks,
+                            expected_binding_getter=lambda: created_binding,
+                        ),
+                    )
+                    _create_compensations.add(compensator)
+                    compensator.add_done_callback(_create_compensations.discard)
+                    try:
+                        await asyncio.shield(compensator)
+                    except asyncio.CancelledError:
+                        # A repeat cancellation landed while the compensator ran;
+                        # the owned executor compensation still completes. The
+                        # ORIGINAL cancellation is re-raised below either way.
+                        pass
+                raise
 
         if kas_profile is not None:
             from cli_agent_orchestrator.services.kiro_profiles import install_runtime_kas_profile
@@ -3143,7 +3182,7 @@ async def create_terminal(
                 e,
             )
             if terminal_id is not None:
-                await asyncio.to_thread(
+                await run_storage_aware_blocking(
                     transition_native_child,
                     terminal_id,
                     "reconcile",
@@ -3158,7 +3197,7 @@ async def create_terminal(
             # failed launch (the rollback below owns the process cleanup), not
             # a completed child and not an invitation to redeliver a prompt.
             try:
-                await asyncio.to_thread(
+                await run_storage_aware_blocking(
                     transition_native_child,
                     terminal_id,
                     "failed",

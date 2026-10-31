@@ -1,11 +1,15 @@
 """Process-local reservation ownership, independent of delivery or authority."""
 
+import os
 import threading
 from dataclasses import dataclass
 from itertools import count
 from typing import Literal
 
-from cli_agent_orchestrator.clients.storage_admission import storage_close_uncertainty
+from cli_agent_orchestrator.clients.storage_admission import (
+    StorageAdmissionUnavailable,
+    storage_close_uncertainty,
+)
 from cli_agent_orchestrator.services.admission_policy import (
     AdmissionDecision,
     AdmissionPolicy,
@@ -113,6 +117,10 @@ class DeliveryReservation:
         self._storage_stage: StorageStageReservation | None = None
         self._storage_connections: set[StorageConnectionReservation] = set()
         self._retirement_requested = False
+
+    @property
+    def storage_process_current(self) -> bool:
+        return self._owner._pid == os.getpid()
 
     @property
     def footprint(self) -> ResourceAmounts:
@@ -283,7 +291,8 @@ class DeliveryAdmission:
         self._policy = policy
         self._budget = budget
         self._committed = ResourceAmounts()
-        self._guard = threading.RLock()
+        self._pid = os.getpid()
+        self._process_guard = threading.RLock()
         self._leases: dict[int, DeliveryReservation] = {}
         self._pending: dict[int, DeliveryReservation] = {}
         self._receivers: dict[str, int] = {}
@@ -297,6 +306,12 @@ class DeliveryAdmission:
         self._observation: CapacityObservation | None = None
         self._observation_ceiling: ResourceAmounts | None = None
         self._decision = AdmissionDecision(0, "unknown_capacity")
+
+    @property
+    def _guard(self) -> threading.RLock:
+        if self._pid != os.getpid():
+            raise StorageAdmissionUnavailable()
+        return self._process_guard
 
     @staticmethod
     def _validate_configuration(policy: AdmissionPolicy, budget: ResourceAmounts | None) -> None:

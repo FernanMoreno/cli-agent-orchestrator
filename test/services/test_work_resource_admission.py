@@ -3,7 +3,6 @@
 import asyncio
 from dataclasses import replace
 from test.integration.test_work_dispatch import context  # noqa: F401
-from test.services.test_inbox_resource_admission import service
 from test.services.test_work_inbox import _managed_module, _request, paired_context
 from threading import Event
 from types import MappingProxyType
@@ -16,8 +15,24 @@ from cli_agent_orchestrator.services.work_admission import WorkAdmission
 pytestmark = pytest.mark.postgres
 
 
-def managed(context, slots):
-    inbox, owner = service(slots)
+def managed(context, slots, *, physical_storage_slots=None):
+    from cli_agent_orchestrator.services.admission_policy import (
+        AdmissionPolicy,
+        CapacityObservation,
+    )
+    from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
+    from cli_agent_orchestrator.services.inbox_service import InboxService
+
+    owner = DeliveryAdmission(AdmissionPolicy())
+    memory = 80 * 1024 * 1024 * max(1, slots)
+    physical_slots = 2 * slots if physical_storage_slots is None else physical_storage_slots
+    assert owner.observe(
+        CapacityObservation(10.0, memory, memory, 16000, 16000, physical_slots),
+        now=10.0,
+        generation=owner.generation,
+    )
+    assert owner.snapshot(now=10.0).limit == min(slots, physical_slots)
+    inbox = InboxService(admission=owner, clock=lambda: 10.0)
     context.service = WorkAdmission(
         context.repo,
         backends={"test": context.backend},
@@ -240,7 +255,7 @@ async def test_abandoned_handoff_retains_resource_through_physical_reconcile(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["stale_v2", "legacy_callback"])
+@pytest.mark.parametrize("kind", ["stale_v2", "legacy_callback", "transactional_callback"])
 async def test_unavailable_target_does_not_abort_other_resource_candidate(
     paired_context, monkeypatch, kind
 ):
@@ -275,13 +290,26 @@ async def test_unavailable_target_does_not_abort_other_resource_candidate(
                 raise ContractConflict("legacy target must be reconciled")
             return adapter.terminal_target(payload)
 
+        def unavailable_in_transaction(connection, payload):
+            if payload.inbox_id == first.inbox_id:
+                raise ContractConflict("transactional target must be reconciled")
+            return adapter.transactional_terminal_target(connection, payload)
+
         monkeypatch.setattr(
             paired_context.service.deliveries,
             "adapters",
             MappingProxyType(
                 {
                     **paired_context.service.deliveries.adapters,
-                    ("inbox", 2): replace(adapter, terminal_target=unavailable),
+                    ("inbox", 2): (
+                        replace(
+                            adapter, terminal_target=unavailable, transactional_terminal_target=None
+                        )
+                        if kind == "legacy_callback"
+                        else replace(
+                            adapter, transactional_terminal_target=unavailable_in_transaction
+                        )
+                    ),
                 }
             ),
         )
@@ -295,7 +323,10 @@ async def test_unavailable_target_does_not_abort_other_resource_candidate(
 
 
 @pytest.mark.asyncio
-async def test_unexpected_target_store_failure_is_not_ignored(paired_context, monkeypatch):
+@pytest.mark.parametrize("transactional", [False, True])
+async def test_unexpected_target_store_failure_is_not_ignored(
+    paired_context, monkeypatch, transactional
+):
     coordinator, owner = managed(paired_context, 1)
     receipt = coordinator.admit(**_request(paired_context, "unexpected-target"))
     before = paired_context.repo.get_work(receipt.work_item_id)
@@ -304,13 +335,22 @@ async def test_unexpected_target_store_failure_is_not_ignored(paired_context, mo
     def broken(_):
         raise OSError("controlled-store-lookup-failure")
 
+    def broken_in_transaction(connection, payload):
+        raise OSError("controlled-store-lookup-failure")
+
     monkeypatch.setattr(
         paired_context.service.deliveries,
         "adapters",
         MappingProxyType(
             {
                 **paired_context.service.deliveries.adapters,
-                ("inbox", 2): replace(adapter, terminal_target=broken),
+                ("inbox", 2): (
+                    replace(adapter, transactional_terminal_target=broken_in_transaction)
+                    if transactional
+                    else replace(
+                        adapter, terminal_target=broken, transactional_terminal_target=None
+                    )
+                ),
             }
         ),
     )
@@ -409,3 +449,147 @@ async def test_failed_preparation_awaiter_retains_physical_worker_and_abandonmen
     assert owner.snapshot(now=10.0).inflight == 0
     assert paired_context.repo.get_work(receipt.work_item_id)["state"] == "reconcile"
     assert paired_context.backend.effects == []
+
+
+@pytest.mark.parametrize("phase", ["commit", "callback", "native_worker", "receipt", "abandon"])
+@pytest.mark.asyncio
+async def test_work_physical_stages_share_resource_owner(paired_context, monkeypatch, phase):
+    from cli_agent_orchestrator.clients.postgres import connect
+    from cli_agent_orchestrator.services.work_service import WorkService
+
+    coordinator, owner = managed(paired_context, 1)
+    receipt = coordinator.admit(**_request(paired_context, f"physical-{phase}"))
+    seen = []
+
+    def physical_probe():
+        assert owner.snapshot(now=10.0).started == 1
+        with connect(paired_context.repo.target, readonly=True) as connection:
+            assert connection.execute("SELECT 42").fetchone()[0] == 42
+            assert owner.snapshot(now=10.0).storage_connection_loans == (
+                2 if phase == "commit" else 1
+            )
+            seen.append(phase)
+
+    if phase == "commit":
+        original = paired_context.service._commit_dispatch
+
+        def commit(*args, **kwargs):
+            physical_probe()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(paired_context.service, "_commit_dispatch", commit)
+    elif phase in {"callback", "native_worker"}:
+        adapter = paired_context.service.deliveries.adapters[("inbox", 2)]
+
+        async def send(*args):
+            if phase == "native_worker":
+                from cli_agent_orchestrator.services import terminal_service
+
+                with args[3].backend_scope():
+                    await terminal_service._await_provider_operation(physical_probe)
+            else:
+                physical_probe()
+            return await adapter.send(*args)
+
+        monkeypatch.setattr(
+            paired_context.service.deliveries,
+            "adapters",
+            MappingProxyType(
+                {
+                    **paired_context.service.deliveries.adapters,
+                    ("inbox", 2): replace(adapter, send=send),
+                }
+            ),
+        )
+    else:
+        name = "_record_delivery" if phase == "receipt" else "_reconcile"
+        original = getattr(WorkService, name)
+
+        def record(self, *args, **kwargs):
+            physical_probe()
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(WorkService, name, record)
+    if phase == "abandon":
+        prepared = await paired_context.service.prepare_registered_dispatch()
+        assert prepared is not None
+        await paired_context.service.abandon_registered_dispatch(prepared)
+        await paired_context.service.wait_for_dispatch_cleanup()
+        assert paired_context.backend.effects == []
+    else:
+        result = await paired_context.service.dispatch_registered_next()
+        assert result is not None and result["id"] == receipt.work_item_id
+        assert len(paired_context.backend.effects) == 1
+    assert seen == [phase]
+    assert owner.snapshot(now=10.0).inflight == 0
+
+
+@pytest.mark.asyncio
+async def test_work_insufficient_complete_session_footprint_keeps_planned(
+    paired_context, monkeypatch
+):
+    coordinator, owner = managed(paired_context, 1, physical_storage_slots=1)
+    receipt = coordinator.admit(**_request(paired_context, "one-physical-slot"))
+    before = paired_context.repo.get_work(receipt.work_item_id)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("an insufficient physical footprint reached Work commit")
+
+    monkeypatch.setattr(paired_context.service, "_commit_dispatch", forbidden)
+    assert await paired_context.service.dispatch_registered_next() is None
+    assert paired_context.repo.get_work(receipt.work_item_id) == before
+    assert before["attempts"][-1]["state"] == "planned"
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert paired_context.backend.effects == []
+
+
+@pytest.mark.parametrize("drift", ["engine", "target", "store_uuid"])
+def test_transactional_target_rechecks_pinned_store_without_another_checkout(
+    paired_context, monkeypatch, drift
+):
+    from test.postgres.fixtures import make_orm_engine
+    from uuid import uuid4
+
+    from cli_agent_orchestrator.clients import work_repository
+    from cli_agent_orchestrator.clients.work_repository import WorkConflict
+
+    coordinator, owner = managed(paired_context, 1)
+    receipt = coordinator.admit(**_request(paired_context, f"target-drift-{drift}"))
+    before = paired_context.repo.get_work(receipt.work_item_id)
+    adapter = paired_context.service.deliveries.adapters[("inbox", 2)]
+    payload = _managed_module().ManagedInboxTargetPayload(
+        inbox_id=receipt.inbox_id,
+        terminal_id="receiver",
+        tmux_session="managed-session",
+        tmux_window="managed-window",
+    )
+    expected = ("receiver", "managed-session", "managed-window")
+    replacement_engine = None
+    try:
+        with paired_context.repo.connection() as connection:
+            assert adapter.transactional_terminal_target(connection, payload) == expected
+            with monkeypatch.context() as patch:
+                if drift == "engine":
+                    replacement_engine = make_orm_engine(paired_context.repo.target)
+                    patch.setattr(database, "engine", replacement_engine)
+                elif drift == "target":
+                    changed = replace(paired_context.repo.target, store_id=str(uuid4()))
+                    patch.setattr(database, "main_target", lambda: changed)
+                else:
+                    # Controlled metadata corruption at the read boundary. The
+                    # real immutable store UUID is never modified in PostgreSQL.
+                    original = work_repository._stored_inbox_context
+
+                    def changed_context(actual_connection):
+                        return replace(original(actual_connection), store_uuid=uuid4().hex)
+
+                    patch.setattr(work_repository, "_stored_inbox_context", changed_context)
+                with pytest.raises(WorkConflict):
+                    adapter.transactional_terminal_target(connection, payload)
+            assert adapter.transactional_terminal_target(connection, payload) == expected
+    finally:
+        if replacement_engine is not None:
+            replacement_engine.dispose()
+    assert paired_context.repo.get_work(receipt.work_item_id) == before
+    assert paired_context.backend.effects == []
+    assert owner.snapshot(now=10.0).inflight == 0

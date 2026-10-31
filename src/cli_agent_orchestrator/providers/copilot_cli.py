@@ -175,7 +175,7 @@ class CopilotCliProvider(BaseProvider):
         stable_reads = 0
 
         while time.time() - start_time < timeout:
-            output = await asyncio.to_thread(self._history, tail_lines=120)
+            output = await self._run_blocking(self._history, tail_lines=120)
             if output and output.strip():
                 if previous_output is not None and output == previous_output:
                     stable_reads += 1
@@ -312,7 +312,7 @@ class CopilotCliProvider(BaseProvider):
         """
         start = time.time()
         while time.time() - start < timeout:
-            raw_content = await asyncio.to_thread(self._history, tail_lines=120)
+            raw_content = await self._run_blocking(self._history, tail_lines=120)
             content = raw_content.lower()
 
             if (
@@ -322,7 +322,7 @@ class CopilotCliProvider(BaseProvider):
             ):
                 # The first option is pre-selected; Enter is the most reliable
                 # accept action across Copilot builds.
-                await asyncio.to_thread(self._send_enter)
+                await self._run_blocking(self._send_enter)
                 await asyncio.sleep(1)
                 continue
 
@@ -332,30 +332,30 @@ class CopilotCliProvider(BaseProvider):
             ) and re.search(r"\b1\.\s*yes\b", content):
                 # Option 1 is selected by default in the trust dialog; Enter is
                 # the most reliable way to accept across Copilot builds.
-                await asyncio.to_thread(self._send_enter)
+                await self._run_blocking(self._send_enter)
                 await asyncio.sleep(1)
                 continue
 
             if "do you trust all the actions in this folder" in content:
-                await asyncio.to_thread(self._send_key, "y")
-                await asyncio.to_thread(self._send_enter)
+                await self._run_blocking(self._send_key, "y")
+                await self._run_blocking(self._send_enter)
                 await asyncio.sleep(1)
                 continue
 
             if re.search(r"\[\s*y\s*/\s*n\s*]", content):
-                await asyncio.to_thread(self._send_key, "y")
-                await asyncio.to_thread(self._send_enter)
+                await self._run_blocking(self._send_key, "y")
+                await self._run_blocking(self._send_enter)
                 await asyncio.sleep(1)
                 continue
 
             if "confirm folder trust" in content or "press enter to continue" in content:
-                await asyncio.to_thread(self._send_enter)
+                await self._run_blocking(self._send_enter)
                 await asyncio.sleep(1)
                 continue
 
             if re.search(WAITING_PROMPT_PATTERN, content, re.IGNORECASE):
                 # Generic waiting prompt fallback: confirm with Enter.
-                await asyncio.to_thread(self._send_enter)
+                await self._run_blocking(self._send_enter)
                 await asyncio.sleep(1)
                 continue
 
@@ -407,15 +407,15 @@ class CopilotCliProvider(BaseProvider):
         if not shell_ready:
             raise TimeoutError(f"Shell initialization timed out after {init_timeout}s")
 
-        command = await asyncio.to_thread(self._command)
-        await asyncio.to_thread(
+        command = await self._run_blocking(self._command)
+        await self._run_blocking(
             get_backend().send_keys, self.session_name, self.window_name, command
         )
 
         deadline = time.time() + 60.0
         await self._accept_trust_prompts(timeout=10.0)
         while time.time() < deadline:
-            status = await asyncio.to_thread(status_monitor.get_status, self.terminal_id)
+            status = await self._run_blocking(status_monitor.get_status, self.terminal_id)
             if status == TerminalStatus.WAITING_USER_ANSWER:
                 await self._accept_trust_prompts(timeout=5.0)
                 await asyncio.sleep(1.0)

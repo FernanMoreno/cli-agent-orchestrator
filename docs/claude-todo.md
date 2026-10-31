@@ -537,3 +537,6 @@ T232/T233 cerrados en el alcance externo probado (2026-10-30, fuenteafc35283): c
 
 
 Infraestructura compartida Spec041/T018 (2026-10-31): puertos PostgreSQL físicos y scopes Inbox/Bridge, huella INPUT de advisory+SQL y rechazo/reconciliación tipados pasan422pruebas con PG real; composición5/0 y limpieza0/0/0. No es nueva aceptación nativa de este proveedor. Work/control SQL/cierre/monitor/diagnóstico, M1/M2/M3, SDK/UI y gates globales continúan pendientes. [Recibo y alcance](../specs/041-resource-aware-network-admission/validation-t018-physical-storage.json).
+
+
+Spec041 T018, checkpoint transversal Work/workers/fork (2026-10-31): integración física y helpers comunes validados; finales195/195 y2/2PASS, composición5/0 y PostgreSQL0/0/0. La ampliación histórica conserva1243PASS/3FAIL y sus correcciones; no equivale a aceptación nativa de claude ni a gates globales. T018/M1/M2/M3/SDK/UI siguen abiertos. Véase [evidencia y alcance](../specs/041-resource-aware-network-admission/validation-t018-work-workers.json) y [composición](../specs/041-resource-aware-network-admission/composition-t018-work-workers.md).

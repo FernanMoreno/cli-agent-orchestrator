@@ -228,3 +228,45 @@ async def test_antigravity_cleanup_does_not_block_event_loop(tmp_path):
     except asyncio.CancelledError:
         pass
     assert ticks > 0, "event loop starved during cleanup's _unregister_mcp_servers"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name,run_case", _HEARTBEAT_CASES, ids=[c[0] for c in _HEARTBEAT_CASES])
+async def test_startup_handlers_borrow_only_in_explicit_owned_workers(name, run_case, monkeypatch):
+    import sys
+    from test.services.test_delivery_admission import create, observe, reserve
+
+    from cli_agent_orchestrator.clients import storage_admission as storage
+
+    owner = create()
+    assert observe(owner, 1)
+    lease = reserve(owner, f"provider-{name}")
+    assert lease.start()
+    original_factory = _blocking_history
+    successful_loans = []
+
+    def owned_history(ready_output):
+        original = original_factory(ready_output)
+
+        def physical(*args, **kwargs):
+            loan = storage.acquire_storage_connection()
+            assert loan is not None
+            try:
+                assert owner.snapshot(now=10.0).storage_connection_loans == 1
+                successful_loans.append(True)
+                return original(*args, **kwargs)
+            finally:
+                loan.finish()
+
+        return physical
+
+    monkeypatch.setattr(sys.modules[__name__], "_blocking_history", owned_history)
+    try:
+        with storage.physical_storage_scope(lease, clock=lambda: 10.0):
+            ticks = await run_case()
+            assert ticks > 0
+            assert successful_loans
+            assert not storage.storage_admission_failed()
+            assert owner.snapshot(now=10.0).storage_connection_loans == 0
+    finally:
+        lease.finish_after_storage()

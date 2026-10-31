@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.clients.database import (
     _create_managed_inbox_message,
     _managed_inbox_store_identity,
@@ -73,6 +74,28 @@ def managed_inbox_delivery_adapters(
         raise WorkConflict("managed inbox store context is unavailable") from error
     if repository.managed_inbox_store_context(expected=store_context) != store_context:
         raise WorkConflict("managed inbox store context is contradictory")
+    bound_engine = database.engine
+
+    def transactional_target(connection, payload):
+        # Do not open an ORM checkout while advisory + Work transaction are
+        # already live. Preserve the configured pair and exact stored UUID.
+        if (
+            database.engine is not bound_engine
+            or database.main_target().identity != repository.target.identity
+        ):
+            raise WorkConflict("managed inbox configured pair changed")
+        repository._validate_managed_inbox_store_context(connection, expected=store_context)
+        row = connection.execute(
+            "SELECT i.receiver_id,t.tmux_session,t.tmux_window,i.status "
+            "FROM inbox i JOIN terminals t ON t.id=i.receiver_id WHERE i.id=%s",
+            (payload.inbox_id,),
+        ).fetchone()
+        if row is None or row[3] != "reconcile":
+            raise WorkConflict("managed inbox target is unavailable")
+        actual = (row[0], row[1], row[2])
+        if actual != (payload.terminal_id, payload.tmux_session, payload.tmux_window):
+            raise WorkConflict("managed inbox terminal target changed")
+        return actual
 
     def current_target(payload):
         try:
@@ -137,8 +160,9 @@ def managed_inbox_delivery_adapters(
         ("inbox", 2): DeliveryAdapter(
             ManagedInboxTargetPayload,
             send_v2,
-            terminal_identity=lambda payload: bound_target(payload)[0],
+            terminal_identity=lambda payload: payload.terminal_id,
             terminal_target=bound_target,
+            transactional_terminal_target=transactional_target,
         ),
     }
 

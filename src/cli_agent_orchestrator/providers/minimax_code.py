@@ -456,7 +456,7 @@ class MiniMaxCodeProvider(BaseProvider):
     async def _wait_for_bootstrap_ready(self, timeout: float) -> bool:
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            output = await asyncio.to_thread(
+            output = await self._run_blocking(
                 get_backend().get_history,
                 self.session_name,
                 self.window_name,
@@ -480,11 +480,11 @@ class MiniMaxCodeProvider(BaseProvider):
             if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
                 raise TimeoutError(f"Shell initialization timed out after {init_timeout:g}s")
 
-            command = await asyncio.to_thread(self._build_command)
+            command = await self._run_blocking(self._build_command)
             from cli_agent_orchestrator.services.status_monitor import status_monitor
 
             status_monitor.notify_input_sent(self.terminal_id)
-            await asyncio.to_thread(
+            await self._run_blocking(
                 get_backend().send_keys,
                 self.session_name,
                 self.window_name,
@@ -497,7 +497,7 @@ class MiniMaxCodeProvider(BaseProvider):
             self._initialized = True
             return True
         except Exception:
-            await asyncio.to_thread(self.cleanup)
+            await self._run_blocking(self.cleanup)
             raise
 
     def get_status(self, buffer: str) -> TerminalStatus:

@@ -16,6 +16,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from cli_agent_orchestrator.backends.base import ProcessRestrictionContract, TerminalBackend
+from cli_agent_orchestrator.clients.storage_admission import (
+    check_storage_admission,
+    physical_storage_scope,
+)
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
 from cli_agent_orchestrator.constants import FIFO_DIR
 from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
@@ -91,6 +95,7 @@ class _WorkEffectPort:
         attempt_credential_fd=None,
         receiver_credential_fd=None,
         resource_reservation=None,
+        resource_clock=time.monotonic,
     ):
         self._backend, self._restriction, self._guard, self._release = (
             backend,
@@ -107,6 +112,7 @@ class _WorkEffectPort:
         self._expected_target = expected_target
         self._closed = False
         self._resource_reservation = resource_reservation
+        self._resource_clock = resource_clock
         from cli_agent_orchestrator.backends.work_backend import WorkBackendView
 
         self._view = WorkBackendView(
@@ -144,14 +150,20 @@ class _WorkEffectPort:
         # Capability closure precedes receipt writes; resource retirement does not.
         reservation = self._resource_reservation
         if reservation is not None:
-            reservation.finish()
+            reservation.finish_after_storage()
             self._resource_reservation = None
+
+    def _storage_scope(self):
+        # Rebind in each real worker/task. A copied Context is not authority.
+        return physical_storage_scope(self._resource_reservation, clock=self._resource_clock)
 
     def _before_effect(
         self, effect, terminal_id, session_name=None, window_name=None, file_path=None
     ):
         self._assert_open()
+        check_storage_admission()
         self._guard(effect, terminal_id, session_name, window_name, file_path)
+        check_storage_admission()
 
     def revalidate(self):
         """Check the live order fence before a managed delivery boundary."""
@@ -175,6 +187,10 @@ class _WorkEffectPort:
 
     def execute_process(self, command_token, worker_input):
         """Run the one server-selected process effect; terminal methods are unavailable."""
+        with self._storage_scope():
+            return self._execute_process(command_token, worker_input)
+
+    def _execute_process(self, command_token, worker_input):
         self._assert_open()
         from cli_agent_orchestrator.models.work_contract import EffectiveWorkContractV2
 
@@ -1433,13 +1449,15 @@ class WorkAdmission:
         owner = self._resource_admission
         if owner is None:
             return None
-        reservation = owner.try_reserve(receiver, now=self._resource_clock()).reservation
+        reservation = owner.try_reserve(
+            receiver, now=self._resource_clock(), storage_slots=2
+        ).reservation
         if reservation is None:
             raise _ResourcesUnavailable()
         if not reservation.start():
             reservation.cancel_before_start()
             raise _ResourcesUnavailable()
-        resources.callback(reservation.finish)
+        resources.callback(reservation.finish_after_storage)
         return reservation
 
     def _prepare_dispatch(self, *, registered_only=False):
@@ -1454,7 +1472,9 @@ class WorkAdmission:
             if preview is None:
                 return None
             self._preflight(preview.contract)  # No database lock during backend work.
-            with ExitStack() as resources:
+            # Physical contexts retire in this preparation worker. They must
+            # never move with the lease/FD ExitStack to another worker.
+            with ExitStack() as resources, ExitStack() as physical:
                 resource_reservation = None
                 try:
                     if registered_only:
@@ -1469,6 +1489,9 @@ class WorkAdmission:
                             preview_terminal_id
                             or f"work-attempt/{preview.attempt_id}/{preview.generation}",
                             resources,
+                        )
+                        physical.enter_context(
+                            physical_storage_scope(resource_reservation, clock=self._resource_clock)
                         )
                         if preview_terminal_id is None:
                             committed = self._commit_dispatch(
@@ -1490,6 +1513,9 @@ class WorkAdmission:
                     else:
                         resource_reservation = self._reserve_delivery_resource(
                             f"work-attempt/{preview.attempt_id}/{preview.generation}", resources
+                        )
+                        physical.enter_context(
+                            physical_storage_scope(resource_reservation, clock=self._resource_clock)
                         )
                         committed = self._commit_dispatch(preview, registered_only=False)
                 except _ResourcesUnavailable:
@@ -1615,6 +1641,7 @@ class WorkAdmission:
                     attempt_credential_fd=credential_fd,
                     receiver_credential_fd=receiver_credential_fd,
                     resource_reservation=resource_reservation,
+                    resource_clock=self._resource_clock,
                 )
                 resources.pop_all()  # Transfer the started lease to the effect owner.
                 return binding, port, sent
@@ -1641,11 +1668,12 @@ class WorkAdmission:
                 port.close()
 
         try:
-            return WorkService(self.repository, origins=self.origins)._send_committed(
-                sent,
-                deliver,
-                actor_id=binding.principal_id,
-            )
+            with port._storage_scope():
+                return WorkService(self.repository, origins=self.origins)._send_committed(
+                    sent,
+                    deliver,
+                    actor_id=binding.principal_id,
+                )
         finally:
             try:
                 port.close()
@@ -1688,10 +1716,11 @@ class WorkAdmission:
 
         def reconcile():
             try:
-                return WorkService(self.repository, origins=self.origins)._reconcile(
-                    sent,
-                    actor_id=binding.principal_id,
-                )
+                with port._storage_scope():
+                    return WorkService(self.repository, origins=self.origins)._reconcile(
+                        sent,
+                        actor_id=binding.principal_id,
+                    )
             finally:
                 port._finish_resource()
 
@@ -1779,10 +1808,11 @@ class WorkAdmission:
 
         def reconcile():
             try:
-                return WorkService(self.repository, origins=self.origins)._reconcile(
-                    sent,
-                    actor_id=binding.principal_id,
-                )
+                with port._storage_scope():
+                    return WorkService(self.repository, origins=self.origins)._reconcile(
+                        sent,
+                        actor_id=binding.principal_id,
+                    )
             finally:
                 port._finish_resource()
 
@@ -1886,22 +1916,32 @@ class WorkAdmission:
     async def _send_prepared_dispatch(self, prepared, send) -> dict:
         binding, port, sent = prepared
 
+        async def invoke_send():
+            # run_owned_async creates a new task; bind inside that task.
+            with port._storage_scope():
+                result = await send(binding, port)
+                check_storage_admission()
+                return result
+
         async def deliver():
             try:
                 if port._resource_reservation is not None:
                     from cli_agent_orchestrator.services.work_blocking import run_owned_async
 
-                    return await run_owned_async(send(binding, port))
+                    return await run_owned_async(invoke_send())
                 return await send(binding, port)
             finally:
                 port.close()
 
         try:
-            return await WorkService(self.repository, origins=self.origins)._send_committed_async(
-                sent,
-                deliver,
-                actor_id=binding.principal_id,
-            )
+            with port._storage_scope():
+                return await WorkService(
+                    self.repository, origins=self.origins
+                )._send_committed_async(
+                    sent,
+                    deliver,
+                    actor_id=binding.principal_id,
+                )
         finally:
             # Also close if writer registration fails before ``deliver`` starts.
             try:

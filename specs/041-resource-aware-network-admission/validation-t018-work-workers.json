@@ -1,0 +1,392 @@
+{
+  "schema": "caos.spec041.t018.work-worker-checkpoint.v1",
+  "verified_utc": "2026-10-31T17:22:09.425705+00:00",
+  "base_head": "ddaa5513f8b7269bd913c4c42373c667e05861d4",
+  "status": "PASS_BOUNDED_WORK_PROVIDER_WORKERS_AND_FRESH_CHILDREN",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_cli_executed": false,
+  "tested_files": [
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/fork_handles.py",
+      "digest": "sha256:5f3c04c733083e33d1974029c4081b1c9c67b29717054731272d114515f91433"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+      "digest": "sha256:27525888ada16afe7e8ffaec9a6c93aa5f91f9e879b305444297a9ae6c07f6c9"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/antigravity_cli.py",
+      "digest": "sha256:253f3f6a486f4369ea0c899042e1c97e09c3db1a910612fe02eb8aa0bc25bcb0"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/base.py",
+      "digest": "sha256:c33cbda7848cba4e23f68101bdc2af4ed31a5fa6fa7ddec0ecb6bd4d83d7cdbf"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/claude_code.py",
+      "digest": "sha256:d2447a0fc005f7b33450cc6dd40bf8b7ac5dbb9f649a0623de71a0ea985711b6"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/copilot_cli.py",
+      "digest": "sha256:de6f727d426708ce6ace22d3117ec651999b90cbc6dd8d9d3d5ce14fa057a004"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/gemini_cli.py",
+      "digest": "sha256:5b61c7d90f62b7c4f3f04e00f7e44d1a4b2e41c5cd1995c0305b966c0da3b1c2"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/grok_cli.py",
+      "digest": "sha256:1c2e48e31870e0edcc3628a9446546cb0a4f4448b6b9ea2d4ad9c6198c9f433e"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/kimi_cli.py",
+      "digest": "sha256:6a3c59d67c0b8b90b14243df317f9d1b70c541ec52bc3a33ffb32a26483a0d60"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/kiro_cli.py",
+      "digest": "sha256:efc769dae1459f43811278693bc30f87368fdcefd2c3a33b068a790823fc3118"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/minimax_code.py",
+      "digest": "sha256:edfff037eace6111e339e0a89cf240a9e1af16392a480a8cca067e4048fcda07"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/opencode_cli.py",
+      "digest": "sha256:fe5c86217f0ba20cac5fd6246a06adb3f807239652b3c21fd8703272228f8c12"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "digest": "sha256:39f83044a23eeaf6f591498d286c18fa76986b7efbe5d286cc45173963187285"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/terminal_service.py",
+      "digest": "sha256:a50bd3e5cae0096c3caa22141983aed5dd1f2a46e06b27ecefac4db21dbedbe0"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_admission.py",
+      "digest": "sha256:a80785e1aabbaa9448c17c02bb41c5588d036f8c3a22c888cf15d0279619bc83"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_blocking.py",
+      "digest": "sha256:c9bd65d3da57d3985f17c50f765146f52f839a0bcdcc5a6909d937e316cfd419"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_delivery.py",
+      "digest": "sha256:4bacdcf9b01b2011115a8645a8d6f667bc864fc9b7284efd70bb1be8f0c1ffea"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_inbox.py",
+      "digest": "sha256:d9223de471a791bba3f16ac105ba3e5e5194970cb7a58c5e2e2f81685f340e16"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/terminal.py",
+      "digest": "sha256:6b9fcca37915f5f7865697eb08d4beeac98e6340646e6b0128edb1eb7dbcca52"
+    },
+    {
+      "path": "test/clients/test_storage_admission.py",
+      "digest": "sha256:f749aaa6057a6644783d4ba6857d83fe13a046f6b5dc074a6364221f55c70ccc"
+    },
+    {
+      "path": "test/integration/test_storage_adapters.py",
+      "digest": "sha256:75acb2e07b77ca17a4a7a1e2ba92ba1c1c5c9ba6263169bd0bffb28d67224ded"
+    },
+    {
+      "path": "test/providers/test_startup_handler_nonblocking.py",
+      "digest": "sha256:1d64fa6698e550f092cb418c2f50f89a1f57d74d869a0d6c2fe2aa4787b60963"
+    },
+    {
+      "path": "test/services/test_session_teardown_atomic.py",
+      "digest": "sha256:dc945921608fe89509415c36e9408af6d546af8dcf13a85a8b7d639039d4dc95"
+    },
+    {
+      "path": "test/services/test_work_process_adapter_cancellation.py",
+      "digest": "sha256:9de424610dc4fb8d95d20ab8e7ca625811e138335ddec9137d9bc6907657b1c8"
+    },
+    {
+      "path": "test/services/test_work_resource_admission.py",
+      "digest": "sha256:c96285d98213fd76707421c3adca8142f6a30c15f9fbb33be05a215ccbfe1f7d"
+    },
+    {
+      "path": "test/utils/test_terminal_storage_admission.py",
+      "digest": "sha256:d52b5cc813e4b94b071f4ed0ad28cdc9ded40b7ba3b888222ce1dfa29088f68b"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "t018-work-physical-red",
+      "cases": {
+        "total": 5,
+        "failure": 5,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 82.638,
+      "available_mib": 8950,
+      "candidate_digest": "sha256:71f4bb9e546b105dbf2984c7c6d412ebaedbf11ba619145159eee3387e553d63",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Missing Work physical scopes and complete operation footprint."
+    },
+    {
+      "phase": "t018-work-physical-green",
+      "cases": {
+        "total": 19,
+        "failure": 8,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 168.799,
+      "available_mib": 8983,
+      "candidate_digest": "sha256:a515ffd6a556802d592f5d9254f1cd4a3069b36fb15610bff5eb4c14ca1d4859",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Actual nested ORM target lookup required a third connection; retained failures."
+    },
+    {
+      "phase": "t018-work-target-green-handoff-red",
+      "cases": {
+        "total": 24,
+        "failure": 7,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 148.423,
+      "available_mib": 9026,
+      "candidate_digest": "sha256:72cca981839347df1780f94060964500e4d402fe55cf833066a6de56d0cec1f6",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Missing worker handoff plus two legacy target fault injectors requiring explicit routing; mixed product/new-contract and fixture failures."
+    },
+    {
+      "phase": "t018-native-create-ownership-red",
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 63.281,
+      "available_mib": 9025,
+      "candidate_digest": "sha256:5c95b78abfabb5fb7fc109c55f4079fdd4f65357e5505947f8eb6d6df6546786",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Controlled native creation worker lost physical storage ownership; real PostgreSQL and fake backend, no provider CLI."
+    },
+    {
+      "phase": "t018-handoff-denial-red",
+      "cases": {
+        "total": 3,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 37.492,
+      "available_mib": 8838,
+      "candidate_digest": "sha256:8bd2faa3a61ced0f8ff57f69b41358a658a250f0041e662dc34b89142ba1e64a",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Three valid denials before capture/use and concurrent parent denial were not fenced before work."
+    },
+    {
+      "phase": "t018-provider-owned-io-red",
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 51.278,
+      "available_mib": 8779,
+      "candidate_digest": "sha256:49aba42ab9b8766063ac4a3653e8e4d26f22e66488162e11ea37a8cab2109613",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Four real provider handler paths under controlled backend lost the scope on raw offload."
+    },
+    {
+      "phase": "t018-work-provider-ownership-green",
+      "cases": {
+        "total": 59,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 192.311,
+      "available_mib": 9001,
+      "candidate_digest": "sha256:d02899c2e532cce8f8b6450c9306160202696dd23a9657c0b01d21882cb00e18",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "59-case checkpoint before shared readiness and exact no-start checkout coverage."
+    },
+    {
+      "phase": "t018-readiness-no-start-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 65.736,
+      "available_mib": 8894,
+      "candidate_digest": "sha256:54aefce189adc6e16cfd5d33d9f9a9ed203cff650fb23070255aceb1f44c7e96",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Two valid failures: shared initialization probe offload and owned checkout not retired when create body never started."
+    },
+    {
+      "phase": "t018-work-readiness-green",
+      "cases": {
+        "total": 61,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 195.296,
+      "available_mib": 8380,
+      "candidate_digest": "sha256:1437ecb8ad332d4a405f718b1215731b4ea3143e063aa5c133d855e1ebad7ca9",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "61-case bounded checkpoint."
+    },
+    {
+      "phase": "t018-work-provider-regression",
+      "cases": {
+        "total": 1246,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 1125.947,
+      "available_mib": 8527,
+      "candidate_digest": "sha256:97ee73680575d94754c3ec1238f4040b8f5812003c3494ced8906e9b70da7409",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "1243 passed, three failed: two incomplete private process-port doubles and one actual rejection of fresh child PostgreSQL connections. Not a GREEN1246 claim."
+    },
+    {
+      "phase": "t018-fresh-fork-red",
+      "cases": {
+        "total": 9,
+        "failure": 5,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 69.288,
+      "available_mib": 8509,
+      "candidate_digest": "sha256:d062f3f7b2cfc44d60de731b6cb9465dd1f7fdd502799e859a3e73f0b371859c",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Five discriminating fork failures and four passing repaired cancellation cases, bound/unbound. No physical assertions weakened."
+    },
+    {
+      "phase": "t018-work-fork-ownership-green",
+      "cases": {
+        "total": 195,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 367.815,
+      "available_mib": 8571,
+      "candidate_digest": "sha256:c8791a57dd70307678402f6283308ca094e1cbe10dcd5d79e1827522f37452ad",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "195 final component cases, including all previously failed process paths, physical adapters and inherited owner/lock fences."
+    },
+    {
+      "phase": "t018-fork-connector-refusal-green",
+      "cases": {
+        "total": 2,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 36.538,
+      "available_mib": 8574,
+      "candidate_digest": "sha256:28ee6b0c4667adb77de1cd2ab3b9f45e8648ff0e9a8cf583b382c2d2d1256c30",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Two physical negative cases: detacher False/exception prevents even the connector call; parent backend remains alive."
+    }
+  ],
+  "final_regressions": [
+    "195passed/0failures/0errors/0skipped/8warnings;362.31s pytest",
+    "2passed/0failures/0errors/0skipped/2warnings;34.92s pytest"
+  ],
+  "broad_regression": "1243passed/3failed/0errors/0skipped/7warnings;1111.36s pytest; all three failed paths repaired and checked by focused final regressions, not relabeled as a passing broad run",
+  "production_delta_after_broad": [
+    "src/cli_agent_orchestrator/clients/postgres/fork_handles.py",
+    "src/cli_agent_orchestrator/clients/storage_admission.py",
+    "src/cli_agent_orchestrator/services/delivery_admission.py"
+  ],
+  "format": "Black/isort26 Python files PASS before final freeze; last addition only2tests, Black/isortPASS",
+  "types": "mypy10 source modules PASS;follow-imports=silent/defaultuntypedcoverage;work_admission untyped-body note retained",
+  "architecture": {
+    "files": 439,
+    "dependencies": 1951,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": "Codex Luna Max/ECC read-only reviews of transactional target, shared provider I/O, single-use transfer/denial/cancellation, and three rounds of fork ownership. Actionable findings reproduced and corrected. Final physical connector-spy coverage added and passed; no further production mutation. Lead composition/diff review PASS within stated scope.",
+  "scope": [
+    "Work reserves2 physical sessions before advisory/transaction and keeps physical scopes separate from transferred lease resources.",
+    "Managed target resolution reuses the Work transaction while rechecking pinned engine/configuration/store UUID and receiver/session/window; legacy adapter callback remains compatible.",
+    "Work prepare/callback/native worker/receipt/abandonment retain physical loans until exact closure.",
+    "Single-use PID/thread/task/lifetime transfer shares sticky denial and joins actual workers across repeated cancellation.",
+    "One BaseProvider helper handles70 offloads in9providers; shared readiness4 and create-terminal offloads use the same mechanism. No provider-specific concurrency quota or permission change.",
+    "No-start create witness preserves outer cleanup ownership and retires only its allocated checkout; started create drains compensation.",
+    "One fork coordinator detaches registered handles before creating child-local close tracking; retains old registry without locks/close/token retirement. Failed detachment prevents unbound connector opening. Inherited scopes/ledgers cannot be rebound; fresh child-owned PostgreSQL works while parent backend stays alive."
+  ],
+  "not_accepted": [
+    "All Inbox minimum footprints and separately accounted discovery cursor.",
+    "Protected SQL control budget and combined scanner/delivery pressure.",
+    "Shutdown retry of owned uncertain closes.",
+    "Separating audited-pool capacity from total PostgreSQL callback capacity in monitor.",
+    "T017 authorized cached status/diagnostic API.",
+    "Fork during native connect or before handle registration.",
+    "T019 physical M1 independent namespace/cgroup acceptance.",
+    "T012–T016/T020 shared reservations and real authorized multi-node placement M2/M3.",
+    "T022 PostgreSQL policy history/API/typed SDK and T023 real administration UI.",
+    "Remaining provider/global acceptance gates."
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-work-provider-physical-ownership",
+    "status": "applied",
+    "strict_lint_issues": 0,
+    "approval_digest": "sha256:9cb5c0fc244c6b11730b727ce9feca5ef8b189575da7b859134ac84ec2b43251"
+  }
+}

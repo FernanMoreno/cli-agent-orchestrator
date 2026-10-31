@@ -621,11 +621,11 @@ class GrokCliProvider(BaseProvider):
             if not await wait_for_shell(self.terminal_id, timeout=init_timeout):
                 raise TimeoutError(f"Shell initialization timed out after {init_timeout:g}s")
 
-            command = await asyncio.to_thread(self._build_grok_command)
+            command = await self._run_blocking(self._build_grok_command)
             from cli_agent_orchestrator.services.status_monitor import status_monitor
 
             status_monitor.notify_input_sent(self.terminal_id)
-            await asyncio.to_thread(
+            await self._run_blocking(
                 get_backend().send_keys, self.session_name, self.window_name, command
             )
             await self._wait_for_startup_ready(init_timeout)
@@ -635,11 +635,11 @@ class GrokCliProvider(BaseProvider):
             if self._grok_home is not None:
                 config_path = self._grok_home / "config.toml"
                 if config_path.exists():
-                    await asyncio.to_thread(os.chmod, config_path, 0o600)
+                    await self._run_blocking(os.chmod, config_path, 0o600)
             self._initialized = True
             return True
         except Exception:
-            await asyncio.to_thread(self.cleanup)
+            await self._run_blocking(self.cleanup)
             raise
 
     async def _wait_for_startup_ready(self, timeout: float) -> None:
@@ -665,7 +665,7 @@ class GrokCliProvider(BaseProvider):
             # Off the loop: get_status() can fork a tmux capture-pane for a PROCESSING
             # terminal (status_monitor.py's stale-PROCESSING fallback) and this polls
             # every second on the shared event loop during init.
-            if (await asyncio.to_thread(status_monitor.get_status, self.terminal_id)) in {
+            if (await self._run_blocking(status_monitor.get_status, self.terminal_id)) in {
                 TerminalStatus.IDLE,
                 TerminalStatus.COMPLETED,
             }:

@@ -1061,7 +1061,7 @@ class GeminiCliProvider(BaseProvider):
 
         launch_sent = False
         try:
-            command = await asyncio.to_thread(self._build_gemini_command)
+            command = await self._run_blocking(self._build_gemini_command)
             from cli_agent_orchestrator.services.status_monitor import status_monitor
 
             # A launch is a new status epoch, but it is not a task delivery:
@@ -1069,7 +1069,7 @@ class GeminiCliProvider(BaseProvider):
             # bootstrap acknowledgement into a completed task.
             status_monitor.notify_input_sent(self.terminal_id)
             try:
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_keys,
                     self.session_name,
                     self.window_name,
@@ -1118,7 +1118,7 @@ class GeminiCliProvider(BaseProvider):
                 ) from exc
             # A failed launch must not strand a settings file that a future
             # operator-run Gemini session might accidentally inherit.
-            await asyncio.to_thread(self._cleanup_runtime)
+            await self._run_blocking(self._cleanup_runtime)
             raise
 
     async def _wait_for_bootstrap_ready(self, timeout: float) -> Optional[TerminalStatus]:
@@ -1132,7 +1132,7 @@ class GeminiCliProvider(BaseProvider):
         """
         deadline = asyncio.get_running_loop().time() + timeout
         while asyncio.get_running_loop().time() < deadline:
-            output = await asyncio.to_thread(
+            output = await self._run_blocking(
                 get_backend().get_history,
                 self.session_name,
                 self.window_name,

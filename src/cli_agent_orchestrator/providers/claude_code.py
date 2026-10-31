@@ -988,7 +988,7 @@ class ClaudeCodeProvider(BaseProvider):
             ):
                 return  # no new prompt within the idle gap — startup settled
 
-            output = await asyncio.to_thread(
+            output = await self._run_blocking(
                 get_backend().get_history, self.session_name, self.window_name
             )
             if not output:
@@ -1003,7 +1003,7 @@ class ClaudeCodeProvider(BaseProvider):
             # for the following handlers too, so earlier prompts in scrollback
             # cannot act while this notice (or its successor) owns the screen.
             if "Security notes:" in clean_output:
-                viewport = await asyncio.to_thread(
+                viewport = await self._run_blocking(
                     get_backend().get_history,
                     self.session_name,
                     self.window_name,
@@ -1015,7 +1015,7 @@ class ClaudeCodeProvider(BaseProvider):
                         from cli_agent_orchestrator.services.status_monitor import status_monitor
 
                         status_monitor.notify_input_sent(self.terminal_id)
-                        await asyncio.to_thread(
+                        await self._run_blocking(
                             get_backend().send_special_key,
                             self.session_name,
                             self.window_name,
@@ -1037,7 +1037,7 @@ class ClaudeCodeProvider(BaseProvider):
                 logger.info("Bypass permissions prompt detected, auto-accepting")
                 # Send Down arrow to move cursor to "Yes, I accept", then Enter.
                 status_monitor.notify_input_sent(self.terminal_id)
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_special_key,
                     self.session_name,
                     self.window_name,
@@ -1045,7 +1045,7 @@ class ClaudeCodeProvider(BaseProvider):
                 )
                 await asyncio.sleep(0.5)
                 status_monitor.notify_input_sent(self.terminal_id)
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_special_key, self.session_name, self.window_name, "Enter"
                 )
                 bypass_accepted = True
@@ -1091,7 +1091,7 @@ class ClaudeCodeProvider(BaseProvider):
                 if not yes_selected:
                     if trust_navigation_at is None or time.monotonic() - trust_navigation_at >= 1.0:
                         status_monitor.notify_input_sent(self.terminal_id)
-                        await asyncio.to_thread(
+                        await self._run_blocking(
                             get_backend().send_special_key,
                             self.session_name,
                             self.window_name,
@@ -1105,7 +1105,7 @@ class ClaudeCodeProvider(BaseProvider):
                     await asyncio.sleep(0.5)
                     continue
                 status_monitor.notify_input_sent(self.terminal_id)
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_special_key, self.session_name, self.window_name, "Enter"
                 )
                 trust_accepted = True
@@ -1142,7 +1142,7 @@ class ClaudeCodeProvider(BaseProvider):
                 # rendered contract names "1. Yes" and "2. No"; selecting the
                 # explicit negative choice also persists Claude's decision.
                 status_monitor.notify_input_sent(self.terminal_id)
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_keys, self.session_name, self.window_name, "2"
                 )
                 upgrade_declined.add(title)
@@ -1162,7 +1162,7 @@ class ClaudeCodeProvider(BaseProvider):
 
                 logger.info("Claude Code text-style preference detected, accepting selection")
                 status_monitor.notify_input_sent(self.terminal_id)
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_special_key, self.session_name, self.window_name, "Enter"
                 )
                 text_style_accepted = True
@@ -1192,7 +1192,7 @@ class ClaudeCodeProvider(BaseProvider):
                     "Claude Code existing OAuth login route detected, accepting subscription route"
                 )
                 status_monitor.notify_input_sent(self.terminal_id)
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_special_key, self.session_name, self.window_name, "Enter"
                 )
                 oauth_login_route_accepted = True
@@ -1254,7 +1254,7 @@ class ClaudeCodeProvider(BaseProvider):
         from cli_agent_orchestrator.services.status_monitor import status_monitor
 
         try:
-            return await asyncio.to_thread(
+            return await self._run_blocking(
                 status_monitor.observe_initial_viewport, self.terminal_id
             )
         except Exception as exc:  # a probe miss must not make startup fail
@@ -1370,7 +1370,7 @@ class ClaudeCodeProvider(BaseProvider):
         # Not exhaustive: wait_for_shell's own backend polling, _load_profile(),
         # and _build_claude_command's temp-file I/O above/below are still
         # loop-side -- tens of ms each, not the multi-second pileup #451 fixes.
-        await asyncio.to_thread(self._ensure_skip_bypass_prompt_setting)
+        await self._run_blocking(self._ensure_skip_bypass_prompt_setting)
 
         # Build properly escaped command string
         command = self._build_claude_command(profile)
@@ -1383,7 +1383,7 @@ class ClaudeCodeProvider(BaseProvider):
         # single subprocess exec can't add to the same event-loop-blocking
         # pileup under concurrent session creation.
         status_monitor.notify_input_sent(self.terminal_id)
-        await asyncio.to_thread(
+        await self._run_blocking(
             get_backend().send_keys, self.session_name, self.window_name, command
         )
 
@@ -1446,7 +1446,7 @@ class ClaudeCodeProvider(BaseProvider):
             return
         deadline = time.monotonic() + timeout
         while True:
-            if await asyncio.to_thread(
+            if await self._run_blocking(
                 has_ready_signal, self._cao_mcp_ready_path, self._cao_mcp_ready_token
             ):
                 return

@@ -477,7 +477,7 @@ class KiroCliProvider(BaseProvider):
         # stray message). Low probability given the sticky latch, but explicit.
         # Off the loop: get_status() can fork a tmux capture-pane for a PROCESSING
         # terminal (status_monitor.py's stale-PROCESSING fallback).
-        current = await asyncio.to_thread(status_monitor.get_status, self.terminal_id)
+        current = await self._run_blocking(status_monitor.get_status, self.terminal_id)
         if current != TerminalStatus.WAITING_USER_ANSWER:
             return True
 

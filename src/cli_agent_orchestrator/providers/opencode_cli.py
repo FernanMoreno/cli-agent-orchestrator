@@ -1068,7 +1068,7 @@ class OpenCodeCliProvider(BaseProvider):
         # version instead of probing twice (and never run the blocking probe
         # on the event loop when creation did not need the capability path).
         if not self._runtime_probe_complete:
-            await asyncio.to_thread(self._prepare_runtime)
+            await self._run_blocking(self._prepare_runtime)
         try:
             return await self._initialize_validated()
         except BaseException:
@@ -1506,7 +1506,7 @@ class OpenCodeCliProvider(BaseProvider):
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
             signals = dict(self._v1_mcp_ready_signals)
-            if await asyncio.to_thread(
+            if await self._run_blocking(
                 lambda: all(has_ready_signal(path, token) for path, token in signals.items())
             ):
                 return True
@@ -1531,7 +1531,7 @@ class OpenCodeCliProvider(BaseProvider):
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
             try:
-                log_text = await asyncio.to_thread(log_path.read_text, encoding="utf-8")
+                log_text = await self._run_blocking(log_path.read_text, encoding="utf-8")
             except OSError:
                 log_text = ""
             if connected.search(log_text):
@@ -1563,7 +1563,7 @@ class OpenCodeCliProvider(BaseProvider):
             if remaining <= 0:
                 return False
             try:
-                snapshot = await asyncio.to_thread(
+                snapshot = await self._run_blocking(
                     get_backend().get_history,
                     self.session_name,
                     self.window_name,
@@ -1574,9 +1574,9 @@ class OpenCodeCliProvider(BaseProvider):
                     cancelled_turn_startup_context(self) is not None
                     and not get_backend().supports_event_inbox()
                 ):
-                    observed = await asyncio.to_thread(self._cancelled_startup_status, snapshot)
+                    observed = await self._run_blocking(self._cancelled_startup_status, snapshot)
                 else:
-                    observed = await asyncio.to_thread(
+                    observed = await self._run_blocking(
                         status_monitor.observe_initial_screen_snapshot,
                         self.terminal_id,
                         snapshot,

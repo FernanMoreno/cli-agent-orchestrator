@@ -1053,7 +1053,7 @@ class KimiCliProvider(BaseProvider):
                 return
             if any_prompt_handled and now - last_prompt_time >= idle_gap:
                 return  # no new prompt within the idle gap — startup settled
-            output = await asyncio.to_thread(
+            output = await self._run_blocking(
                 get_backend().get_history, self.session_name, self.window_name
             )
             if output:
@@ -1078,7 +1078,7 @@ class KimiCliProvider(BaseProvider):
                     logger.info("Kimi upgrade-reminder dialog detected, skipping reminders")
                     status_monitor.notify_input_sent(self.terminal_id)
                     # 's' = "Skip reminders for version X"; single-key menu, no Enter.
-                    await asyncio.to_thread(
+                    await self._run_blocking(
                         get_backend().send_keys,
                         self.session_name,
                         self.window_name,
@@ -1150,18 +1150,18 @@ class KimiCliProvider(BaseProvider):
 
         # Build properly escaped command string
         if probe.dialect is KimiDialect.CODE:
-            command = await asyncio.to_thread(self._build_kimi_code_command)
+            command = await self._run_blocking(self._build_kimi_code_command)
         else:
-            command = await asyncio.to_thread(self._build_kimi_command, probe.binary)
+            command = await self._run_blocking(self._build_kimi_command, probe.binary)
 
         # The launch line is POSIX text that quotes the operator's own paths,
         # model names and resolved binary. Hand it to /bin/sh via a CAO-owned
         # script so the pane's shell — which may be fish, zsh, or anything else —
         # never has to parse POSIX quoting it may not share.
-        command = await asyncio.to_thread(self._materialize_launch_command, command)
+        command = await self._run_blocking(self._materialize_launch_command, command)
 
         # Send Kimi command to the tmux window
-        await asyncio.to_thread(
+        await self._run_blocking(
             get_backend().send_keys, self.session_name, self.window_name, command
         )
 
@@ -2164,7 +2164,7 @@ class KimiCliProvider(BaseProvider):
                 capability signature. Never falls back to the legacy dialect.
         """
 
-        probe_dir = await asyncio.to_thread(self._ensure_shell_safe_dir)
+        probe_dir = await self._run_blocking(self._ensure_shell_safe_dir)
         probe_path = os.path.join(probe_dir, "kimi-probe.txt")
 
         # The program is POSIX and contains `${VAR:-default}` and `$(...)`. It is
@@ -2189,19 +2189,19 @@ class KimiCliProvider(BaseProvider):
         # probe read a half-written file, classifying a perfectly good Kimi Code
         # binary as UNKNOWN. The end marker is written by the shell as the last
         # thing it does, so its presence in the file means the dump is complete.
-        script_path = await asyncio.to_thread(
+        script_path = await self._run_blocking(
             self._write_private_script, probe_dir, "kimi-probe.sh", KIMI_PROBE_PROGRAM + "\n"
         )
         probe_script = build_kimi_probe_command(script_path, probe_path)
 
-        await asyncio.to_thread(
+        await self._run_blocking(
             get_backend().send_keys, self.session_name, self.window_name, probe_script
         )
 
         deadline = time.monotonic() + KIMI_PROBE_TIMEOUT_SECONDS
         text = ""
         while time.monotonic() < deadline:
-            text = await asyncio.to_thread(_read_text_or_empty, probe_path)
+            text = await self._run_blocking(_read_text_or_empty, probe_path)
             if KIMI_PROBE_END_MARKER in text:
                 break
             await asyncio.sleep(0.25)
@@ -2250,7 +2250,7 @@ class KimiCliProvider(BaseProvider):
         # Cache only a successful classification, keyed on the binary's identity.
         # A failure above is never cached, so a transient probe problem cannot
         # permanently disable this provider for the process.
-        await asyncio.to_thread(_cache_dialect, binary, dialect, observed)
+        await self._run_blocking(_cache_dialect, binary, dialect, observed)
 
         self._dialect = dialect
         self._kimi_binary = binary
@@ -2622,7 +2622,7 @@ class KimiCliProvider(BaseProvider):
 
         pane_cwd = None
         try:
-            pane_cwd = await asyncio.to_thread(
+            pane_cwd = await self._run_blocking(
                 get_backend().get_pane_working_directory, self.session_name, self.window_name
             )
         except Exception as exc:  # noqa: BLE001 - backend may not implement it
@@ -2673,7 +2673,7 @@ class KimiCliProvider(BaseProvider):
             )
             status_monitor.notify_input_sent(self.terminal_id)
             for _ in range(abs(delta)):
-                await asyncio.to_thread(
+                await self._run_blocking(
                     get_backend().send_special_key, self.session_name, self.window_name, key
                 )
                 await asyncio.sleep(0.2)
@@ -2681,7 +2681,7 @@ class KimiCliProvider(BaseProvider):
             verified = False
             for _ in range(4):
                 await asyncio.sleep(0.3)
-                fresh = await asyncio.to_thread(
+                fresh = await self._run_blocking(
                     get_backend().get_history, self.session_name, self.window_name
                 )
                 if not isinstance(fresh, str):
@@ -2703,7 +2703,7 @@ class KimiCliProvider(BaseProvider):
             dialog.workspace,
         )
         status_monitor.notify_input_sent(self.terminal_id)
-        await asyncio.to_thread(
+        await self._run_blocking(
             get_backend().send_special_key, self.session_name, self.window_name, "Enter"
         )
         self._trust_handled = True
@@ -2712,7 +2712,7 @@ class KimiCliProvider(BaseProvider):
     async def _activate_kimi_swarm(self) -> None:
         """Enter the native mode before task delivery, without marking a user turn."""
 
-        await asyncio.to_thread(
+        await self._run_blocking(
             get_backend().send_keys,
             self.session_name,
             self.window_name,
@@ -2723,7 +2723,7 @@ class KimiCliProvider(BaseProvider):
         )
         deadline = time.monotonic() + KIMI_SWARM_ACTIVATION_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            output = await asyncio.to_thread(
+            output = await self._run_blocking(
                 get_backend().get_history,
                 self.session_name,
                 self.window_name,

@@ -1791,3 +1791,151 @@ def test_cancelled_create_rolls_back_worker_blocked_in_row_write(real_db, runtim
     assert backend.session_exists("cao-cancel-row") is False
     assert database.list_terminals_by_session("cao-cancel-row") == []
     assert session_lock._session_locks == {}
+
+
+def test_resource_bound_create_drains_worker_and_compensator_through_repeated_cancel(
+    real_db, runtime, monkeypatch
+):
+    import asyncio
+    from test.services.test_delivery_admission import create, observe
+
+    from cli_agent_orchestrator.clients.storage_admission import physical_storage_scope
+
+    class ResourceCreateBackend(CancelledCreateBackend):
+        def __init__(self):
+            super().__init__()
+            self.in_kill = threading.Event()
+            self.release_kill = threading.Event()
+
+        def kill_session(self, session_name):
+            self.in_kill.set()
+            assert self.release_kill.wait(DEADLOCK_TIMEOUT), "owned compensator was not released"
+            return super().kill_session(session_name)
+
+    backend = ResourceCreateBackend()
+    set_backend(backend)
+    owner = create()
+    assert observe(owner, 2)
+    lease = owner.try_reserve("owned-create", now=10.0, storage_slots=2).reservation
+    assert lease is not None and lease.start()
+    entered, release, rolled_back = threading.Event(), threading.Event(), threading.Event()
+    original = terminal_service.db_create_terminal
+
+    def physical(*args, **kwargs):
+        entered.set()
+        assert release.wait(DEADLOCK_TIMEOUT), "owned creation worker was not released"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(terminal_service, "db_create_terminal", physical)
+    _signalling_row_delete(monkeypatch, rolled_back)
+
+    async def scenario():
+        async def creating():
+            with physical_storage_scope(lease, clock=lambda: 10.0):
+                try:
+                    return await terminal_service.create_terminal(
+                        provider="claude_code",
+                        agent_profile="developer",
+                        session_name="cao-owned-storage-create",
+                        new_session=True,
+                    )
+                finally:
+                    lease.finish_after_storage()
+
+        task = asyncio.create_task(creating())
+        try:
+            assert await asyncio.to_thread(entered.wait, DEADLOCK_TIMEOUT)
+            task.cancel()
+            release.set()
+            assert await asyncio.to_thread(backend.in_kill.wait, DEADLOCK_TIMEOUT)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert owner.snapshot(now=10.0).started == 1
+            backend.release_kill.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(task), DEADLOCK_TIMEOUT)
+            assert rolled_back.is_set()
+            assert owner.snapshot(now=10.0).inflight == 0
+        finally:
+            release.set()
+            backend.release_kill.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert not backend.session_exists("cao-owned-storage-create")
+    assert database.list_terminals_by_session("cao-owned-storage-create") == []
+
+
+def test_resource_create_never_started_retires_its_owned_checkout(
+    real_db, runtime, monkeypatch, tmp_path
+):
+    import asyncio
+    import json
+    from test.services.test_delivery_admission import create, observe
+
+    from cli_agent_orchestrator.clients.storage_admission import physical_storage_scope
+    from cli_agent_orchestrator.services import work_blocking
+
+    backend = CancelledCreateBackend()
+    set_backend(backend)
+    repository_root = tmp_path / "registered-source"
+    repository_root.mkdir()
+    monkeypatch.setenv("CAO_REGISTERED_PROJECTS", json.dumps([str(tmp_path)]))
+    allocated, removed = {}, []
+
+    def allocate(root, terminal_id):
+        assert root == str(repository_root)
+        checkout = tmp_path / f"owned-{terminal_id}"
+        checkout.mkdir()
+        allocated[terminal_id] = checkout
+        return str(checkout)
+
+    def retire(root, terminal_id):
+        assert root == str(repository_root)
+        allocated[terminal_id].rmdir()
+        removed.append(terminal_id)
+        return True
+
+    monkeypatch.setattr(
+        terminal_service.worktree_service, "find_repo_root", lambda _: str(repository_root)
+    )
+    monkeypatch.setattr(terminal_service.worktree_service, "create_worktree", allocate)
+    monkeypatch.setattr(terminal_service.worktree_service, "remove_worktree", retire)
+    original = work_blocking.run_owned_blocking
+
+    async def reject_before_body(function, *args, **kwargs):
+        if function.__name__ == "create_with_outcome":
+            raise asyncio.CancelledError()
+        return await original(function, *args, **kwargs)
+
+    monkeypatch.setattr(work_blocking, "run_owned_blocking", reject_before_body)
+    owner = create()
+    assert observe(owner, 2)
+    lease = owner.try_reserve("never-started-create", now=10.0, storage_slots=2).reservation
+    assert lease is not None and lease.start()
+
+    async def scenario():
+        with physical_storage_scope(lease, clock=lambda: 10.0):
+            try:
+                with pytest.raises(asyncio.CancelledError):
+                    await terminal_service.create_terminal(
+                        provider="claude_code",
+                        agent_profile="developer",
+                        new_session=True,
+                        session_name="cao-owned-no-start",
+                        working_directory=str(repository_root),
+                        use_worktree=True,
+                    )
+            finally:
+                lease.finish_after_storage()
+
+    asyncio.run(scenario())
+    assert len(allocated) == 1
+    assert removed == list(allocated)
+    assert all(not checkout.exists() for checkout in allocated.values())
+    assert not backend.session_exists("cao-owned-no-start")
+    assert database.list_terminals_by_session("cao-owned-no-start") == []
+    assert owner.snapshot(now=10.0).inflight == 0

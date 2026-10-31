@@ -7,6 +7,11 @@ import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Coroutine, TypeVar
 
+from cli_agent_orchestrator.clients.storage_admission import (
+    capture_storage_worker,
+    storage_scope_present,
+)
+
 _Result = TypeVar("_Result")
 
 
@@ -20,10 +25,16 @@ async def run_owned_blocking(
     separate production concurrency limit or queue for unadmitted work.
     """
     loop = asyncio.get_running_loop()
+    handoff = capture_storage_worker()
     context = contextvars.copy_context()
 
+    def run_in_context() -> _Result:
+        if handoff is not None:
+            return handoff.run(function, *args, **kwargs)
+        return function(*args, **kwargs)
+
     def invoke() -> _Result:
-        return context.run(function, *args, **kwargs)
+        return context.run(run_in_context)
 
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cao-work-execution")
     try:
@@ -74,6 +85,15 @@ async def run_owned_blocking(
         # The concurrent Future is done on every normal/error/cancel path above.
         # shutdown(wait=True) joins the worker thread before adapter port cleanup.
         executor.shutdown(wait=True, cancel_futures=True)
+
+
+async def run_storage_aware_blocking(
+    function: Callable[..., _Result], /, *args: Any, **kwargs: Any
+) -> _Result:
+    """Preserve ordinary offloads; admitted work gets an explicitly owned worker."""
+    if storage_scope_present():
+        return await run_owned_blocking(function, *args, **kwargs)
+    return await asyncio.to_thread(function, *args, **kwargs)
 
 
 async def run_owned_async(operation: Coroutine[Any, Any, _Result]) -> _Result:

@@ -596,7 +596,7 @@ class AntigravityCliProvider(BaseProvider):
                 return
             if any_prompt_handled and now - last_prompt_time >= idle_gap:
                 return  # no new prompt within the idle gap — startup settled
-            output = await asyncio.to_thread(
+            output = await self._run_blocking(
                 get_backend().get_history, self.session_name, self.window_name
             )
             if output:
@@ -604,7 +604,7 @@ class AntigravityCliProvider(BaseProvider):
                 if not trust_done and re.search(TRUST_PROMPT_PATTERN, clean):
                     logger.info("Antigravity workspace-trust dialog detected, accepting")
                     status_monitor.notify_input_sent(self.terminal_id)
-                    await asyncio.to_thread(
+                    await self._run_blocking(
                         get_backend().send_special_key, self.session_name, self.window_name, "Enter"
                     )
                     trust_done = True
@@ -615,7 +615,7 @@ class AntigravityCliProvider(BaseProvider):
                 if not survey_done and re.search(SURVEY_PROMPT_PATTERN, clean):
                     logger.info("Antigravity feedback survey detected, skipping")
                     status_monitor.notify_input_sent(self.terminal_id)
-                    await asyncio.to_thread(
+                    await self._run_blocking(
                         get_backend().send_keys,
                         self.session_name,
                         self.window_name,
@@ -623,7 +623,7 @@ class AntigravityCliProvider(BaseProvider):
                         enter_count=0,
                     )
                     await asyncio.sleep(0.5)
-                    await asyncio.to_thread(
+                    await self._run_blocking(
                         get_backend().send_special_key, self.session_name, self.window_name, "Enter"
                     )
                     survey_done = True
@@ -657,7 +657,7 @@ class AntigravityCliProvider(BaseProvider):
         if not await wait_for_shell(self.terminal_id, timeout=10.0):
             raise TimeoutError("Shell initialization timed out after 10 seconds")
 
-        command = await asyncio.to_thread(self._build_agy_command)
+        command = await self._run_blocking(self._build_agy_command)
 
         # Arm the StatusMonitor stickiness gate so the launch drives a fresh
         # PROCESSING transition past any stale ready latch. Imported lazily to
@@ -665,7 +665,7 @@ class AntigravityCliProvider(BaseProvider):
         from cli_agent_orchestrator.services.status_monitor import status_monitor
 
         status_monitor.notify_input_sent(self.terminal_id)
-        await asyncio.to_thread(
+        await self._run_blocking(
             get_backend().send_keys, self.session_name, self.window_name, command
         )
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from test.services.test_delivery_admission import create, observe
 from types import SimpleNamespace
 
 import pytest
@@ -12,12 +13,32 @@ from cli_agent_orchestrator.services.work_admission import WorkAdmission
 
 
 class _BlockingProcessPort:
-    def __init__(self):
+    def __init__(self, resource_bound):
+        self.owner = create()
+        assert observe(self.owner, 2)
+        self._resource_reservation = (
+            self.owner.try_reserve("process-port", now=10.0, storage_slots=2).reservation
+            if resource_bound
+            else None
+        )
+        if resource_bound:
+            assert self._resource_reservation is not None
+            assert self._resource_reservation.start()
         self.started = threading.Event()
         self.release = threading.Event()
         self.finished = threading.Event()
         self.closed = False
         self.closed_while_executing = None
+
+    def _storage_scope(self):
+        from cli_agent_orchestrator.clients.storage_admission import physical_storage_scope
+
+        return physical_storage_scope(self._resource_reservation, clock=lambda: 10.0)
+
+    def _finish_resource(self):
+        if self._resource_reservation is not None:
+            self._resource_reservation.finish_after_storage()
+            self._resource_reservation = None
 
     def execute_process(self, *_args):
         self.started.set()
@@ -40,12 +61,13 @@ class _InlineWorkService:
         return await send()
 
 
+@pytest.mark.parametrize("resource_bound", [False, True])
 @pytest.mark.parametrize("operation", ["launch", "agent_step"])
 @pytest.mark.asyncio
 async def test_process_adapter_cancellation_joins_before_admission_closes_port(
-    operation, monkeypatch
+    operation, resource_bound, monkeypatch
 ):
-    port = _BlockingProcessPort()
+    port = _BlockingProcessPort(resource_bound)
     snapshot = SimpleNamespace(content=b"frozen context")
 
     if operation == "launch":
@@ -83,12 +105,14 @@ async def test_process_adapter_cancellation_joins_before_admission_closes_port(
 
         task.cancel()
         await asyncio.sleep(0)
+        assert port.owner.snapshot(now=10.0).inflight == int(resource_bound)
         assert (
             not task.done() and not port.closed
         ), "adapter cancellation returned and closed the port while execute_process was active"
 
         task.cancel()
         await asyncio.sleep(0)
+        assert port.owner.snapshot(now=10.0).inflight == int(resource_bound)
         assert (
             not task.done() and not port.closed
         ), "repeated cancellation discarded the owned process execution"
@@ -100,6 +124,7 @@ async def test_process_adapter_cancellation_joins_before_admission_closes_port(
         assert port.finished.is_set()
         assert port.closed_while_executing is False
         assert port.closed is True
+        assert port.owner.snapshot(now=10.0).inflight == 0
     finally:
         port.release.set()
         if not task.done():
