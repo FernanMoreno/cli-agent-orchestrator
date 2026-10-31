@@ -58,6 +58,9 @@ def test_main_lifespan_binds_and_physically_retires_admission(wired_server):
         value = wired_server.captured[0]
         assert main.app.state.inbox_admission_runtime is value
         assert wired_server.inbox._admission is value.monitor.owner
+        work = main.app.state.durable_launch_gateway._launch_runtime_provider._runtime._admission
+        assert work._resource_admission is value.monitor.owner
+        assert work._resource_clock() == value.clock()
         assert value.available and not value.retired
     assert value.retired
     assert not hasattr(main.app.state, "inbox_admission_runtime")
@@ -155,3 +158,31 @@ def test_herdr_callback_queues_common_consumer_instead_of_inline_delivery(wired_
         assert len(callbacks) == 1
         client.portal.call(callbacks[0], "controlled-worker")
         assert queued == [("controlled-worker", main.app.state.plugin_registry)]
+
+
+@pytest.mark.asyncio
+async def test_work_dispatcher_retires_before_resource_runtime(wired_server):
+    from cli_agent_orchestrator.backends import work_registry
+    from cli_agent_orchestrator.backends.tmux_backend import TmuxBackend
+
+    entered = asyncio.Event()
+    retired_at_dispatcher_exit = []
+
+    async def dispatcher(gateway):
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            value = wired_server.captured[0]
+            retired_at_dispatcher_exit.append(value.retired)
+            assert not value.available
+
+    wired_server.patch.setattr(
+        work_registry, "local_work_backends_for", lambda _: {"test": TmuxBackend()}
+    )
+    wired_server.patch.setattr(main, "_run_registered_work_dispatcher", dispatcher)
+    async with main.lifespan(main.app):
+        await asyncio.wait_for(entered.wait(), 10)
+    assert retired_at_dispatcher_exit == [False]
+    assert wired_server.captured[0].retired
+    assert not hasattr(main.app.state, "inbox_admission_runtime")

@@ -11,6 +11,7 @@ import logging
 import os
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from cli_agent_orchestrator.services.delegation_snapshot import (
     SnapshotConflict,
     SnapshotUnavailable,
 )
+from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
 from cli_agent_orchestrator.services.work_attempt_credential import (
     WorkAttemptCredentials,
     create_attempt_credential_descriptor,
@@ -49,6 +51,10 @@ from cli_agent_orchestrator.services.work_service import WorkService
 from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
 logger = logging.getLogger(__name__)
+
+
+class _ResourcesUnavailable(Exception):
+    """No effect/intent was started; the planned order stays eligible."""
 
 
 class _SelectionChanged(Exception):
@@ -84,6 +90,7 @@ class _WorkEffectPort:
         attempt_revision=None,
         attempt_credential_fd=None,
         receiver_credential_fd=None,
+        resource_reservation=None,
     ):
         self._backend, self._restriction, self._guard, self._release = (
             backend,
@@ -99,6 +106,7 @@ class _WorkEffectPort:
         self._receiver_credential_fd = receiver_credential_fd
         self._expected_target = expected_target
         self._closed = False
+        self._resource_reservation = resource_reservation
         from cli_agent_orchestrator.backends.work_backend import WorkBackendView
 
         self._view = WorkBackendView(
@@ -131,6 +139,13 @@ class _WorkEffectPort:
                         setattr(self, attribute, None)
             finally:
                 self._release()
+
+    def _finish_resource(self):
+        # Capability closure precedes receipt writes; resource retirement does not.
+        reservation = self._resource_reservation
+        if reservation is not None:
+            reservation.finish()
+            self._resource_reservation = None
 
     def _before_effect(
         self, effect, terminal_id, session_name=None, window_name=None, file_path=None
@@ -216,6 +231,8 @@ class WorkAdmission:
         delivery_adapters=None,
         origins=None,
         workflow_origins=None,
+        resource_admission: DeliveryAdmission | None = None,
+        resource_clock=time.monotonic,
     ):
         if not isinstance(backends, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(backend, TerminalBackend)
@@ -235,6 +252,12 @@ class WorkAdmission:
                 or workflow_origins.repository is not repository
             ):
                 raise ValueError("managed workflow origin must share this work runtime")
+        if resource_admission is not None and not isinstance(resource_admission, DeliveryAdmission):
+            raise ValueError("trusted process resource admission required")
+        if not callable(resource_clock):
+            raise ValueError("resource clock required")
+        self._resource_admission = resource_admission
+        self._resource_clock = resource_clock
         self.repository = repository
         self.origins = origins
         self.workflow_origins = workflow_origins
@@ -1136,7 +1159,9 @@ class WorkAdmission:
             actor_id=binding.principal_id,
         )
 
-    def _eligible(self, connection, *, registered_only=False, selected_job_id=None):
+    def _eligible(
+        self, connection, *, registered_only=False, selected_job_id=None, resource_attempt_id=None
+    ):
         """Probe each queued candidate without retaining its authority/path locks.
 
         Retirement retains its job locks for the rest of the transaction. Every
@@ -1206,6 +1231,40 @@ class WorkAdmission:
                     retirements_by_job.setdefault(request["job_id"], []).append(request)
                 continue
             if binding is not None and executable and path_available:
+                owner = self._resource_admission
+                if (
+                    owner is not None
+                    and registered_only
+                    and binding.attempt_id != resource_attempt_id
+                ):
+                    # Do not let a busy receiver hide other eligible lanes. This
+                    # peek spends nothing; the winner still reserves off-lock.
+                    now = self._resource_clock()
+                    if not owner.snapshot(now=now).available_slots:
+                        continue
+                    try:
+                        target = self.deliveries._terminal_target(connection, binding)
+                        terminal_id = (
+                            target[0]
+                            if target
+                            else self.deliveries._terminal_identity(connection, binding)
+                        )
+                    except (WorkConflict, ContractConflict):
+                        # A stale/legacy target cannot hide independent receivers.
+                        # Unexpected storage failures still abort the whole pass.
+                        logger.debug(
+                            "Resource delivery target unavailable; leaving operation queued",
+                            extra={
+                                "attempt_id": binding.attempt_id,
+                                "generation": binding.generation,
+                            },
+                        )
+                        continue
+                    receiver = (
+                        terminal_id or f"work-attempt/{binding.attempt_id}/{binding.generation}"
+                    )
+                    if not owner.can_reserve(receiver, now=now):
+                        continue
                 eligible[binding.attempt_id] = binding
         jobs = set(retirements_by_job)
         if selected_job_id is not None:
@@ -1240,8 +1299,16 @@ class WorkAdmission:
     ):
         with self.repository.transaction() as connection:
             self.repository._verify(connection)
+            resource_options = {}
+            if self._resource_admission is not None:
+                # The exact preview already owns its lease. Revalidate its Work
+                # authority/target normally; do not deny it for its own charge.
+                resource_options["resource_attempt_id"] = preview.attempt_id
             eligible = self._eligible(
-                connection, registered_only=registered_only, selected_job_id=preview.job_id
+                connection,
+                registered_only=registered_only,
+                selected_job_id=preview.job_id,
+                **resource_options,
             )
             probed_binding = eligible.get(preview.attempt_id)
             if probed_binding is None:
@@ -1362,160 +1429,195 @@ class WorkAdmission:
                 receiver_credential_fd,
             )
 
+    def _reserve_delivery_resource(self, receiver, resources):
+        owner = self._resource_admission
+        if owner is None:
+            return None
+        reservation = owner.try_reserve(receiver, now=self._resource_clock()).reservation
+        if reservation is None:
+            raise _ResourcesUnavailable()
+        if not reservation.start():
+            reservation.cancel_before_start()
+            raise _ResourcesUnavailable()
+        resources.callback(reservation.finish)
+        return reservation
+
     def _prepare_dispatch(self, *, registered_only=False):
         """Commit the selected order and return its short-lived effect capability."""
+        if self._resource_admission is not None:
+            if not registered_only:
+                raise WorkConflict("resource-bound dispatch requires a registered delivery target")
+            if not self._resource_admission.snapshot(now=self._resource_clock()).available_slots:
+                return None  # Do not load PostgreSQL further under exhausted/unknown headroom.
         for _ in range(3):
             preview = self._preview(registered_only=registered_only)
             if preview is None:
                 return None
             self._preflight(preview.contract)  # No database lock during backend work.
-            try:
-                if registered_only:
-                    with self.repository.read_snapshot() as connection:
-                        preview_target = self.deliveries._terminal_target(connection, preview)
-                        preview_terminal_id = (
-                            preview_target[0]
-                            if preview_target is not None
-                            else self.deliveries._terminal_identity(connection, preview)
+            with ExitStack() as resources:
+                resource_reservation = None
+                try:
+                    if registered_only:
+                        with self.repository.read_snapshot() as connection:
+                            preview_target = self.deliveries._terminal_target(connection, preview)
+                            preview_terminal_id = (
+                                preview_target[0]
+                                if preview_target is not None
+                                else self.deliveries._terminal_identity(connection, preview)
+                            )
+                        resource_reservation = self._reserve_delivery_resource(
+                            preview_terminal_id
+                            or f"work-attempt/{preview.attempt_id}/{preview.generation}",
+                            resources,
                         )
-                    if preview_terminal_id is None:
-                        committed = self._commit_dispatch(
-                            preview,
-                            registered_only=True,
-                            expected_terminal_id=None,
-                            expected_terminal_target=preview_target,
-                        )
-                    else:
-                        with terminal_dispatch_lock(self.repository.target, preview_terminal_id):
+                        if preview_terminal_id is None:
                             committed = self._commit_dispatch(
                                 preview,
                                 registered_only=True,
-                                expected_terminal_id=preview_terminal_id,
+                                expected_terminal_id=None,
                                 expected_terminal_target=preview_target,
                             )
-                else:
-                    committed = self._commit_dispatch(preview, registered_only=False)
-            except _SelectionChanged:
-                continue
-            if committed is None:
-                return None
-            (
-                binding,
-                capacity,
-                paths,
-                sent,
-                target_identity,
-                credential_fd,
-                receiver_credential_fd,
-            ) = committed
-            attempt = sent["attempts"][-1]
+                        else:
+                            with terminal_dispatch_lock(
+                                self.repository.target, preview_terminal_id
+                            ):
+                                committed = self._commit_dispatch(
+                                    preview,
+                                    registered_only=True,
+                                    expected_terminal_id=preview_terminal_id,
+                                    expected_terminal_target=preview_target,
+                                )
+                    else:
+                        resource_reservation = self._reserve_delivery_resource(
+                            f"work-attempt/{preview.attempt_id}/{preview.generation}", resources
+                        )
+                        committed = self._commit_dispatch(preview, registered_only=False)
+                except _ResourcesUnavailable:
+                    return None
+                except _SelectionChanged:
+                    continue
+                if committed is None:
+                    return None
+                (
+                    binding,
+                    capacity,
+                    paths,
+                    sent,
+                    target_identity,
+                    credential_fd,
+                    receiver_credential_fd,
+                ) = committed
+                attempt = sent["attempts"][-1]
 
-            def check_effect_connection(
-                connection,
-                effect,
-                target_terminal_id,
-                session_name=None,
-                window_name=None,
-                file_path=None,
-            ):
-                self.repository._register_writer_effect(connection, writer_id=binding.attempt_id)
-                current = self.contracts._revalidate_order(
+                def check_effect_connection(
                     connection,
-                    binding.attempt_id,
-                    generation=binding.generation,
-                )
-                if current != binding:
-                    raise WorkConflict("admitted order changed before effect")
-                actual = connection.execute(
-                    "SELECT state,revision,terminal_id FROM work_attempts WHERE id=%s",
-                    (binding.attempt_id,),
-                ).fetchone()
-                if (actual["state"], actual["revision"]) != ("sent", attempt["revision"]):
-                    raise WorkConflict("dispatch fence changed before effect")
-                if effect == "execute_process":
-                    if (
-                        actual["terminal_id"] is not None
-                        or target_terminal_id is not None
-                        or session_name is not None
-                        or window_name is not None
-                        or file_path not in binding.contract.permissions.commands
-                    ):
-                        raise WorkConflict("process effect differs from its durable mapping")
-                else:
-                    self._check_terminal_effect_target(
-                        connection,
-                        attempt_id=binding.attempt_id,
-                        bound_terminal_id=attempt.get("terminal_id"),
-                        effect=effect,
-                        terminal_id=target_terminal_id,
-                        session_name=session_name,
-                        window_name=window_name,
-                        file_path=file_path,
+                    effect,
+                    target_terminal_id,
+                    session_name=None,
+                    window_name=None,
+                    file_path=None,
+                ):
+                    self.repository._register_writer_effect(
+                        connection, writer_id=binding.attempt_id
                     )
-                self.scheduler._checked(
-                    connection,
-                    capacity.id,
-                    generation=binding.generation,
-                    expected_revision=capacity.revision,
-                    expected_attempt_revision=attempt["revision"],
-                    active=True,
-                )
-                if paths is not None:
-                    self.reservations._checked(
+                    current = self.contracts._revalidate_order(
                         connection,
-                        paths.id,
+                        binding.attempt_id,
                         generation=binding.generation,
-                        expected_revision=paths.revision,
+                    )
+                    if current != binding:
+                        raise WorkConflict("admitted order changed before effect")
+                    actual = connection.execute(
+                        "SELECT state,revision,terminal_id FROM work_attempts WHERE id=%s",
+                        (binding.attempt_id,),
+                    ).fetchone()
+                    if (actual["state"], actual["revision"]) != ("sent", attempt["revision"]):
+                        raise WorkConflict("dispatch fence changed before effect")
+                    if effect == "execute_process":
+                        if (
+                            actual["terminal_id"] is not None
+                            or target_terminal_id is not None
+                            or session_name is not None
+                            or window_name is not None
+                            or file_path not in binding.contract.permissions.commands
+                        ):
+                            raise WorkConflict("process effect differs from its durable mapping")
+                    else:
+                        self._check_terminal_effect_target(
+                            connection,
+                            attempt_id=binding.attempt_id,
+                            bound_terminal_id=attempt.get("terminal_id"),
+                            effect=effect,
+                            terminal_id=target_terminal_id,
+                            session_name=session_name,
+                            window_name=window_name,
+                            file_path=file_path,
+                        )
+                    self.scheduler._checked(
+                        connection,
+                        capacity.id,
+                        generation=binding.generation,
+                        expected_revision=capacity.revision,
                         expected_attempt_revision=attempt["revision"],
                         active=True,
                     )
+                    if paths is not None:
+                        self.reservations._checked(
+                            connection,
+                            paths.id,
+                            generation=binding.generation,
+                            expected_revision=paths.revision,
+                            expected_attempt_revision=attempt["revision"],
+                            active=True,
+                        )
 
-            def before_effect(
-                effect, target_terminal_id, session_name=None, window_name=None, file_path=None
-            ):
-                # WorkService holds the writer effect through the adapter call.
-                # This wrapper gives ordinary backends a fresh transaction while
-                # the process backend may pass the same guard into its GO txn.
-                with self.repository.transaction() as connection:
-                    check_effect_connection(
-                        connection,
-                        effect,
-                        target_terminal_id,
-                        session_name,
-                        window_name,
-                        file_path,
-                    )
+                def before_effect(
+                    effect, target_terminal_id, session_name=None, window_name=None, file_path=None
+                ):
+                    # WorkService holds the writer effect through the adapter call.
+                    # This wrapper gives ordinary backends a fresh transaction while
+                    # the process backend may pass the same guard into its GO txn.
+                    with self.repository.transaction() as connection:
+                        check_effect_connection(
+                            connection,
+                            effect,
+                            target_terminal_id,
+                            session_name,
+                            window_name,
+                            file_path,
+                        )
 
-            def process_effect_in_transaction(connection, effect, command_token):
-                check_effect_connection(connection, effect, None, file_path=command_token)
+                def process_effect_in_transaction(connection, effect, command_token):
+                    check_effect_connection(connection, effect, None, file_path=command_token)
 
-            def release_writer():
-                # ``_send_committed`` / ``_send_committed_async`` registered the
-                # writer before they invoked this delivery adapter and release it
-                # in their own ``finally``.  Closing the port must not consume the
-                # same registry row first, or their release turns a delivered
-                # effect into an uncertain duplicate-cleanup failure.
-                return None
+                def release_writer():
+                    # ``_send_committed`` / ``_send_committed_async`` registered the
+                    # writer before they invoked this delivery adapter and release it
+                    # in their own ``finally``.  Closing the port must not consume the
+                    # same registry row first, or their release turns a delivered
+                    # effect into an uncertain duplicate-cleanup failure.
+                    return None
 
-            port = _WorkEffectPort(
-                self.backends[binding.contract.backend],
-                self._restriction(binding.contract),
-                before_effect,
-                release_writer,
-                attempt.get("terminal_id"),
-                expected_target=(
-                    (target_identity[1], target_identity[2])
-                    if target_identity is not None
-                    else None
-                ),
-                binding=binding,
-                guard_connection=process_effect_in_transaction,
-                attempt_revision=attempt["revision"],
-                attempt_credential_fd=credential_fd,
-                receiver_credential_fd=receiver_credential_fd,
-            )
-
-            return binding, port, sent
+                port = _WorkEffectPort(
+                    self.backends[binding.contract.backend],
+                    self._restriction(binding.contract),
+                    before_effect,
+                    release_writer,
+                    attempt.get("terminal_id"),
+                    expected_target=(
+                        (target_identity[1], target_identity[2])
+                        if target_identity is not None
+                        else None
+                    ),
+                    binding=binding,
+                    guard_connection=process_effect_in_transaction,
+                    attempt_revision=attempt["revision"],
+                    attempt_credential_fd=credential_fd,
+                    receiver_credential_fd=receiver_credential_fd,
+                    resource_reservation=resource_reservation,
+                )
+                resources.pop_all()  # Transfer the started lease to the effect owner.
+                return binding, port, sent
         return None
 
     def dispatch_next(self, send):
@@ -1538,11 +1640,17 @@ class WorkAdmission:
             finally:
                 port.close()
 
-        return WorkService(self.repository, origins=self.origins)._send_committed(
-            sent,
-            deliver,
-            actor_id=binding.principal_id,
-        )
+        try:
+            return WorkService(self.repository, origins=self.origins)._send_committed(
+                sent,
+                deliver,
+                actor_id=binding.principal_id,
+            )
+        finally:
+            try:
+                port.close()
+            finally:
+                port._finish_resource()
 
     def _abandon_preparation(self, worker) -> None:
         # Keep the worker itself as the cleanup owner. Creating a child task here
@@ -1557,13 +1665,13 @@ class WorkAdmission:
             prepared = worker.result()
         except asyncio.CancelledError:
             self._pending_abandonments.discard(worker)
-            logger.error("Cancelled dispatch preparation outcome is unavailable")
+            logger.error("Detached dispatch preparation outcome is unavailable")
             return
         except Exception:
             # A store failure leaves the committed intent sent, never queued.
             # Do not log exception bodies that a backend might populate with input.
             self._pending_abandonments.discard(worker)
-            logger.error("Cancelled dispatch preparation requires reconciliation")
+            logger.error("Detached dispatch preparation requires reconciliation")
             return
 
         if prepared is None:
@@ -1576,13 +1684,16 @@ class WorkAdmission:
         except Exception:
             # Keep the sent fence and still attempt DB reconciliation; closing a
             # capability cannot prove that a process stopped or release capacity.
-            logger.error("Could not close a cancelled dispatch preparation capability")
+            logger.error("Could not close a detached dispatch preparation capability")
 
         def reconcile():
-            return WorkService(self.repository, origins=self.origins)._reconcile(
-                sent,
-                actor_id=binding.principal_id,
-            )
+            try:
+                return WorkService(self.repository, origins=self.origins)._reconcile(
+                    sent,
+                    actor_id=binding.principal_id,
+                )
+            finally:
+                port._finish_resource()
 
         try:
             cleanup_context = contextvars.copy_context()
@@ -1593,7 +1704,7 @@ class WorkAdmission:
             )
         except Exception:
             self._pending_abandonments.discard(worker)
-            logger.error("Cancelled dispatch preparation requires reconciliation")
+            logger.error("Detached dispatch preparation requires reconciliation")
             return
 
         # Add the real executor Future before dropping the completed worker so a
@@ -1607,9 +1718,9 @@ class WorkAdmission:
         try:
             cleanup.result()
         except asyncio.CancelledError:
-            logger.error("Cancelled dispatch preparation reconciliation was cancelled")
+            logger.error("Detached dispatch preparation reconciliation was cancelled")
         except Exception:
-            logger.error("Cancelled dispatch preparation requires reconciliation")
+            logger.error("Detached dispatch preparation requires reconciliation")
 
     async def dispatch_next_async(self, send):
         """Prepare off-loop, deliver on the caller's loop, retain uncertain ownership.
@@ -1667,10 +1778,13 @@ class WorkAdmission:
             logger.error("Could not close an unstarted registered delivery capability")
 
         def reconcile():
-            return WorkService(self.repository, origins=self.origins)._reconcile(
-                sent,
-                actor_id=binding.principal_id,
-            )
+            try:
+                return WorkService(self.repository, origins=self.origins)._reconcile(
+                    sent,
+                    actor_id=binding.principal_id,
+                )
+            finally:
+                port._finish_resource()
 
         try:
             context = contextvars.copy_context()
@@ -1740,22 +1854,32 @@ class WorkAdmission:
             self._pending_abandonments.difference_update(owner for owner in owners if owner.done())
 
     async def _prepare_dispatch_async(self, *, registered_only=False):
-        worker = asyncio.create_task(
-            asyncio.to_thread(
+        async def prepare():
+            # An eager/custom factory must return its Task owner before any
+            # thread can reserve resources or commit the sent intent.
+            await asyncio.sleep(0)
+            return await asyncio.to_thread(
                 self._prepare_dispatch,
                 registered_only=registered_only,
             )
-        )
+
+        operation = prepare()
+        try:
+            worker = asyncio.create_task(operation)
+        except BaseException:
+            operation.close()
+            raise
         try:
             return await asyncio.shield(worker)
-        except asyncio.CancelledError:
+        except BaseException:
+            # Await-wrapper failure is no stronger retirement evidence than
+            # cancellation. Transfer the actual worker before attempting a join.
             self._abandon_preparation(worker)
-            # The first cancellation waits for cleanup. A further cancellation
-            # may release this caller while the registered worker/reconciliation
-            # remains owned; shutdown uses the default cancellation-resistant drain.
             try:
                 await self.wait_for_dispatch_cleanup(propagate_cancellation=True)
-            except asyncio.CancelledError:
+            except BaseException:
+                # The registered worker/reconciliation remains owned for the
+                # shutdown drain. Preserve the caller's original failure.
                 pass
             raise
 
@@ -1764,6 +1888,10 @@ class WorkAdmission:
 
         async def deliver():
             try:
+                if port._resource_reservation is not None:
+                    from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+                    return await run_owned_async(send(binding, port))
                 return await send(binding, port)
             finally:
                 port.close()
@@ -1776,7 +1904,10 @@ class WorkAdmission:
             )
         finally:
             # Also close if writer registration fails before ``deliver`` starts.
-            port.close()
+            try:
+                port.close()
+            finally:
+                port._finish_resource()
 
     async def _dispatch_async(self, send, *, registered_only=False):
         if not callable(send):

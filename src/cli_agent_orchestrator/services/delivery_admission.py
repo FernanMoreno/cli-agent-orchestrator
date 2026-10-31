@@ -251,6 +251,18 @@ class DeliveryAdmission:
             self._policy, self._observation, now=now, committed=committed, budget=budget
         )
 
+    def can_reserve(self, receiver: str, *, now: float) -> bool:
+        """Advisory eligibility only; an effect still needs try_reserve and start."""
+        validate_clock(now)
+        if not isinstance(receiver, str) or not receiver.strip():
+            raise ValueError("receiver must be a nonempty identity")
+        with self._guard:
+            return bool(
+                self._accepting
+                and receiver not in self._receivers
+                and self._current_decision(now).available_slots
+            )
+
     def try_reserve(self, receiver: str, *, now: float) -> AdmissionAttempt:
         validate_clock(now)
         if not isinstance(receiver, str) or not receiver.strip():

@@ -10,6 +10,7 @@ import hmac
 import json
 import re
 import secrets
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
@@ -185,6 +186,8 @@ class LaunchRuntime:
         *,
         backends: Mapping,
         delivery_adapters: Mapping,
+        resource_admission=None,
+        resource_clock=time.monotonic,
     ):
         if not isinstance(repository, WorkRepository):
             raise ValueError("verified work repository required")
@@ -201,6 +204,8 @@ class LaunchRuntime:
             backends=backends,
             delivery_adapters=delivery_adapters,
             origins=self.origins,
+            resource_admission=resource_admission,
+            resource_clock=resource_clock,
         )
         for backend in self._admission.backends.values():
             bind_origins = getattr(backend, "bind_work_origins", None)

@@ -67,6 +67,10 @@ class InboxAdmissionRuntime:
         monitor.set_on_change(inbox.notify_admission_changed)
 
     @property
+    def clock(self) -> Callable[[], float]:
+        return self._clock
+
+    @property
     def retired(self) -> bool:
         return self._retired
 
@@ -215,6 +219,8 @@ class InboxAdmissionRuntime:
                     max(settings["provider_init_timeout"], settings["mcp_request_timeout"])
                 )
             await self.inbox.drain(timeout_s=timeout)
+        if self.monitor.owner.snapshot(now=self._clock()).inflight:
+            raise AdmissionRuntimeUnavailable("physical delivery reservations have not retired")
         if not self.monitor.retired:
             raise AdmissionRuntimeUnavailable("physical admission monitor has not retired")
         self._retired = True

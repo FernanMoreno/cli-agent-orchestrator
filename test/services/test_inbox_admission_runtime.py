@@ -222,3 +222,23 @@ async def test_monitor_notifies_after_background_cycle():
         assert await asyncio.to_thread(signal.wait, 5)
     finally:
         await f.monitor.stop()
+
+
+@pytest.mark.asyncio
+async def test_runtime_cannot_retire_shared_resource_lease_still_owned_by_work():
+    from cli_agent_orchestrator.services.inbox_admission_runtime import AdmissionRuntimeUnavailable
+
+    value, f, _ = runtime()
+    await value.start()
+    warm(f)
+    lease = f.monitor.owner.try_reserve("work-physical", now=f.clock[0]).reservation
+    assert lease is not None and lease.start()
+    try:
+        with pytest.raises(AdmissionRuntimeUnavailable, match="physical delivery reservations"):
+            await value.stop()
+        assert not value.retired
+        assert f.monitor.owner.snapshot(now=f.clock[0]).inflight == 1
+    finally:
+        lease.finish()
+        await value.stop()
+    assert value.retired

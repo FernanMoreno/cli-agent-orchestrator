@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Coroutine, TypeVar
 
 _Result = TypeVar("_Result")
 
@@ -74,3 +74,43 @@ async def run_owned_blocking(
         # The concurrent Future is done on every normal/error/cancel path above.
         # shutdown(wait=True) joins the worker thread before adapter port cleanup.
         executor.shutdown(wait=True, cancel_futures=True)
+
+
+async def run_owned_async(operation: Coroutine[Any, Any, _Result]) -> _Result:
+    """Keep callback ownership through completion, preserving the first failure.
+
+    Cancelling a waiter does not revoke the admitted Work contract or prove its
+    physical callback retired. Deliveries retain their deadlines/effect guards.
+    """
+
+    async def invoke() -> _Result:
+        # Even an eager factory must return an owner before this callback starts.
+        await asyncio.sleep(0)
+        return await operation
+
+    wrapper = invoke()
+    try:
+        worker = asyncio.create_task(wrapper)
+    except BaseException:
+        wrapper.close()
+        operation.close()
+        raise
+    try:
+        return await asyncio.shield(worker)
+    except BaseException as failure:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except BaseException:
+                # A failed await wrapper is not proof the callback finished.
+                # Yield even when repeated wrapper failure has no suspension.
+                if not worker.done():
+                    try:
+                        await asyncio.sleep(0)
+                    except BaseException:
+                        pass
+        try:
+            worker.result()
+        except BaseException:
+            pass
+        raise failure

@@ -1,0 +1,191 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-31T00:44:21.423572+00:00",
+  "status": "PASS_WORK_COMPONENT_T010_OPEN",
+  "scope": "Shared local Work resource admission and physical handoff/cleanup; not remote Bridge integration or M1",
+  "base_head": "6ef3da5ac60cdbcf2efea4f0c6e96555ef45d267",
+  "candidate_source_stamp": "22b2b2ef6eb8320f6e0bc0eb4cfe175577c15b2d7f028aacd5f1bf73b3ef9780",
+  "tests": {
+    "total": 171,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 5,
+    "pytest_seconds": 498.31,
+    "controller_seconds": 513.337,
+    "selected_files": 12,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t010-work-boundary-green2/t010-work-boundary-green2/receipt.json",
+    "closure": {
+      "exit_code": 0,
+      "support_preserved": true,
+      "source_preserved": true,
+      "descriptor_closed": true
+    },
+    "by_test_class": {
+      "test.api.test_admission_lifespan": 7,
+      "test.api.test_work_dispatcher_lifespan": 13,
+      "test.api.test_work_launch_composition": 20,
+      "test.integration.test_work_dispatch": 21,
+      "test.services.test_delivery_admission": 25,
+      "test.services.test_inbox_admission_runtime": 14,
+      "test.services.test_work_blocking": 7,
+      "test.services.test_work_inbox": 10,
+      "test.services.test_work_launch_gateway": 4,
+      "test.services.test_work_launch_runtime": 32,
+      "test.services.test_work_owned_async": 4,
+      "test.services.test_work_resource_admission": 14
+    }
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t010-work-red2",
+      "exit_code": 1,
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 71.146,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-work-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 54,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 264.98,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-work-review-red2",
+      "exit_code": 1,
+      "cases": {
+        "total": 24,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 108.467,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-owned-handoff-red",
+      "exit_code": 2,
+      "cases": {
+        "total": 2,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 104.693,
+      "source_preserved": true,
+      "interruption": "SIGINT only to verified owned pytest: fault-injection fixture cleanup awaited a captured Task whose closed coroutine had removed its Event waiter; no historical jobs touched. Corrected fixture cancels/joins only captured pure tasks; subsequent four-case RED preserved."
+    },
+    {
+      "phase": "t010-owned-handoff-red2",
+      "exit_code": 1,
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 55.267,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-work-review-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 89,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 290.901,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-work-boundary-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 5,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 83.965,
+      "source_preserved": true
+    }
+  ],
+  "validated_source_sha256": {
+    "src/cli_agent_orchestrator/services/work_admission.py": "55387e8c2b371b1a093cf916fc253e85de05fb45011922ddb6e6d43dba5890ce",
+    "src/cli_agent_orchestrator/services/work_blocking.py": "42fa6d4aac3f0190023f61db7e667e1f681e05e107381551cc2d098454313b7e",
+    "src/cli_agent_orchestrator/services/work_launch_runtime.py": "62fd04f3e5374c97cb457421c81e4477e21e8598febbc9887e114292346493a6",
+    "src/cli_agent_orchestrator/services/work_launch_gateway.py": "452a2860f4330870a275261b6e3a104710f0ff058c7709f1ba98bb8fa1c2e704",
+    "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": "85a2ac8f9da7eb0e152389aa4e897ab29f4a55e2fd5139d92ba036a3a1825d76",
+    "src/cli_agent_orchestrator/services/delivery_admission.py": "4ea40ad608fdf54b97f6e9897d8b3b10cea7cf814ec5fbb0dc6ac202041d125f",
+    "src/cli_agent_orchestrator/api/main.py": "01fbe3c390c13c6ad19d424af39134f5487c77c7352017c05ab3d5b2a69e3cec",
+    "test/services/test_work_resource_admission.py": "e1218e5e557cb0c6aeeaa51933722abe16d78f0ca473e48df8f87652b5f92772",
+    "test/services/test_work_owned_async.py": "a7bf64278a3e60a3a27bcc23e95153edb035370018d2a5bd2ab5008b12f86141",
+    "test/services/test_inbox_admission_runtime.py": "876e23adf1d13cf8ff181bf8cceab50a85fd7595574a9e2fe0eb6ddfd1ab8b47",
+    "test/api/test_admission_lifespan.py": "2ae4accf0b5bc79494c24d619c43e73ac026126aa297fbb8bfc9ced29914e5db",
+    "test/api/test_work_dispatcher_lifespan.py": "1d2ff6049b27f69d2dff379b648c21f626eddfb039a4195b646fd77f90c2fc60"
+  },
+  "checks": {
+    "mypy": "PASS6source_modules_default_untyped_body_checking_not_global_types_acceptance",
+    "black_isort": "PASS12changed_source_test_files",
+    "composition": {
+      "files": 434,
+      "dependencies": 1924,
+      "kept": 5,
+      "broken": 0,
+      "verdict": "PASS"
+    },
+    "independent_review": "Codex read-only third round GO scoped Work checkpoint; no tests run by reviewer"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "bound_behavior": [
+    "same API ledger and monotonic clock injected via gateway and LaunchRuntime; no budget per adapter",
+    "reserve/start before terminal lock and sent CAS; refusal preserves planned attempt and retained managed inbox row",
+    "busy receivers and known stale/legacy target conflicts do not hide independent candidates; unexpected store failure propagates",
+    "advisory can_reserve never spends capacity; commit exempts only its already-reserved attempt and repeats Work authority/target checks",
+    "resource-bound ad hoc callback dispatch rejects before preview; unbound compatibility preserved",
+    "capability/FD close is separate from resource finish after delivery/receipt/reconcile; callback ownership survives cancellation and await-wrapper failure",
+    "physical preparation deferred until Task owner exists; any await failure transfers actual worker to abandonment and cleanup",
+    "API joins Work dispatcher/abandonments before resource runtime; retirement rejects remaining shared leases"
+  ],
+  "evidence_limits": [
+    "actual PostgreSQL and owned blocking threads with controlled resource observations/protected test backend; no model/provider inference or live deployment acceptance",
+    "readonly metadata lookup remains per candidate in the existing O(N) Work scan/transaction; no production cost/lock-latency acceptance; zero global headroom skips Work SQL",
+    "ordinary Bridge producer/input admission, epoch and physical drain still pending; no Work remote placement expansion",
+    "T011 physical/fixture integration and T019 M1 acceptance remain open; no M2/M3/global/NFR/SDK/UI acceptance"
+  ],
+  "knowledge": {
+    "operation_id": "save-20261031-work-admission-physical-handoff",
+    "status": "COMPLETE",
+    "strict_lint_issues": 0,
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md",
+      "wiki/hot.md"
+    ]
+  },
+  "graphify": {
+    "before": "read-only baseline45nodes295incidentlinks verified against source",
+    "refresh_decision": "shared generated graph excluded to preserve foreign work; current source dependencies verified by Import Linter; no refresh overwriting foreign data"
+  }
+}

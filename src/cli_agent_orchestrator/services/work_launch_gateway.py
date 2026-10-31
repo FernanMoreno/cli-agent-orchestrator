@@ -7,6 +7,7 @@ content into ``LaunchIntent`` and returns the receipt from that exact admission.
 """
 
 import os
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -291,7 +292,11 @@ class DurableLaunchGateway:
 
 
 def build_durable_launch_gateway(
-    repository: WorkRepository, *, backends: Mapping[str, TerminalBackend]
+    repository: WorkRepository,
+    *,
+    backends: Mapping[str, TerminalBackend],
+    resource_admission=None,
+    resource_clock=time.monotonic,
 ) -> DurableLaunchGateway:
     """Compose trusted root launches and private managed child deliveries."""
     if not isinstance(repository, WorkRepository):
@@ -315,5 +320,7 @@ def build_durable_launch_gateway(
         repository,
         backends=backends,
         delivery_adapters=delivery_adapters,
+        resource_admission=resource_admission,
+        resource_clock=resource_clock,
     )
     return DurableLaunchGateway(_ComposedLaunchRuntimeProvider(runtime))

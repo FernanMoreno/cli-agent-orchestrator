@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Implementation in progress — componentes T001–T008 validados; integración y aceptación M1/M2/M3 pendientes.
+**Status**: Implementation in progress — componentes T001–T009 validados; integración y aceptación M1/M2/M3 pendientes.
 
 **Input**: Sustituir las cuatro entregas simultáneas fijas por admisión según recursos, presión de PostgreSQL y capacidad de cada nodo, conservando el orden por receptor. Cada máquina necesita límites; la red debe sumar nodos y repartir trabajo sin un número global fijo de agentes.
 

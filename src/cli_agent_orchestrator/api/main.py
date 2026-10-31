@@ -1931,8 +1931,14 @@ async def lifespan(app: FastAPI):
             build_durable_launch_gateway,
         )
 
+        resource_options = {}
+        if admission_runtime is not None:
+            resource_options = {
+                "resource_admission": admission_runtime.monitor.owner,
+                "resource_clock": admission_runtime.clock,
+            }
         app.state.durable_launch_gateway = build_durable_launch_gateway(
-            work_repository, backends=work_backends
+            work_repository, backends=work_backends, **resource_options
         )
         owned_work_runtime["durable_launch_gateway"] = app.state.durable_launch_gateway
         try:
@@ -2041,6 +2047,9 @@ async def lifespan(app: FastAPI):
             admission_runtime.close_admission()
         else:
             inbox_service.stop_accepting()
+        if work_dispatcher_task is not None:
+            await _stop_registered_work_dispatcher(work_dispatcher_task)
+
         # Retire physical admission before releasing its process identity.
         await retire_admission_runtime()
         if local_peer_registered:
@@ -2115,9 +2124,6 @@ async def lifespan(app: FastAPI):
             await inbox_reconcile_task
         except asyncio.CancelledError:
             pass
-
-        if work_dispatcher_task is not None:
-            await _stop_registered_work_dispatcher(work_dispatcher_task)
 
         try:
             await inbox_service.drain(timeout_s=inbox_shutdown_drain_timeout_s())

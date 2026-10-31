@@ -355,6 +355,9 @@ async def test_abandon_registered_handoff_closes_and_joins_reconciliation(monkey
         def close(self):
             port_closed.set()
 
+        def _finish_resource(self):
+            assert reconcile_finished.is_set()
+
     class FakeWorkService:
         def __init__(self, actual_repository, *, origins):
             assert actual_repository is repository
@@ -470,6 +473,10 @@ async def test_cancelled_preparation_retains_worker_if_cleanup_task_creation_fai
             assert worker_finished.is_set()
             port_closed.set()
 
+        def _finish_resource(self):
+            assert worker_finished.is_set()
+            assert reconciled.is_set()
+
     port = Port()
     handoff = (handoff[0], port, handoff[2])
 
@@ -516,7 +523,7 @@ async def test_cancelled_preparation_retains_worker_if_cleanup_task_creation_fai
             task = asyncio.tasks.Task(coroutine, loop=actual_loop)
         else:
             task = asyncio.tasks.Task(coroutine, loop=actual_loop, context=context)
-        if name == "to_thread":
+        if name in {"prepare", "to_thread"}:
             created_workers.append(task)
         return task
 
