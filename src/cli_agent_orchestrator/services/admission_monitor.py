@@ -113,8 +113,8 @@ class _Recovery:
 class AdmissionMonitor:
     """A persistent probe owner; no provider calls, per-message I/O or node claims.
 
-    Construction is trusted server wiring. The local storage supplier returns
-    stage capacity after external/retiring use, before this ledger's own leases.
+    Construction is trusted server wiring. An optional local storage supplier
+    adds a separate domain after external/retiring use, before this ledger's leases.
     Sampling never replaces the PG sampler, including after an uncertain open.
     """
 
@@ -126,7 +126,7 @@ class AdmissionMonitor:
         bootstrap: ResourceBootstrap,
         postgres: PostgresPressureSampler,
         scope_id: str,
-        local_storage_capacity: Callable[[], int | None],
+        local_storage_capacity: Callable[[], int | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         resource_factory: Callable[[VerifiedResourceAttestation], ResourceSampler] | None = None,
         authority_state: AuthorityMutationState | None = None,
@@ -315,9 +315,13 @@ class AdmissionMonitor:
         if not self._postgres.configure(configuration.postgres):
             return self._invalidate(generation, "probe_busy")
         pressure = self._postgres.sample().observation
-        local_slots = self._local_storage_capacity()
-        # StorageObservation validates strict finite integer units before use.
-        local = StorageObservation(self._clock(), local_slots)
+        # An absent supplier adds no local domain. A configured supplier
+        # returning None remains unknown and must still close admission.
+        local = (
+            pressure
+            if self._local_storage_capacity is None
+            else StorageObservation(self._clock(), self._local_storage_capacity())
+        )
         slots = (
             min(pressure.available_slots, local.available_slots)
             if pressure.available_slots is not None and local.available_slots is not None

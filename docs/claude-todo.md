@@ -543,3 +543,6 @@ Spec041 T018, checkpoint transversal Work/workers/fork (2026-10-31): integració
 
 
 Spec041 T018, Inbox/descubrimiento (2026-10-31): tres entradas con huella de dos sesiones y scanner separado en el mismo ledger, sin receptor ficticio. Retiro protegido contra copias; PG real verifica5→4 préstamos antes de join y PG1 verifica cero sesiones/checkouts. Final181/181PASS y composición5/0. Es evidencia de infraestructura común; T018/M1/M2/M3/SDK/UI y aceptación nativa/global siguen separados. [Recibo](../specs/041-resource-aware-network-admission/validation-t018-inbox-discovery.json).
+
+
+Spec041 T018, selección/INPUT/dominios (2026-10-31): selección Work con reservas SQL propias90PASS; Bridge preflight, capability exacto de uso único y frontera real de transporte42PASS. Monitor/factoría ya no usan auditpool4 como techo global:95PASS más3negativos reforzados (subconjunto). Presupuestos simulados5/20/40 con dos sesiones por entrega; no aceptación física de agentes. Composición5/0 y mismoPG0/0/0; errores intermedios conservados. T018 permanece abierto por control/bootstrap/otras entradas SQL/cierre/diagnóstico; M1/M2/M3/SDK/UI y gates nativos/globales siguen separados. [Recibo](../specs/041-resource-aware-network-admission/validation-t018-selection-input-domains.json).

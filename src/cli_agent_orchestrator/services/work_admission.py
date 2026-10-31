@@ -10,8 +10,8 @@ import contextvars
 import logging
 import os
 import time
-from collections.abc import Mapping
-from contextlib import ExitStack
+from collections.abc import Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -1460,6 +1460,26 @@ class WorkAdmission:
         resources.callback(reservation.finish_after_storage)
         return reservation
 
+    @contextmanager
+    def _dispatch_storage_control(self) -> Iterator[None]:
+        """Own selection SQL independently of the later delivery reservation."""
+        owner = self._resource_admission
+        if owner is None:
+            yield
+            return
+        reservation = owner.try_reserve_storage(now=self._resource_clock()).reservation
+        if reservation is None:
+            raise _ResourcesUnavailable()
+        if not reservation.start():
+            reservation.cancel_before_start()
+            raise _ResourcesUnavailable()
+        try:
+            with physical_storage_scope(reservation, clock=self._resource_clock):
+                yield
+                check_storage_admission()
+        finally:
+            reservation.finish_after_storage()
+
     def _prepare_dispatch(self, *, registered_only=False):
         """Commit the selected order and return its short-lived effect capability."""
         if self._resource_admission is not None:
@@ -1468,7 +1488,11 @@ class WorkAdmission:
             if not self._resource_admission.snapshot(now=self._resource_clock()).available_slots:
                 return None  # Do not load PostgreSQL further under exhausted/unknown headroom.
         for _ in range(3):
-            preview = self._preview(registered_only=registered_only)
+            try:
+                with self._dispatch_storage_control():
+                    preview = self._preview(registered_only=registered_only)
+            except _ResourcesUnavailable:
+                return None
             if preview is None:
                 return None
             self._preflight(preview.contract)  # No database lock during backend work.
@@ -1478,7 +1502,10 @@ class WorkAdmission:
                 resource_reservation = None
                 try:
                     if registered_only:
-                        with self.repository.read_snapshot() as connection:
+                        with (
+                            self._dispatch_storage_control(),
+                            self.repository.read_snapshot() as connection,
+                        ):
                             preview_target = self.deliveries._terminal_target(connection, preview)
                             preview_terminal_id = (
                                 preview_target[0]

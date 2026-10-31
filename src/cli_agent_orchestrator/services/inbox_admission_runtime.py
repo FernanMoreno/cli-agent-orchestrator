@@ -272,10 +272,6 @@ def runtime_from_environment(
 
     if not is_auth_enabled():
         raise ValueError("resource admission requires configured operator authentication")
-    from cli_agent_orchestrator.services.legacy_memory_audit_repository import (
-        _legacy_memory_audit_manager,
-    )
-
     owner = DeliveryAdmission(AdmissionPolicy())
     bootstrap = bootstrap_factory() if bootstrap_factory is not None else ResourceBootstrap()
     monitor = AdmissionMonitor(
@@ -284,7 +280,6 @@ def runtime_from_environment(
         bootstrap=bootstrap,
         postgres=_PROCESS_PRESSURE,
         scope_id=f"{uuid4()}:{path}",
-        local_storage_capacity=_legacy_memory_audit_manager().admission_slots,
         authority_state=_PROCESS_AUTHORITY,
     )
     return InboxAdmissionRuntime(inbox, monitor=monitor, bootstrap=bootstrap)

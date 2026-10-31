@@ -242,3 +242,56 @@ async def test_runtime_cannot_retire_shared_resource_lease_still_owned_by_work()
         lease.finish()
         await value.stop()
     assert value.retired
+
+
+@pytest.mark.parametrize("deliveries", [5, 20, 40])
+def test_runtime_factory_does_not_use_audit_pool_as_global_delivery_capacity(
+    deliveries, monkeypatch, tmp_path
+):
+    api = importlib.import_module("cli_agent_orchestrator.services.inbox_admission_runtime")
+    audit = importlib.import_module(
+        "cli_agent_orchestrator.services.legacy_memory_audit_repository"
+    )
+    auth = importlib.import_module("cli_agent_orchestrator.security.auth")
+    f = fixture()
+    slots = 2 * deliveries
+    f.repository.latest = replace(
+        f.record, claims=replace(f.record.claims, storage_budget_slots=slots)
+    )
+    f.postgres.slots = slots
+    calls = []
+    pool = SimpleNamespace(admission_slots=lambda: 4)
+
+    def audit_manager():
+        calls.append("audit domain queried")
+        return pool
+
+    create_monitor = api.AdmissionMonitor
+
+    def monitor(owner, **kwargs):
+        return create_monitor(owner, **kwargs, clock=lambda: f.clock[0], resource_factory=f.factory)
+
+    monkeypatch.setenv("CAO_ADMISSION_POLICY_FILE", str(tmp_path / "operator.json"))
+    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr(audit, "_legacy_memory_audit_manager", audit_manager)
+    monkeypatch.setattr(api, "read_private_operator_policy", lambda path: f.policy)
+    monkeypatch.setattr(api, "_PROCESS_PRESSURE", f.postgres)
+    monkeypatch.setattr(api, "AdmissionMonitor", monitor)
+    value = api.runtime_from_environment(InboxService(), bootstrap_factory=lambda: f.bootstrap)
+    assert value is not None
+    assert value.bootstrap is f.bootstrap
+    f.monitor = value.monitor
+    f.owner = value.monitor.owner
+    leases = []
+    try:
+        warm(f)
+        for index in range(deliveries):
+            lease = f.owner.try_reserve(str(index), now=f.clock[0], storage_slots=2).reservation
+            assert lease is not None
+            leases.append(lease)
+        assert calls == []
+        assert f.owner.snapshot(now=f.clock[0]).delivery_inflight == deliveries
+        assert f.owner.try_reserve("excess", now=f.clock[0], storage_slots=2).reservation is None
+    finally:
+        for lease in leases:
+            assert lease.cancel_before_start()

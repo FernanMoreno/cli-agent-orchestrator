@@ -25,8 +25,9 @@ import re
 import signal
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, cast
 
 import websockets
@@ -72,16 +73,18 @@ class ChannelRefused(Exception):
     """The server refused this runtime (token or protocol version). Retrying cannot help."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class _AdmittedInput:
     bridge: "Bridge"
     command: Command
     reservation: DeliveryReservation
+    effect_entered: Event = field(default_factory=Event)
 
 
 @dataclass
 class _InputLifetime:
     reservation: DeliveryReservation | None = None
+    admitted_input: _AdmittedInput | None = None
     claimed: bool = False
     settled: bool = False
 
@@ -138,6 +141,7 @@ class Bridge:
         # One trusted process owner, retained across channel epochs/reconnects.
         self._resource_admission = resource_admission
         self._resource_clock = resource_clock
+        self._admitted_inputs: set[_AdmittedInput] = set()
         self._resource_retirement: Callable[[], bool] | None = None
 
     def admit_epoch(self, epoch: int) -> None:
@@ -239,12 +243,14 @@ class Bridge:
             else:
                 self._terminal_locks[terminal_id] = (lock, users - 1)
 
-    async def _owned_store_call(self, lifetime, function, *args, **kwargs):
+    async def _owned_store_call(self, lifetime, function, *args, _start_input=False, **kwargs):
         # Cancellation never detaches a physical journal writer from its owner.
         from cli_agent_orchestrator.services.work_blocking import run_owned_async
 
         def invoke():
             reservation = lifetime.reservation
+            if _start_input and reservation is not None and not reservation.start():
+                raise _resource_refusal()
             owner = (
                 reservation if reservation is not None and reservation.state == "started" else None
             )
@@ -255,8 +261,10 @@ class Bridge:
 
         return await run_owned_async(asyncio.to_thread(invoke))
 
-    @staticmethod
-    def _retire_input(lifetime: _InputLifetime) -> None:
+    def _retire_input(self, lifetime: _InputLifetime) -> None:
+        if lifetime.admitted_input is not None:
+            self._admitted_inputs.discard(lifetime.admitted_input)
+            lifetime.admitted_input = None
         reservation = lifetime.reservation
         if reservation is not None:
             # Every physical input/journal worker is joined before this handoff.
@@ -337,12 +345,15 @@ class Bridge:
                 if input_reservation is None:
                     raise _resource_refusal()
                 admitted_input = _AdmittedInput(self, command, input_reservation)
+                lifetime.admitted_input = admitted_input
+                self._admitted_inputs.add(admitted_input)
             # Cancellation/reset holds its own dispatch lock in the service.
             async with self._terminal_turn(command.terminal_id or command.op_id):
                 if not await self._owned_store_call(
                     lifetime,
                     self.store.effect_is_current,
                     command.op_id,
+                    _start_input=True,
                     connection_epoch=command.connection_epoch,
                 ):
                     raise ValueError("Remote effect authority changed before execution")
@@ -354,7 +365,15 @@ class Bridge:
 
                 with ordinary_remote_backend_scope(
                     OrdinaryRemoteEffectFence(
-                        get_backend(), self.store, command.op_id, command.connection_epoch
+                        get_backend(),
+                        self.store,
+                        command.op_id,
+                        command.connection_epoch,
+                        on_input_effect=(
+                            admitted_input.effect_entered.set
+                            if admitted_input is not None
+                            else None
+                        ),
                     )
                 ):
                     if admitted_input is None:
@@ -380,10 +399,17 @@ class Bridge:
                 and input_reservation is not None
                 and input_reservation.state == "started"
             ):
+                effect_entered = (
+                    admitted_input is not None and admitted_input.effect_entered.is_set()
+                )
                 exc = TerminalInputBlockedError(
-                    "Input storage outcome requires reconciliation",
-                    action="reconcile",
-                    delivery_may_have_occurred=True,
+                    (
+                        "Input storage outcome requires reconciliation"
+                        if effect_entered
+                        else "Input storage resources are unavailable before execution"
+                    ),
+                    action="reconcile" if effect_entered else "inspect",
+                    delivery_may_have_occurred=effect_entered,
                 )
             kind, detail = encode_error(exc)
             result = Result(
@@ -419,9 +445,13 @@ class Bridge:
                 type(_admitted_input) is not _AdmittedInput
                 or _admitted_input.bridge is not self
                 or _admitted_input.command is not command
-                or _admitted_input.reservation.state != "reserved"
+                or _admitted_input.reservation.state != "started"
+                or _admitted_input not in self._admitted_inputs
             ):
                 raise _resource_refusal()
+            # Consume exact authority before the first await. The physical
+            # reservation remains owned by handle through journal completion.
+            self._admitted_inputs.remove(_admitted_input)
         # Imported here: the provider stack is only needed once work arrives.
         from cli_agent_orchestrator.clients.database import get_terminal_metadata
         from cli_agent_orchestrator.models.inbox import OrchestrationType
@@ -508,9 +538,28 @@ class Bridge:
         from cli_agent_orchestrator.services.work_terminal import terminal_dispatch_lock
 
         # An authenticated transport is not authority to act on native Work.
-        terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
-        metadata = await asyncio.to_thread(get_terminal_metadata, terminal_id)
-        launch = await asyncio.to_thread(self.store.get, payload.get("_launch_op_id", ""))
+        if _admitted_input is None:
+            terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
+            metadata = await asyncio.to_thread(get_terminal_metadata, terminal_id)
+            launch = await asyncio.to_thread(self.store.get, payload.get("_launch_op_id", ""))
+        else:
+            from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
+            def preflight():
+                with physical_storage_scope(
+                    _admitted_input.reservation, clock=self._resource_clock
+                ):
+                    try:
+                        terminal_service.ensure_terminal_is_not_work_owned(terminal_id)
+                        metadata = get_terminal_metadata(terminal_id)
+                        launch = self.store.get(payload.get("_launch_op_id", ""))
+                        return metadata, launch
+                    finally:
+                        # Service wrappers can replace the original SQL error.
+                        # Preserve a sticky denial on both success and failure.
+                        check_storage_admission()
+
+            metadata, launch = await run_owned_blocking(preflight)
         if (
             (metadata is None and command.type != CommandType.DELETE)
             or (
@@ -567,8 +616,6 @@ class Bridge:
 
             def send_input():
                 lease = _admitted_input.reservation if _admitted_input is not None else None
-                if lease is not None and not lease.start():
-                    raise _resource_refusal()
                 with physical_storage_scope(lease, clock=self._resource_clock):
                     return guarded(
                         terminal_service.send_input,

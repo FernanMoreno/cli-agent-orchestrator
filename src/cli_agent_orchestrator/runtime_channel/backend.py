@@ -1,13 +1,19 @@
 """Ordinary remote native effects require the current durable dispatch owner."""
 
+from collections.abc import Callable
+
 from cli_agent_orchestrator.backends.base import UnsupportedWorkEnforcement
+from cli_agent_orchestrator.clients.storage_admission import check_storage_admission
 
 
 class OrdinaryRemoteEffectFence:
     """A private bridge adapter; provides no Work process enforcement."""
 
-    def __init__(self, native, store, op_id, epoch):
+    def __init__(
+        self, native, store, op_id, epoch, *, on_input_effect: Callable[[], None] | None = None
+    ):
         self._native, self._store, self._op_id, self._epoch = native, store, op_id, epoch
+        self._on_input_effect = on_input_effect
 
     def preflight_work(self, contract):
         raise UnsupportedWorkEnforcement("RemoteRuntime")
@@ -41,6 +47,11 @@ class OrdinaryRemoteEffectFence:
                 "has_session",
             }:
                 self._before_effect()
+            if name == "send_keys" and self._on_input_effect is not None:
+                # The advisory lock, service preflight and durable authority
+                # fence have all succeeded. Entering native transport may paste.
+                check_storage_admission()
+                self._on_input_effect()
             return value(*args, **kwargs)
 
         return fenced

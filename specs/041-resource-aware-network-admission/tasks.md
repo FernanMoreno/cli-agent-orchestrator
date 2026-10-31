@@ -96,3 +96,8 @@ T018 checkpoint Work/workers/fork (2026-10-31): huella Work de dos sesiones con 
 
 
 T018 checkpoint Inbox/descubrimiento (2026-10-31): StorageReservation comparte ledger sin receptor ni coste de entrega RAM/CPU; snapshot separa operaciones y entregas. La identidad exacta se comprueba antes de modificar retiros. Las tres entradas Inbox reservan dos sesiones y el cursor una: prueba PG real5→4 préstamos antes de join; PG1 prueba cero SessionLocal/checkouts y filas PENDING. Final181/181PASS, sin errores ni omisiones; primitivas176 y wiring138PASS previos se solapan. Formato7/tipos2/composición439/1951/5KEPT/0BROKEN y mismoPG0/0/0. [Recibo](validation-t018-inbox-discovery.json), [composición](composition-t018-inbox-discovery.md). T018 sigue abierto por control SQL/otras entradas, shutdown, monitor y diagnóstico; T019/M1, M2/M3, SDK/UI y gates globales no se aceptan aquí.
+
+
+Spec041 T018, selección/INPUT/dominios (2026-10-31): selección Work con reservas SQL propias90PASS; Bridge preflight, capability exacto de uso único y frontera real de transporte42PASS. Monitor/factoría ya no usan auditpool4 como techo global:95PASS más3negativos reforzados (subconjunto). Presupuestos simulados5/20/40 con dos sesiones por entrega; no aceptación física de agentes. Composición5/0 y mismoPG0/0/0; errores intermedios conservados. T018 permanece abierto por control/bootstrap/otras entradas SQL/cierre/diagnóstico; M1/M2/M3/SDK/UI y gates nativos/globales siguen separados. [Recibo](validation-t018-selection-input-domains.json).
+
+No se marca T018/T021 ni otro gate pendiente como terminado por este componente.

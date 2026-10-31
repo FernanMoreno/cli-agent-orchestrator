@@ -595,3 +595,220 @@ async def test_input_two_session_requirement_denies_before_turn_or_worker(journa
     assert result.error_detail["delivery_may_have_occurred"] is False
     assert owner.snapshot(now=10.0).inflight == 0
     bridge.execute.assert_not_awaited()
+
+
+def physical_input_command(launched):
+    placement = remote.placement(launched.id)
+    return input_command(
+        terminal_id=launched.id,
+        payload={
+            "message": "preflight storage ownership",
+            "task_delivery": True,
+            "frozen_memory": "",
+            "_launch_op_id": "launch",
+            "_session_incarnation_id": placement["session_incarnation_id"],
+        },
+    )
+
+
+@pytest.mark.parametrize("phase", ["effect_is_current", "ensure_terminal_is_not_work_owned", "get"])
+@pytest.mark.asyncio
+async def test_input_preflight_owns_actual_sql_before_send(pair, monkeypatch, phase):
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    bridge, owner, launched, journal, local, native = await paired(pair, 1)
+    command = physical_input_command(launched)
+    target = terminal_service if phase == "ensure_terminal_is_not_work_owned" else journal
+    original = getattr(target, phase)
+    observed = []
+
+    def query(*args, **kwargs):
+        snapshot = owner.snapshot(now=10.0)
+        assert snapshot.started == 1
+        with connect(journal.target, readonly=True) as connection:
+            assert connection.execute("SELECT 42").fetchone()[0] == 42
+            assert owner.snapshot(now=10.0).storage_connection_loans >= 1
+        observed.append(phase)
+        return original(*args, **kwargs)
+
+    writes = native.send_keys.call_count
+    with monkeypatch.context() as patch:
+        patch.setattr(target, phase, query)
+        with local():
+            await bridge.handle(command)
+    assert observed
+    assert bridge._send.call_args.args[0].ok
+    assert native.send_keys.call_count == writes + 1
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert journal.get(command.op_id)["state"] == "settled"
+
+
+@pytest.mark.asyncio
+async def test_input_preflight_checkout_denial_has_no_effect_and_replays(pair, monkeypatch):
+    from cli_agent_orchestrator.services.delivery_admission import DeliveryReservation
+
+    bridge, owner, launched, journal, local, native = await paired(pair, 1)
+    command = physical_input_command(launched)
+    entering = Event()
+    original_guard = terminal_service.ensure_terminal_is_not_work_owned
+    original_checkout = DeliveryReservation.try_acquire_storage_connection
+    denied = []
+    queries = []
+
+    def query(*args, **kwargs):
+        queries.append(True)
+        if len(queries) == 1:
+            entering.set()
+        try:
+            return original_guard(*args, **kwargs)
+        finally:
+            entering.clear()
+
+    def checkout(lease, *args, **kwargs):
+        if lease._owner is owner and entering.is_set():
+            denied.append(True)
+            return None
+        return original_checkout(lease, *args, **kwargs)
+
+    writes = native.send_keys.call_count
+    with monkeypatch.context() as patch:
+        patch.setattr(terminal_service, "ensure_terminal_is_not_work_owned", query)
+        patch.setattr(DeliveryReservation, "try_acquire_storage_connection", checkout)
+        with local():
+            await bridge.handle(command)
+    result = bridge._send.call_args.args[0]
+    assert denied
+    assert not result.ok and result.error_kind == "input_blocked"
+    assert result.error_detail["delivery_may_have_occurred"] is False
+    assert result.error_detail["action"] == "inspect"
+    assert native.send_keys.call_count == writes
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert journal.get(command.op_id)["state"] == "settled"
+    with local():
+        await bridge.handle(command)
+    assert bridge._send.call_args.args[0] == result
+    assert native.send_keys.call_count == writes
+
+
+@pytest.mark.asyncio
+async def test_input_preflight_cancellation_joins_real_reader(pair, monkeypatch):
+    bridge, owner, launched, journal, local, native = await paired(pair, 1)
+    command = physical_input_command(launched)
+    entered, release = Event(), Event()
+    original = terminal_service.ensure_terminal_is_not_work_owned
+
+    def query(*args, **kwargs):
+        value = original(*args, **kwargs)
+        entered.set()
+        assert release.wait(15), "preflight reader was not released"
+        return value
+
+    monkeypatch.setattr(terminal_service, "ensure_terminal_is_not_work_owned", query)
+    writes = native.send_keys.call_count
+    bridge._send.reset_mock()
+
+    async def deliver():
+        with local():
+            await bridge.handle(command)
+
+    worker = asyncio.create_task(deliver())
+    try:
+        assert await asyncio.to_thread(entered.wait, 15)
+        assert owner.snapshot(now=10.0).started == 1
+        worker.cancel()
+        await asyncio.sleep(0)
+        worker.cancel()
+        await asyncio.sleep(0)
+        assert not worker.done()
+        assert owner.snapshot(now=10.0).started == 1
+        bridge._send.assert_not_awaited()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(worker), 15)
+        assert owner.snapshot(now=10.0).inflight == 0
+        assert journal.get(command.op_id)["state"] == "reconcile"
+        assert native.send_keys.call_count == writes
+    finally:
+        release.set()
+        await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_input_capability_is_exact_identity_and_single_use(pair, monkeypatch):
+    from copy import copy
+
+    bridge, owner, launched, journal, local, native = await paired(pair, 1)
+    command = physical_input_command(launched)
+    execute = bridge.execute
+    checks = []
+
+    async def checked(command, *, _admitted_input=None):
+        with pytest.raises(TerminalInputBlockedError):
+            await execute(command, _admitted_input=copy(_admitted_input))
+        checks.append("copy rejected")
+        genuine = asyncio.create_task(execute(command, _admitted_input=_admitted_input))
+        try:
+            await asyncio.sleep(0)
+            with pytest.raises(TerminalInputBlockedError):
+                await execute(command, _admitted_input=_admitted_input)
+            checks.append("concurrent reuse rejected")
+            result = await genuine
+        finally:
+            await asyncio.gather(genuine, return_exceptions=True)
+        with pytest.raises(TerminalInputBlockedError):
+            await execute(command, _admitted_input=_admitted_input)
+        checks.append("reuse rejected")
+        return result
+
+    monkeypatch.setattr(bridge, "execute", checked)
+    writes = native.send_keys.call_count
+    with local():
+        await bridge.handle(command)
+    assert checks == ["copy rejected", "concurrent reuse rejected", "reuse rejected"]
+    assert bridge._send.call_args.args[0].ok
+    assert native.send_keys.call_count == writes + 1
+    assert owner.snapshot(now=10.0).inflight == 0
+
+
+@pytest.mark.asyncio
+async def test_input_advisory_checkout_denial_precedes_transport(pair, monkeypatch):
+    from cli_agent_orchestrator.services.delivery_admission import DeliveryReservation
+
+    bridge, owner, launched, journal, local, native = await paired(pair, 1)
+    command = physical_input_command(launched)
+    entering = Event()
+    original_send = terminal_service.send_input
+    original_checkout = DeliveryReservation.try_acquire_storage_connection
+    denied = []
+
+    def send_input(*args, **kwargs):
+        entering.set()
+        try:
+            return original_send(*args, **kwargs)
+        finally:
+            entering.clear()
+
+    def checkout(lease, *args, **kwargs):
+        if lease._owner is owner and entering.is_set():
+            denied.append(True)
+            return None
+        return original_checkout(lease, *args, **kwargs)
+
+    writes = native.send_keys.call_count
+    with monkeypatch.context() as patch:
+        patch.setattr(terminal_service, "send_input", send_input)
+        patch.setattr(DeliveryReservation, "try_acquire_storage_connection", checkout)
+        with local():
+            await bridge.handle(command)
+    result = bridge._send.call_args.args[0]
+    assert denied
+    assert not result.ok and result.error_kind == "input_blocked"
+    assert result.error_detail["delivery_may_have_occurred"] is False
+    assert result.error_detail["action"] == "inspect"
+    assert native.send_keys.call_count == writes
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert journal.get(command.op_id)["state"] == "settled"
+    with local():
+        await bridge.handle(command)
+    assert bridge._send.call_args.args[0] == result
+    assert native.send_keys.call_count == writes

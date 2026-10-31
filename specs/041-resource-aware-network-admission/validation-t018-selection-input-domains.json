@@ -1,0 +1,266 @@
+{
+  "schema": "caos.spec041.t018.selection-input-domains-checkpoint.v1",
+  "verified_utc": "2026-10-31T19:29:08.348395+00:00",
+  "base_head": "7a5f7dfd1eb90ee91d8ef86e09ad677dd8296b96",
+  "status": "PASS_LOCAL_SELECTION_INPUT_PREFLIGHT_AND_DOMAIN_SEPARATION",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_cli_executed": false,
+  "tested_files": [
+    {
+      "path": "src/cli_agent_orchestrator/services/work_admission.py",
+      "digest": "sha256:0879ab0d0f08605ac480768f029768d3355351bbfe852f774ce1d2ac1c35172d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+      "digest": "sha256:0afaf1d761841df932030f9e1d15677330b31c36a576d5f5e15e04445d4abe6e"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/backend.py",
+      "digest": "sha256:1cfa8de1353d9649f5c50d5b3ead146dd416c3cb6883b5dd0db9a28b6a67dfb9"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+      "digest": "sha256:cb34d059d7430bcd12329f23651243efc71aabb8533736653843588b4e0e7f12"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "digest": "sha256:9f071cbc407242a4fd8b21e9f877644fccc6044bf1209316fb1b39e2f70ab50e"
+    },
+    {
+      "path": "test/services/test_work_resource_admission.py",
+      "digest": "sha256:93cd0a8980bb2878b5195c6af66c2b1f53171bccdd12f7c4c672feeccf215a1c"
+    },
+    {
+      "path": "test/runtime_channel/test_bridge_resource_admission.py",
+      "digest": "sha256:de231e37f1495e4e18a0c40a405d9b7aa5cd29e2f7b19320b848b4f4510784d1"
+    },
+    {
+      "path": "test/services/test_admission_monitor.py",
+      "digest": "sha256:ff8cc36030b709e57f8c6b71d29280b6cbe15cc38622739555ee77d73e892b08"
+    },
+    {
+      "path": "test/services/test_inbox_admission_runtime.py",
+      "digest": "sha256:90c4374b224ccf7949c37d2bb757f514ab96bc8558a94d69c9f22cde2ecdfa87"
+    }
+  ],
+  "phases": [
+    {
+      "phase": "t018-work-selection-red",
+      "cases": {
+        "total": 5,
+        "failure": 5,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 90.414,
+      "available_mib": 8872,
+      "candidate_digest": "sha256:25f400e8112b6ee935144f8d652819c1e645a0e60328146f6237384e0c165b69",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Five actual unreserved/undenied Work selection boundaries reproduced."
+    },
+    {
+      "phase": "t018-work-selection-green",
+      "cases": {
+        "total": 90,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 331.276,
+      "available_mib": 8830,
+      "candidate_digest": "sha256:3827f94214d0b2d79030235e57800f08ef8ba7d3487ee4111304d5143cf6623f",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "90 Work/storage/cancellation/lock cases pass."
+    },
+    {
+      "phase": "t018-bridge-preflight-red",
+      "cases": {
+        "total": 6,
+        "failure": 5,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 102.394,
+      "available_mib": 8719,
+      "candidate_digest": "sha256:1f1ca21b9715d02ba823aa64f3e3f241bc088892a626e2a0e22c14c22b568e5e",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Five regressions fail. One denial test passed because it also intercepted a later send guard; its correction and separate RED follow."
+    },
+    {
+      "phase": "t018-bridge-preflight-denial-red",
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 64.285,
+      "available_mib": 8770,
+      "candidate_digest": "sha256:c8bdb69002b8719932f57d071b7c9c9a8fe7fc21d67d336117b3201ce37b9545",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "First-preflight-only checkout denial reproduces missing scope before implementation."
+    },
+    {
+      "phase": "t018-bridge-preflight-green-r2",
+      "cases": {
+        "total": 41,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 219.375,
+      "available_mib": 8877,
+      "candidate_digest": "sha256:3df9277ed129b7a835b865ec434fe5c8eddd7bcc44c2be59e872390f1eebe98a",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "40 pass,1 fails: Work ownership wraps sticky storage denial as internal error. Retained failed run; not relabeled GREEN."
+    },
+    {
+      "phase": "t018-bridge-advisory-red",
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 55.51,
+      "available_mib": 8175,
+      "candidate_digest": "sha256:7973900649868b273c3195a8a2f7570068d7e7fa7e004a731832fe5801861b84",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "Advisory checkout denied before send, but early Event incorrectly says delivery may have occurred."
+    },
+    {
+      "phase": "t018-bridge-preflight-final",
+      "cases": {
+        "total": 42,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 197.554,
+      "available_mib": 7960,
+      "candidate_digest": "sha256:314a644fcf1156b4f4489cd2f2f7f5c8b9eed150c6a72b2abf9ad51454fefa17",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "42 Bridge/remote-service/durable replay cases pass after sticky finally and actual native effect marker; includes concurrent capability reuse."
+    },
+    {
+      "phase": "t018-monitor-domain-red",
+      "cases": {
+        "total": 6,
+        "failure": 6,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 50.717,
+      "available_mib": 8189,
+      "candidate_digest": "sha256:a353d0b29dfbd213ab51af9b5d2e3c3a9fcf5c854864a96679d401eafa0e924d",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "3 absent-supplier cases unsupported;3 operational factory cases reproduce auditpool4 as unrelated global ceiling."
+    },
+    {
+      "phase": "t018-monitor-domain-final",
+      "cases": {
+        "total": 95,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 94.618,
+      "available_mib": 8252,
+      "candidate_digest": "sha256:5ff0b0f6976a963f0fc371efa0060c9be8ddec081ec6c473438941d55e72554f",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "95 monitor/runtime/API/Bridge/real-PG cases pass, including simulated complete2-session footprints for5/20/40 eligible deliveries."
+    },
+    {
+      "phase": "t018-monitor-domain-negative-final",
+      "cases": {
+        "total": 3,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 48.37,
+      "available_mib": 8373,
+      "candidate_digest": "sha256:d8fa72fc39f11d0f064d98226caf820a1ee32facb0ff691ad8ad788e0dae73d4",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "interpretation": "3 strengthened unknown/low domain tests pass and directly assert the StorageObservation handed to the resource sampler; no production/shared fixture behavior changed after95."
+    }
+  ],
+  "unused_descriptor": "t018-bridge-preflight-green prepared but never executed: review corrected action inspect/False before green-r2. No failure or successful run attributed to it.",
+  "final_checks": [
+    "Work90passed/0failures/0errors/0skipped/2warnings;328.59s pytest",
+    "Bridge42passed/0failures/0errors/0skipped/3warnings;195.23s pytest",
+    "Monitor95passed/0failures/0errors/0skipped/8warnings;81.66s pytest",
+    "Strengthened monitor negative3passed/0failures/0errors/0skipped/2warnings;46.26s pytest;subset of95,not3extra distinct cases"
+  ],
+  "test_source_delta_after_95": "Only helper capture_resource_storage used by the new negative tests and direct received-slot assertions added. Production, original fixture and all other tested bodies unchanged. Current3 cases rerun; latest closed archive matches all9 current Python files. Work90 and Bridge42 exact changed-file bytes separately verified.",
+  "format": "Black/isort9PASS; last negative helper adds no imports and Black checkPASS",
+  "types": "mypy5source modulesPASS;follow-imports=silent/defaultuntypedcoverage;Work note retained",
+  "architecture": {
+    "files": 439,
+    "dependencies": 1951,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": "Codex Luna Max/ECC scoped Work selection, Bridge preflight3rounds and monitor domain2rounds; root corrected actionable findings, ran actual REDs and final checks, then composition/diff review. No Claude CLI invoked.",
+  "scope": [
+    "Work preview and target queries reserve one storage-only session in actual worker; release before2-session delivery. Denied phase does not execute selected SQL; previously committed maintenance of other invalid requests is not rolled back.",
+    "Bridge starts2-session lease inside effect_is_current worker after terminal turn. Joined preflight owns ownership/metadata/launch queries. Sticky storage denial survives service error wrapping via finally check.",
+    "Exact identity token is consumed before first await; copies, concurrent and sequential reuse cannot send twice. Lease survives workers/journal until durable settle and retires before network ACK.",
+    "Input effect Event is marked by OrdinaryRemoteEffectFence only at native send_keys entry after advisory/service/authority/storage fences. Before-effect storage refusal is inspect/False; post-transport uncertainty reconcile/True. Existing typed errors retained.",
+    "Operational monitor no longer treats auditpool4 as global callback cap. Optional local domain absent differs from configured unknown; pressure, freshness, claims, budget, ceiling and uncertainty retained. Physical auditpool4/checkout2s unchanged.",
+    "Factory/monitor5/20/40 cases use simulated resources and2storage units per delivery; eligibility arithmetic is not20or40 real agents or physicalM1."
+  ],
+  "not_accepted": [
+    "Protected SQL control budget/bootstrap/monitor, remaining direct API/MCP transaction ingress.",
+    "Shutdown retry of exact owned uncertain closes and T017 authorized cached diagnostic API.",
+    "T019 physicalM1 including complete cgroup/namespace witness and dynamic sampler correction.",
+    "T012–T016/T020 shared reservationsM2, recovery and ordinary authorized node placementM3.",
+    "T022 PostgreSQL policy history/API/typed SDK and T023 real administration UI.",
+    "Remaining native provider/global gates."
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-sql-preflight-effect-boundary",
+    "status": "applied",
+    "strict_lint_issues": 0,
+    "approval_digest": "sha256:519b7184aa7e536148ebc78831c7c673f6158ad8584d66c1e4ed7137eb4ea9e9"
+  }
+}

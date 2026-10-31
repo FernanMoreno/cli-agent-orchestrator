@@ -205,6 +205,142 @@ async def test_resource_bound_unregistered_callback_requires_registered_target(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["preview", "target"])
+async def test_selection_queries_have_their_own_storage_lease_before_delivery(
+    paired_context, monkeypatch, phase
+):
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    coordinator, owner = managed(paired_context, 1)
+    receipt = coordinator.admit(**_request(paired_context, f"selection-owner-{phase}"))
+    seen = []
+    if phase == "preview":
+        original = paired_context.service._preview
+
+        def preview(**kwargs):
+            snapshot = owner.snapshot(now=10.0)
+            assert snapshot.storage_only_started == 1
+            assert snapshot.delivery_started == 0
+            with connect(paired_context.repo.target, readonly=True) as connection:
+                assert connection.execute("SELECT 42").fetchone()[0] == 42
+                assert owner.snapshot(now=10.0).storage_connection_loans == 1
+                seen.append(phase)
+            return original(**kwargs)
+
+        monkeypatch.setattr(paired_context.service, "_preview", preview)
+    else:
+        original = paired_context.service.deliveries._terminal_target
+
+        def target(connection, binding):
+            snapshot = owner.snapshot(now=10.0)
+            if snapshot.delivery_started == 0:
+                assert snapshot.storage_only_started == 1
+                assert snapshot.storage_connection_loans == 1
+                assert connection.execute("SELECT 42").fetchone()[0] == 42
+                seen.append(phase)
+            return original(connection, binding)
+
+        monkeypatch.setattr(paired_context.service.deliveries, "_terminal_target", target)
+    original_reserve = owner.try_reserve
+
+    def reserve(*args, **kwargs):
+        assert owner.snapshot(now=10.0).storage_only_inflight == 0
+        return original_reserve(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "try_reserve", reserve)
+    result = await paired_context.service.dispatch_registered_next()
+    assert result is not None and result["id"] == receipt.work_item_id
+    assert len(seen) >= (2 if phase == "target" else 1)
+    assert len(paired_context.backend.effects) == 1
+    assert owner.snapshot(now=10.0).inflight == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["preview", "target"])
+async def test_selection_storage_denial_precedes_preview_or_target_sql(
+    paired_context, monkeypatch, phase
+):
+    from cli_agent_orchestrator.services.delivery_admission import StorageAdmissionAttempt
+
+    coordinator, owner = managed(paired_context, 1)
+    receipt = coordinator.admit(**_request(paired_context, f"selection-denied-{phase}"))
+    before = paired_context.repo.get_work(receipt.work_item_id)
+    preview_finished = False
+    calls = []
+    original_reserve = owner.try_reserve_storage
+    original_preview = paired_context.service._preview
+    original_read = paired_context.repo.read_snapshot
+
+    def reserve(**kwargs):
+        calls.append(phase)
+        if phase == "preview" or len(calls) == 2:
+            return StorageAdmissionAttempt(None, "resource_exhausted")
+        return original_reserve(**kwargs)
+
+    def preview(**kwargs):
+        nonlocal preview_finished
+        assert phase != "preview", "storage refusal still entered Work preview"
+        result = original_preview(**kwargs)
+        preview_finished = True
+        return result
+
+    def read():
+        assert not preview_finished, "storage refusal still opened the target snapshot"
+        return original_read()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(owner, "try_reserve_storage", reserve)
+        patch.setattr(paired_context.service, "_preview", preview)
+        patch.setattr(paired_context.repo, "read_snapshot", read)
+        assert await paired_context.service.dispatch_registered_next() is None
+    assert len(calls) == (1 if phase == "preview" else 2)
+    assert paired_context.repo.get_work(receipt.work_item_id) == before
+    assert paired_context.backend.effects == []
+    assert owner.snapshot(now=10.0).inflight == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_selection_keeps_its_physical_reader_until_cleanup(
+    paired_context, monkeypatch
+):
+    from cli_agent_orchestrator.clients.postgres import connect
+
+    coordinator, owner = managed(paired_context, 1)
+    receipt = coordinator.admit(**_request(paired_context, "selection-cancelled"))
+    entered, release = Event(), Event()
+    original = paired_context.service._preview
+
+    def preview(**kwargs):
+        with connect(paired_context.repo.target, readonly=True) as connection:
+            assert connection.execute("SELECT 42").fetchone()[0] == 42
+            entered.set()
+            assert release.wait(15), "controlled selector reader was not released"
+        return original(**kwargs)
+
+    monkeypatch.setattr(paired_context.service, "_preview", preview)
+    caller = asyncio.create_task(paired_context.service.prepare_registered_dispatch())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        snapshot = owner.snapshot(now=10.0)
+        assert snapshot.storage_only_started == snapshot.storage_connection_loans == 1
+        assert snapshot.delivery_started == 0
+        caller.cancel()
+        await asyncio.sleep(0)
+        caller.cancel()
+        await asyncio.sleep(0)
+        assert owner.snapshot(now=10.0).storage_only_inflight == 1
+    finally:
+        release.set()
+        if not caller.done():
+            caller.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        await paired_context.service.wait_for_dispatch_cleanup()
+    assert owner.snapshot(now=10.0).inflight == 0
+    assert paired_context.repo.get_work(receipt.work_item_id)["state"] == "reconcile"
+    assert paired_context.backend.effects == []
+
+
+@pytest.mark.asyncio
 async def test_failed_work_commit_retires_preparation_resource(paired_context, monkeypatch):
     coordinator, owner = managed(paired_context, 1)
     receipt = coordinator.admit(**_request(paired_context, "failed-commit"))

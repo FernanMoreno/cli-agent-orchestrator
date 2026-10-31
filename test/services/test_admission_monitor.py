@@ -24,7 +24,7 @@ pytestmark = pytest.mark.offline_database
 MIB = 1024 * 1024
 
 
-def fixture():
+def fixture(*, local_storage_capacity=lambda: 12):
     from cli_agent_orchestrator.services.admission_monitor import AdmissionMonitor
 
     clock = [10.0]
@@ -119,7 +119,7 @@ def fixture():
         bootstrap=bootstrap,
         postgres=postgres,
         scope_id="test-node/source",
-        local_storage_capacity=lambda: 12,
+        local_storage_capacity=local_storage_capacity,
         clock=lambda: clock[0],
         resource_factory=factory,
     )
@@ -390,3 +390,78 @@ async def test_refresh_paused_before_acquire_cannot_cross_a_stop_and_restart():
     await f.monitor.stop()
     assert result.reason == "stopping"
     assert f.postgres.calls == 0
+
+
+@pytest.mark.parametrize("deliveries", [5, 20, 40])
+def test_no_local_domain_uses_pg_capacity_for_complete_delivery_footprints(deliveries):
+    f = fixture(local_storage_capacity=None)
+    slots = 2 * deliveries
+    f.repository.latest = replace(
+        f.record, claims=replace(f.record.claims, storage_budget_slots=slots)
+    )
+    f.postgres.slots = slots
+    leases = []
+    try:
+        warm(f)
+        for index in range(deliveries):
+            lease = f.owner.try_reserve(str(index), now=f.clock[0], storage_slots=2).reservation
+            assert lease is not None
+            leases.append(lease)
+        assert f.owner.snapshot(now=f.clock[0]).delivery_inflight == deliveries
+        assert f.owner.try_reserve("excess", now=f.clock[0], storage_slots=2).reservation is None
+    finally:
+        for lease in leases:
+            assert lease.cancel_before_start()
+    assert f.owner.snapshot(now=f.clock[0]).inflight == 0
+
+
+def test_explicit_local_storage_domain_still_limits_physical_units():
+    f = fixture(local_storage_capacity=lambda: 4)
+    warm(f)
+    leases = []
+    try:
+        for index in range(2):
+            lease = f.owner.try_reserve(str(index), now=f.clock[0], storage_slots=2).reservation
+            assert lease is not None
+            leases.append(lease)
+        assert f.owner.try_reserve("third", now=f.clock[0], storage_slots=2).reservation is None
+    finally:
+        for lease in leases:
+            assert lease.cancel_before_start()
+
+
+def capture_resource_storage(f):
+    observed = []
+    sample = f.resources.sample
+
+    def capture(*, storage):
+        observed.append(storage)
+        return sample(storage=storage)
+
+    f.resources.sample = capture
+    return observed
+
+
+@pytest.mark.parametrize("slots", [0, None])
+def test_no_local_domain_preserves_low_or_unknown_postgres_refusal(slots):
+    f = fixture(local_storage_capacity=None)
+    observed = capture_resource_storage(f)
+    warm(f)
+    f.postgres.slots = slots
+    if slots is None:
+        f.resources.coverage = "unknown"
+    tick(f)
+    assert observed[-1].available_slots == slots
+    assert f.owner.try_reserve("not admitted", now=f.clock[0], storage_slots=2).reservation is None
+
+
+def test_configured_but_unknown_local_domain_is_not_absent():
+    local_slots = [12]
+    f = fixture(local_storage_capacity=lambda: local_slots[0])
+    observed = capture_resource_storage(f)
+    warm(f)
+    local_slots[0] = None
+    f.resources.coverage = "unknown"
+    tick(f)
+    assert observed[-1].available_slots is None
+    assert f.owner.try_reserve("not admitted", now=f.clock[0]).reservation is None
