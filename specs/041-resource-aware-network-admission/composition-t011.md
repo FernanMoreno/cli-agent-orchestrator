@@ -1,0 +1,11 @@
+# T011 — fixtures de recursos y contratos Inbox
+
+Resultado: PASS de implementación T011, sin aceptación M1/T019.
+
+El helper de status usa presupuesto observado por defecto; saturación compara2/4/7 y el caso sin owner4. El burst de requests compara1/4/7 y compatibilidad4 manteniendo exactamente ocho wakes en espera, parámetro event_bus_max_queue_size8, contexto/registry, exclusión de loop y conteo de operaciones durante cierre. La cola del executor antiguo se conserva explícita sin owner; el worker tardío anterior a tracking se prueba tanto sin owner como ligado, restaurando capacidad saludable tras reabrir antes de liberar el worker antiguo. No entrega, no conserva leases ni invade el lifecycle nuevo. No se modifican512eventos ni el umbral lineal operations<count*32.
+
+PostgreSQL direct/poll mantiene denegación0 y recuperación1/2/7: misma fila PENDING, Unicode intacto, una entrega y estado DELIVERED final. Los recuentos de cola/mensajes y cuatro sesiones físicas del pool no se reinterpretan como concurrencia del producto. El código de política y admisión no cambia. En Bridge solo se corrige el docstring del módulo para reflejar el control HTTP opt-in; comparación AST contra HEAD confirma identidad de todo el código restante.
+
+RED4fallos por parámetro de fixture ausente; GREEN enfocado56PASS y ampliación final173PASS/0fallos/0errores/0omisiones,8avisos,140.38s; fuente/soporte intactos. La ampliación incluye doce archivos Inbox, integración PostgreSQL, lifecycle Bridge/API/dispatcher Work y HTTP/JWKS/PostgreSQL de Bridge. Black/isort4archivos y mypyBridge correctos. Composición436archivos/1934dependencias/5KEPT/0BROKEN. PostgreSQL mismo contenedor/dueño termina0clientes/0bases/0roles de prueba. Diff revisado; GO Codex acotado tras incorporar el caso bound solicitado. No nuevo grafo: sin cambio de dependencias productivas y generación ajena preservada. Actualización durable mínima de la frontera integración/aceptación en Obsidian save-20261031-budget-fixture-boundary, lint estricto correcto.
+
+T001–T011 completan integración de código M1; falta manifiesto, calibración y contraste físico T019. Los presupuestos de fixture y hilos/backend controlados no acreditan recursos reales, límites combinados M2, incorporación M3, SDK/UI ni gates globales. Véase [recibo](validation-t011.json).

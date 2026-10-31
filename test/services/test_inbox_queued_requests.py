@@ -3,6 +3,7 @@
 import asyncio
 import contextvars
 import threading
+from test.services.test_inbox_resource_admission import service as controlled_service
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +14,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.offline_database]
 
 
 async def test_queued_requests_preserve_independent_context_and_registry(monkeypatch):
-    service = module.InboxService()
+    service, owner = controlled_service(2)
     loop = asyncio.get_running_loop()
     subscribed = asyncio.Event()
     observed = asyncio.Queue()
@@ -60,6 +61,7 @@ async def test_queued_requests_preserve_independent_context_and_registry(monkeyp
         await service.drain(timeout_s=5)
     assert service._delivery_sink is None
     assert not sink_holder[0]._requests
+    assert owner.snapshot(now=10.0).inflight == 0
 
 
 async def test_full_wake_sink_retains_old_context_and_closed_sink_releases_it():
@@ -84,8 +86,14 @@ async def test_no_consumer_cannot_accept_a_transient_wake():
     assert service.queue_delivery("pending", registry=None) is False
 
 
-async def test_request_burst_uses_four_workers_and_shutdown_drops_only_transient_wakes(monkeypatch):
-    service = module.InboxService()
+@pytest.mark.parametrize("resource_slots", [None, 1, 4, 7])
+async def test_request_burst_uses_budget_and_shutdown_drops_only_transient_wakes(
+    monkeypatch, resource_slots
+):
+    slots = 4 if resource_slots is None else resource_slots
+    service = (
+        module.InboxService() if resource_slots is None else controlled_service(resource_slots)[0]
+    )
     loop = asyncio.get_running_loop()
     subscribed = asyncio.Event()
     started = asyncio.Queue()
@@ -109,12 +117,12 @@ async def test_request_burst_uses_four_workers_and_shutdown_drops_only_transient
     task = asyncio.create_task(service.run())
     try:
         await asyncio.wait_for(subscribed.wait(), timeout=5)
-        for index in range(12):
+        for index in range(slots + 8):
             assert service.queue_delivery(f"request-{index}", registry=None)
-        active = {await asyncio.wait_for(started.get(), timeout=5) for _ in range(4)}
-        assert len(active) == 4
+        active = {await asyncio.wait_for(started.get(), timeout=5) for _ in range(slots)}
+        assert len(active) == slots
         assert sinks[0].qsize() == 8 and len(sinks[0]._requests) == 8
-        assert service._active_operations == 4
+        assert service._active_operations == slots
         with pytest.raises(RuntimeError):
             await asyncio.to_thread(service.queue_delivery, "wrong-loop", registry=None)
         assert sinks[0].qsize() == 8
@@ -123,7 +131,7 @@ async def test_request_burst_uses_four_workers_and_shutdown_drops_only_transient
         await asyncio.gather(task, return_exceptions=True)
         assert sinks[0].empty() and not sinks[0]._requests
         assert service._delivery_sink is None
-        assert service._active_operations == 4
+        assert service._active_operations == slots
     finally:
         service.stop_accepting()
         release.set()

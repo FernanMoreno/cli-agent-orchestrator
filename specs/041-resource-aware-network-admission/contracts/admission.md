@@ -18,11 +18,11 @@ El servicio recibe Principal verificado/admin, claims de presupuesto y revisión
 
 Revocar un registro existente añade una revisión inactiva. Revocar sin registro con revisión esperada0 lanza EnvelopeNotFound: no confirma un efecto durable ni inventa un tombstone; una revisión esperada no vigente produce EnvelopeRevisionConflict. El lector obtiene siempre la última revisión, verifica rol/esquema en runtime readonly y compara la vinculación antes/después de la lectura. Falla sin reutilizar autoridad previa ante identidad no verificable, revocación, deriva, esquema/rol inválidos o falta de cobertura. Solo devuelve un objeto sellado internamente; una representación JSON, un dict o un objeto sin sello no es atestación válida.
 
-Los claims autorizan una declaración del operador y no prueban ancestros invisibles ni permisos para ejecutar herramientas/tareas. Estos módulos no añaden rutas HTTP/MCP ni conectan el consumidor; el productor operativo y la integración M1 permanecen pendientes.
+Los claims autorizan una declaración del operador y no prueban ancestros invisibles ni permisos para ejecutar herramientas/tareas. Los módulos T007 solos no añaden rutas HTTP/MCP ni conectan el consumidor. El productor HTTP y la integración con API/Work/Bridge se implementan por composición T009–T011; la aceptación física M1 sigue pendiente en T019. No se añaden permisos MCP por atestar recursos.
 
 El sello y verified_at describen una lectura válida en ese instante monotónico local. El consumidor deberá aplicar frescura, generación y presupuestos antes de reservar; retener el objeto no conserva autoridad indefinidamente.
 
-## Red
+## Red — contrato requerido; M2/M3 pendientes
 
 Capacidad anunciada no es reserva ni permiso. El destino valida identidad, preparación, compatibilidad y reserva antes del primer efecto. La reserva de infraestructura del broker no basta. Los consumos Work cuentan en dominios compartidos conservando sus propios intentos y permisos.
 
@@ -32,4 +32,4 @@ El sampler captura la generación del dueño ANTES de comenzar I/O y entrega ese
 
 La ruta ligada reserva antes de handoff/SQL; una denegación conserva filas PENDING y avisos con su ordinal/Context/registry. Receiver busy aparca esa cabeza y deja avanzar otros receptores; las notificaciones físicas respetan además la propiedad de la clave por el Future del consumidor. La disponibilidad del ledger no permite sobrescribir ese Future antes de retirarlo. El cursor de barrido se cierra antes de unir hijos; sus errores no omiten el drenaje restante ni sustituyen el primer fallo. Cada hijo iniciado conserva conteo propio aunque falle la publicación de Thread.start.
 
-Los costes configurados estiman una invocación serial completa, no cada fila ni N entregas simultáneas: num_messages=0 conserva el límite histórico100 y un positivo conserva el límite solicitado. La reserva cubre todos los envíos y escrituras del lote; confirmar físicamente la estimación con tamaños fijados sigue siendo un gate de aceptación. No se libera almacenamiento antes de acabar auditorías/recibos/estados. API/Herdr/enrolamiento y notificaciones del monitor siguen pendientes; instancias sin dueño explícito no acreditan este contrato de admisión M1.
+Los costes configurados estiman una invocación serial completa, no cada fila ni N entregas simultáneas: num_messages=0 conserva el límite histórico100 y un positivo conserva el límite solicitado. La reserva cubre todos los envíos y escrituras del lote; confirmar físicamente la estimación con tamaños fijados sigue siendo un gate de aceptación. No se libera almacenamiento antes de acabar auditorías/recibos/estados. API/Herdr/enrolamiento y notificaciones del monitor están conectados por T009/T010; instancias sin dueño explícito conservan compatibilidad y no acreditan este contrato de admisión M1.

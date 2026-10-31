@@ -4,6 +4,7 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from test.services.test_inbox_resource_admission import service as controlled_service
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -42,9 +43,11 @@ def ready(terminal_id):
 
 
 @asynccontextmanager
-async def consumer(monkeypatch, *, held=(), failures=(), capacity=32):
+async def consumer(monkeypatch, *, held=(), failures=(), capacity=32, resource_slots=4):
     loop = asyncio.get_running_loop()
-    service = module.InboxService()
+    service = (
+        module.InboxService() if resource_slots is None else controlled_service(resource_slots)[0]
+    )
     queue = None
     release = threading.Event()
     started = asyncio.Queue()
@@ -162,9 +165,11 @@ async def test_busy_burst_bookkeeping_has_linear_key_operations(monkeypatch):
         assert CountedKey.operations < count * 32
 
 
-async def test_dispatch_has_four_slots_and_one_combined_capacity(monkeypatch):
-    keys = {f"held-{i}" for i in range(4)}
-    async with consumer(monkeypatch, held=keys, capacity=3) as c:
+@pytest.mark.parametrize("resource_slots", [None, 2, 4, 7])
+async def test_dispatch_uses_observed_slots_and_one_combined_capacity(monkeypatch, resource_slots):
+    slots = 4 if resource_slots is None else resource_slots
+    keys = {f"held-{i}" for i in range(slots)}
+    async with consumer(monkeypatch, held=keys, capacity=3, resource_slots=resource_slots) as c:
         for key in sorted(keys):
             await c.queue.put(ready(key))
             assert await take(c.started) == key
@@ -174,12 +179,12 @@ async def test_dispatch_has_four_slots_and_one_combined_capacity(monkeypatch):
             c.queue.put_nowait(ready("overflow"))
         assert c.queue.qsize() == 6
         assert c.started.empty()
-        assert c.maximum() == 4
+        assert c.maximum() == slots
         c.release.set()
-        for _ in range(10):
+        for _ in range(slots + 6):
             await take(c.completed)
-        assert len(c.calls) == 10
-        assert c.maximum() <= 4
+        assert len(c.calls) == slots + 6
+        assert c.maximum() <= slots
 
 
 async def test_delivery_failure_does_not_stop_other_terminals(monkeypatch, caplog):
@@ -341,12 +346,15 @@ async def test_fatal_worker_error_propagates_and_cleans_children(monkeypatch):
         assert c.service._active_operations == 0
 
 
-async def test_late_worker_is_fenced_even_after_admission_reopens(monkeypatch):
+@pytest.mark.parametrize("resource_slots", [None, 4])
+async def test_late_worker_is_fenced_even_after_admission_reopens(monkeypatch, resource_slots):
     loop = asyncio.get_running_loop()
     entered = asyncio.Event()
     finished = asyncio.Event()
     release = threading.Event()
-    async with consumer(monkeypatch) as c:
+    # Pause before operation tracking in both paths; an old handoff must not
+    # join a new lifetime even after a healthy resource budget is restored.
+    async with consumer(monkeypatch, resource_slots=resource_slots) as c:
         original = c.service._deliver_status_pending
 
         def pause_before_admission(*args, **kwargs):
@@ -367,11 +375,23 @@ async def test_late_worker_is_fenced_even_after_admission_reopens(monkeypatch):
                 await c.task
             await c.service.drain(timeout_s=5)
             c.service.start_accepting()
+            if resource_slots is not None:
+                from cli_agent_orchestrator.services.admission_policy import CapacityObservation
+
+                owner = c.service._admission
+                owner.observe(
+                    CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, resource_slots),
+                    now=10.0,
+                    generation=owner.generation,
+                )
+                assert owner.snapshot(now=10.0).available_slots == resource_slots
         finally:
             release.set()
             await asyncio.wait_for(finished.wait(), timeout=5)
         assert c.calls == []
         assert c.service._active_operations == 0
+        if resource_slots is not None:
+            assert c.service._admission.snapshot(now=10.0).inflight == 0
 
 
 async def test_cancelling_queued_executor_work_prevents_delivery_after_reopen(monkeypatch):
@@ -394,7 +414,8 @@ async def test_cancelling_queued_executor_work_prevents_delivery_after_reopen(mo
     blocker = executor.submit(release.wait, 5)
     loop.set_default_executor(executor)
     try:
-        async with consumer(monkeypatch) as c:
+        # Bound delivery has no queued default-executor handoff to cancel.
+        async with consumer(monkeypatch, resource_slots=None) as c:
             await c.queue.put(ready("queued"))
             await asyncio.wait_for(submitted.wait(), timeout=5)
             c.service.stop_accepting()

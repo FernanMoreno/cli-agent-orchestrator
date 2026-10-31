@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-31T10:35:43.602753+00:00",
+  "status": "PASS_T011_IMPLEMENTED_NOT_M1_ACCEPTANCE",
+  "scope": "Inbox fixtures driven by controlled budgets; no production admission logic/policy change",
+  "base_head": "59bd2c408233bbabcadcb005331b166acaa029df",
+  "candidate_source_stamp": "2277b2c958626c4a3a77a9655914d106dffbb9c605eb7209d4317ddc96707e2f",
+  "tested_files_sha256": {
+    "src/cli_agent_orchestrator/runtime_channel/bridge.py": "243ed986c5e00233db62d05ec16cd1e1310a7a9b04b23bafc09b1a79078fd0e7",
+    "test/services/test_inbox_status_dispatch.py": "065e5cd63b2e3ff2fd1804c2c4bf7efa667dbe60a834a7d8e0a32f26018f345a",
+    "test/services/test_inbox_queued_requests.py": "bf6c6cdd0feaf9c6d12f9414dde87d2aebb744c6564cdf2ff25a19ed6513c31d",
+    "test/integration/test_inbox_resource_admission.py": "5f1f391d2af461d8455fcb8bd6e11851947c240857f1e0a5a1f685c639da67b8"
+  },
+  "tests": {
+    "total": 173,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 8,
+    "pytest_seconds": 140.38,
+    "controller_seconds": 153.835,
+    "available_mib": 9548,
+    "minimum_available_mib": 6144,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t011-final/t011-final/receipt.json"
+  },
+  "closure": {
+    "exit_code": 0,
+    "support_preserved": true,
+    "source_preserved": true,
+    "descriptor_closed": true
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t011-fixture-budget-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 55.755,
+      "source_preserved": true
+    },
+    {
+      "phase": "t011-budget-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 56,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 77.172,
+      "source_preserved": true
+    }
+  ],
+  "architecture": {
+    "files": 436,
+    "dependencies": 1934,
+    "kept": 5,
+    "broken": 0
+  },
+  "format": "Black/isort4filesPASS",
+  "types": "mypy1sourcePASS,follow-imports=silent/defaultuntypedcoverage",
+  "production_change": {
+    "file": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+    "before_sha256": "aafc241e13d1ad23c99e69dd27a7ac7d420bb3d262763df2811413c55324cbe2",
+    "after_sha256": "243ed986c5e00233db62d05ec16cd1e1310a7a9b04b23bafc09b1a79078fd0e7",
+    "non_docstring_ast_identical": true
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": {
+    "reviewer": "Codex GPT6LunaMax ECC read-only",
+    "rounds": 2,
+    "verdict": "GO_SCOPED_FIXTURE_CHECKPOINT",
+    "requested_gap": "Bound pre-track late worker additionally covered with fresh healthy budget after drain/reopen; original unbound variant retained"
+  },
+  "scenarios": {
+    "status_saturation_budgets": [
+      "unbound compatibility4",
+      2,
+      4,
+      7
+    ],
+    "request_burst_budgets": [
+      "unbound compatibility4",
+      1,
+      4,
+      7
+    ],
+    "request_pending_wakes": 8,
+    "request_context_budget": 2,
+    "postgres_recovery_budgets": [
+      1,
+      2,
+      7
+    ],
+    "late_worker_modes": [
+      "unbound",
+      "bound4; healthy budget restored after reopen"
+    ]
+  },
+  "unchanged_criteria": [
+    "512 busy duplicate events and operations<count*32 threshold",
+    "All original queue capacity, FIFO/content, registry/Context, wrong-loop, shutdown, no-duplicate and drain assertions",
+    "Audited physical pool4 and arbitrary message/queue counts remain distinct from concurrency",
+    "Original deadlines and coverage settings retained"
+  ],
+  "knowledge": {
+    "operation_id": "save-20261031-budget-fixture-boundary",
+    "strict_lint_exit": 0
+  },
+  "graphify": "Existing partial graph/source impact retained; production AST excluding module documentation identical. No new production dependency; foreign generated work preserved.",
+  "limits": [
+    "Controlled budgets and backend effects are not independent physical host/cgroup/storage calibration",
+    "M1/T019, M2/M3, shared reservations, SDK/UI and global acceptance remain pending"
+  ]
+}

@@ -3,7 +3,8 @@
 Runs beside the agents' tmux server, in a pod that has no cao-server. It dials
 the central server's ``/runtime/channel`` (outbound only), runs each command it
 receives through the local terminal service, and pushes the status the local
-status monitor derives. Nothing here serves HTTP.
+status monitor derives. Opt-in resource control adds a private loopback HTTP
+listener; it does not run the central API lifespan.
 
 Configuration:
 
@@ -12,6 +13,8 @@ Configuration:
 - ``CAO_RUNTIME_TOKEN_FILE`` or ``CAO_RUNTIME_TOKEN``: the shared channel token
 - ``CAO_BRIDGE_READY_FILE`` (optional): created while the channel is up, for a
   readiness probe
+- ``CAO_ADMISSION_POLICY_FILE`` (optional): absolute private policy path; enables
+  authenticated process resource control before the channel reader starts
 """
 
 import asyncio

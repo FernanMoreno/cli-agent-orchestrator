@@ -13,8 +13,9 @@ from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
 
 
 @pytest.mark.parametrize("path", ["direct", "poll"])
+@pytest.mark.parametrize("recovered_slots", [1, 2, 7])
 def test_real_pending_row_survives_denial_and_delivers_after_capacity(
-    isolated_memory_db, monkeypatch, path
+    isolated_memory_db, monkeypatch, path, recovered_slots
 ):
     assert db.engine.dialect.name == "postgresql"
     db.create_terminal(
@@ -54,7 +55,7 @@ def test_real_pending_row_survives_denial_and_delivers_after_capacity(
     assert [(message.id, message.status) for message in actual] == [(row.id, MessageStatus.PENDING)]
     assert sent == []
     clock[0] = 11.0
-    observe(2)
+    observe(recovered_slots)
     deliver()
     assert sent == [(("resource-receiver", payload), {"task_delivery": True})]
     assert [message.status for message in db.get_inbox_messages("resource-receiver")] == [
