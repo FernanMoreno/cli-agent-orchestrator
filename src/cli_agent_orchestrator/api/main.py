@@ -1665,7 +1665,10 @@ def _compose_managed_workflow_runtime(app: FastAPI, repository, gateway):
 async def _initialize_managed_workflow_runtime(app: FastAPI, repository, gateway):
     """Compose and run durable result projection before serving requests."""
     projector = _compose_managed_workflow_runtime(app, repository, gateway)
-    await asyncio.to_thread(projector.project_pending_at_startup)
+    from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+    # A cancelled startup must join durable projection before releasing owners.
+    await run_owned_async(asyncio.to_thread(projector.project_pending_at_startup))
     from cli_agent_orchestrator.services.work_coordinator import WorkCoordinator
     from cli_agent_orchestrator.services.workflow_continuation_driver import (
         WorkflowContinuationDriver,
@@ -1724,7 +1727,8 @@ async def lifespan(app: FastAPI):
     _seed_default_skills_at_startup()
     _reconcile_memory_at_startup()
     try:
-        await asyncio.to_thread(_recover_t097_proxy_effects_at_startup)
+        # Cancellation does not prove the recovery worker stopped writing.
+        await run_owned_async(asyncio.to_thread(_recover_t097_proxy_effects_at_startup))
     except Exception:
         # A failed scan leaves durable intents and their replay fences intact.
         # Keep startup available and report the unresolved recovery requirement.

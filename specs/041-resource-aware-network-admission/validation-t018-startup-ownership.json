@@ -1,0 +1,110 @@
+{
+  "schema": "caos.spec041.validation.v1",
+  "verified_utc": "2026-10-31T23:40:15.097197+00:00",
+  "base_head": "829f564ac8023c1bcd91a332be5c3c29a3305ed9",
+  "status": "startup cancellation ownership component validated",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_provider_cli_executed": false,
+  "tested_files": {
+    "src/cli_agent_orchestrator/api/main.py": "sha256:2dcb239dce916133fe7e7f8ea66c61b10388be94c87b3fbd4bda59071c4ec2d3",
+    "test/api/test_interaction_storage_lifespan.py": "sha256:3869ccb3f7bfb8e5204965088d52f0645e703f60c32f95069ac6e88d8d7cb637"
+  },
+  "phases": [
+    {
+      "phase": "t018-startup-ownership-red",
+      "cases": {
+        "total": 2,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 65.462,
+      "available_mib": 8464,
+      "candidate_sha256": "sha256:7e030cab98491e67a2789ed8b539cd477cc2e8ef3f5cf8962f79bc2b7d044483",
+      "candidate_archive_sha256": "sha256:92948f46e21f1236b58379e6cd96ce82d89cee30e21d9e4cd77ef5fdf46a61b5",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t018-startup-projection-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 66.531,
+      "available_mib": 8576,
+      "candidate_sha256": "sha256:ec25ad125d6749b31fb8639f11b0e6b7f1c7a55e9b2638575db41f3125f1b595",
+      "candidate_archive_sha256": "sha256:bb50c84ae6ba4ed7298fa8ee17981140c758efc544007cc580c294771cda3f7d",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t018-startup-ownership-green",
+      "cases": {
+        "total": 80,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 176.699,
+      "available_mib": 8650,
+      "candidate_sha256": "sha256:f51ff3b205b2b650e943ccca53b0ed6b4fb7c8755e9251276f8d593fa1001282",
+      "candidate_archive_sha256": "sha256:414a74f6d52ee9d652d9623c05fb0b98b30aa4e00edbbdde2413fa18091364df",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    }
+  ],
+  "checks": {
+    "black_isort": "2 files PASS",
+    "mypy": "1 source PASS; default annotation-unchecked notes retained",
+    "composition": "5 kept,0 broken",
+    "postgres": {
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+      "other_clients": 0,
+      "test_databases": 0,
+      "test_roles": 0,
+      "live_reuse_lease_verified": true,
+      "container_stopped": false
+    },
+    "independent_codex_read_review": "GO for two wrappers; no execution by reviewer"
+  },
+  "scope": [
+    "T097 recovery and initial workflow projection join real workers before propagating cancellation",
+    "repeated cancellation preserves first failure and does not create followup continuation owners",
+    "existing Work recovery/projector and lifespan/interaction PG regressions separately exercised"
+  ],
+  "evidence_limits": [
+    "new blocked-callback tests validate ownership/order with synthetic callbacks, not real commits or SQL admission",
+    "existing PostgreSQL integration runs in isolated temporary stores on the verified existing container; no historical jobs rerun",
+    "no startup admission budget or M1/M2/M3/SDK/UI/native/global acceptance"
+  ],
+  "remaining": [
+    "prebind resource coordinator and combined physical budget",
+    "startup finite maintenance not joined on normal shutdown; raw to_thread on failure can detach",
+    "deferred initialization recovery offloads",
+    "other ingress/auth storage domains"
+  ],
+  "knowledge_decision": "Existing durable invariant cancellation does not prove physical stop already recorded; no duplicate Obsidian entry.",
+  "graphify": "Read existing recovery node and five adjacent edges, verify source; existing generated foreign work preserved, no generated refresh for two callsite wrappers."
+}
