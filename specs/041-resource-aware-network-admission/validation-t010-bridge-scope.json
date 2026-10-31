@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-31T01:09:00.906358+00:00",
+  "status": "PASS_PROCESS_IDENTITY_COMPONENT_T010_OPEN",
+  "scope": "Trusted scoped resource participant factory; Bridge control producer and input admission NOT integrated",
+  "base_head": "98550d4eaff11984c3cf7be0d75cb6f37b4fa264",
+  "candidate_source_stamp": "19729287b85e9670bda1cee336683aa6453186fb23a5b8443cd8e25706bfdc8e",
+  "tests": {
+    "total": 96,
+    "failure": 0,
+    "error": 0,
+    "skipped": 0,
+    "warnings": 2,
+    "pytest_seconds": 47.3,
+    "controller_seconds": 49.238,
+    "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t010-bridge-scope-final/t010-bridge-scope-final/receipt.json"
+  },
+  "closure": {
+    "exit_code": 0,
+    "support_preserved": true,
+    "source_preserved": true,
+    "descriptor_closed": true
+  },
+  "tested_files_sha256": {
+    "src/cli_agent_orchestrator/services/admission_bootstrap.py": "d5e8c587602ef4d0cd34a29629c3130a704411a29fcfad290b268825e2fe1f57",
+    "test/services/test_admission_process_scope.py": "a58974ac959127248b6c00a6ac1c1f81611e11a39afb7baff9118f55d454accd",
+    "test/postgres/test_admission_process_scope.py": "73ae860813abbcf8f9045db5c8f17c7d952d9af3a1e824384f0f913d767501b7"
+  },
+  "preserved_attempts": [
+    {
+      "phase": "t010-bridge-scope-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 9,
+        "failure": 9,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 43.077,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-scope-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 95,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 50.849,
+      "source_preserved": true
+    },
+    {
+      "phase": "t010-bridge-scope-concurrent-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 42.908,
+      "source_preserved": true
+    }
+  ],
+  "architecture": {
+    "files": 434,
+    "dependencies": 1924,
+    "kept": 5,
+    "broken": 0
+  },
+  "types": "mypy scoped1source PASS; follow-imports=silent, default untyped-method coverage",
+  "format": "Black/isort3filesPASS",
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": {
+    "reviewer": "Codex GPT6LunaMax ECC read-only",
+    "rounds": 2,
+    "findings": "Concurrent lru_cache cold misses produced inconsistent generations. RED reproduced and fixed with factory lock plus fork cache/lock reset.",
+    "verdict": "GO_PROCESS_IDENTITY_ONLY"
+  },
+  "graphify": {
+    "preimplementation_nodes": 34,
+    "incident_links": 151,
+    "verified_against_source": true,
+    "refresh": "Deferred: preserve pre-existing foreign graph changes; no Graphify files staged"
+  },
+  "limits": [
+    "No Bridge HTTP producer, input gate or shutdown integration yet",
+    "Direct fork callback reviewed but not exercised by exec child test",
+    "No M1/M2/M3, shared domain reservation, SDK/UI or global acceptance"
+  ],
+  "knowledge": {
+    "status": "COMPLETE",
+    "operation_id": "save-20261031-scoped-resource-identity",
+    "strict_lint_exit": 0
+  }
+}

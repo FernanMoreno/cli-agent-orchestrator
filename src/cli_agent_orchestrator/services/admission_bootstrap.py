@@ -4,11 +4,15 @@ import hashlib
 import json
 import os
 import stat
+import threading
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Literal
-from uuid import UUID
+from uuid import UUID, uuid4, uuid5
+
+import psutil
 
 from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeNotFound,
@@ -30,7 +34,74 @@ from cli_agent_orchestrator.services.admission_policy import validate_clock
 from cli_agent_orchestrator.services.local_peer_identity import (
     LocalProcessIdentity,
     current_process_identity,
+    get_persistent_instance_id,
 )
+
+
+@dataclass(frozen=True)
+class _ScopedProcessIdentity:
+    instance_id: str
+    process_generation: str
+    pid: int
+    process_started_at: float
+
+
+_SCOPED_IDENTITY_LOCK = threading.Lock()
+
+
+def _after_process_fork() -> None:
+    global _SCOPED_IDENTITY_LOCK
+    # A vanished parent thread may have held the lock at fork. No cached parent
+    # identity or held lock belongs to the new process.
+    _SCOPED_IDENTITY_LOCK = threading.Lock()
+    _scoped_identity.cache_clear()
+
+
+@lru_cache(maxsize=None)
+def _scoped_identity(pid: int, profile: str, scope: str) -> _ScopedProcessIdentity:
+    # A scope is a logical participant, never an authorization claim. Including
+    # the actual PID in the cache key prevents inheritance across fork.
+    try:
+        birth = psutil.Process(pid).create_time()
+    except (OSError, psutil.Error):
+        raise ValueError("Resource process identity is unavailable") from None
+    return _ScopedProcessIdentity(str(uuid5(UUID(profile), scope)), str(uuid4()), pid, birth)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_process_fork)
+
+
+def scoped_process_bootstrap(
+    scope: str, *, repository: ResourceEnvelopeRepository | None = None
+) -> "ResourceBootstrap":
+    """Bind one local resource participant without accessing peer credentials.
+
+    Trusted composition chooses the scope; requests cannot select identities.
+    Generations remain stable within this process and change after a restart.
+    """
+    if (
+        not isinstance(scope, str)
+        or not scope
+        or len(scope) > 256
+        or scope.strip() != scope
+        or not scope.isprintable()
+    ):
+        raise ValueError("Resource participant scope is invalid")
+    try:
+        profile = str(UUID(get_persistent_instance_id()))
+    except (OSError, RuntimeError, ValueError):
+        raise ValueError("Resource profile identity is unavailable") from None
+    # lru_cache protects its map, but does not serialize concurrent cold misses.
+    with _SCOPED_IDENTITY_LOCK:
+        identity = _scoped_identity(os.getpid(), profile, scope)
+    return ResourceBootstrap(
+        repository=repository,
+        binding_supplier=lambda target: capture_server_binding(
+            target, identity_supplier=lambda: identity
+        ),
+        instance_supplier=lambda: identity.instance_id,
+    )
 
 
 def _view_file(path: Path) -> bytes:
@@ -50,7 +121,9 @@ def _view_file(path: Path) -> bytes:
 def capture_server_binding(
     target: DatabaseTarget,
     *,
-    identity_supplier: Callable[[], LocalProcessIdentity] = current_process_identity,
+    identity_supplier: Callable[
+        [], LocalProcessIdentity | _ScopedProcessIdentity
+    ] = current_process_identity,
     proc_root: Path = Path("/proc"),
 ) -> ResourceBinding:
     """Capture a view fingerprint, never proof of unseen ancestors.
@@ -59,7 +132,7 @@ def capture_server_binding(
     not request fields, generic settings, environment flags or peer claims.
     """
 
-    def current_identity() -> LocalProcessIdentity:
+    def current_identity() -> LocalProcessIdentity | _ScopedProcessIdentity:
         try:
             return identity_supplier()
         except RuntimeError:
