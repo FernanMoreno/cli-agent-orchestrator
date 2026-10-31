@@ -14,6 +14,7 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
 from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.clients.postgres.connection import DatabaseError
 from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.models.admission_control import (
     AdmissionDiagnostics,
     RegisteredResourceEnvelope,
@@ -83,6 +84,7 @@ def control_error(error: Exception) -> HTTPException:
 
 
 _EXPECTED = (
+    StorageAdmissionUnavailable,
     EnvelopeRevisionConflict,
     EnvelopeNotFound,
     PermissionError,

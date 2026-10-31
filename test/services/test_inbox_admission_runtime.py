@@ -256,7 +256,7 @@ def test_runtime_factory_does_not_use_audit_pool_as_global_delivery_capacity(
     f = fixture()
     slots = 2 * deliveries
     f.repository.latest = replace(
-        f.record, claims=replace(f.record.claims, storage_budget_slots=slots)
+        f.record, claims=replace(f.record.claims, storage_budget_slots=slots + 1)
     )
     f.postgres.slots = slots
     calls = []

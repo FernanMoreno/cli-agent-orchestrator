@@ -147,7 +147,8 @@ class InboxAdmissionRuntime:
                 if token is None:
                     if self._closing:
                         raise AdmissionRuntimeUnavailable("admission runtime is stopped")
-                    return callback()
+                    with self.monitor.authority_read():
+                        return self.monitor.control_call(callback)
                 with self.monitor.authority_change(token):
                     return callback()
 
@@ -315,11 +316,12 @@ def runtime_from_environment(
         raise ValueError("resource admission requires configured operator authentication")
     if not _PROCESS_PRESSURE.process_current:
         raise AdmissionRuntimeUnavailable("process storage ownership is unavailable")
-    owner = DeliveryAdmission(AdmissionPolicy())
+    owner, storage_control = DeliveryAdmission.with_storage_control(AdmissionPolicy())
     bootstrap = bootstrap_factory() if bootstrap_factory is not None else ResourceBootstrap()
     monitor = AdmissionMonitor(
         owner,
         policy_loader=AdmissionPolicyLoader(source=lambda: read_private_operator_policy(path)),
+        storage_control=storage_control,
         bootstrap=bootstrap,
         postgres=_PROCESS_PRESSURE,
         scope_id=f"{uuid4()}:{path}",

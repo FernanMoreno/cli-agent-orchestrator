@@ -1,0 +1,225 @@
+{
+  "schema": "caos.spec041.validation.v1",
+  "verified_utc": "2026-10-31T21:27:04.407088+00:00",
+  "base_head": "b979fc0018984ff846f0ebc0d6ecab58325849c7",
+  "status": "protected SQL control component validated",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_cli_executed": false,
+  "tested_files": {
+    "src/cli_agent_orchestrator/api/admission_routes.py": "sha256:42ad370671a7deec0c1ea6cc5337395fbc717aeb11fc009fe1486812ac49ec49",
+    "src/cli_agent_orchestrator/models/admission_control.py": "sha256:c60ccfa02adfd4809e128b234abff49b15bfd4bb99ef59098bf26073329a7ac8",
+    "src/cli_agent_orchestrator/services/admission_diagnostics.py": "sha256:510068999dbacbda571298869525ac4b3c95861bad5ac729f289446bad13d36c",
+    "src/cli_agent_orchestrator/services/admission_monitor.py": "sha256:214073c7efb7643222fc1a836c0745e208d29bf01ab1c8ee7048bc1765b4b738",
+    "src/cli_agent_orchestrator/services/delivery_admission.py": "sha256:2fb4096e72065da41a8dcdf8ce125bf86d0b82253080d283aa68cc0a1e14dcb7",
+    "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": "sha256:b956480737e21ab9c332fa5b65897d8da3c32e62c5c28ebbee5b3706f90d2944",
+    "test/integration/test_admission_storage_control.py": "sha256:e99170c12da208ec2fbe061f30fdea36e4bac856e2069b7ff479b839efcd6956",
+    "test/postgres/test_admission_control_http.py": "sha256:de9618549acc4035c41a7ea3feaba047570f21f781f2a2c9cd3d7e4d9740a179",
+    "test/postgres/test_bridge_admission_control.py": "sha256:4b466929ee4a5fc33d65521807af3409febf9df63d28d124b5735f396f9d6449",
+    "test/services/test_admission_storage_control.py": "sha256:34a5e4d1606944c09fc3381d936a54c231f479597ed81e941b410f4e5dac7e74",
+    "test/services/test_inbox_admission_runtime.py": "sha256:093fe94303ce2c1e0e45e2e730c1e560df369ca3039355bcf03f3af9dc105d99"
+  },
+  "phases": [
+    {
+      "phase": "t018-control-red",
+      "cases": {
+        "total": 6,
+        "failure": 6,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 48.928,
+      "available_mib": 8673,
+      "candidate_sha256": "sha256:44cf4660044404c35c17743c4614f2d6c3c339bb53f6b1ac120732dd84f9667e",
+      "archive_sha256": "sha256:443f772f58720f65a6af155951607cbe06cc62a53a8c9bd692a1d02e574cbe66",
+      "receipt_sha256": "sha256:741816f250e1df517f4dff6e85e06e5939618662b5023ec219228d9a49240376",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-control-core",
+      "cases": {
+        "total": 57,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 51.304,
+      "available_mib": 8753,
+      "candidate_sha256": "sha256:ef6a38f53406dc8b50552850f598e5268a38695eb43a31fb67ef1b283c2ccc42",
+      "archive_sha256": "sha256:955c29ae8fcd1904c87a3654cb69bde79fb3b1f7360acd7327fdfee4ea78a981",
+      "receipt_sha256": "sha256:acb263240d8d9ed2a23c300c00de02a57f4cbfc529a66364d835530587059217",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-control-monitor-red",
+      "cases": {
+        "total": 12,
+        "failure": 6,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 47.805,
+      "available_mib": 8718,
+      "candidate_sha256": "sha256:44116d5cad01e95d90c7a120c87295b4df856a942e5408de09c4189ebe87efaf",
+      "archive_sha256": "sha256:c3ee706ea30e873200cc66003a3a8c5cd1da9836e10271a5ef9ad1587f37bf28",
+      "receipt_sha256": "sha256:b5368c260e355c980e528573e689eb1ad6c703cc8b5068b37631ab3b30dcf9db",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-control-wiring",
+      "cases": {
+        "total": 85,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 81.695,
+      "available_mib": 8757,
+      "candidate_sha256": "sha256:76f89b2ac95cc67d31734611c59659e9b63a56e64f7df3e1a6fa96356e29e6d7",
+      "archive_sha256": "sha256:381231d9ae10f61e40927ac93b35cfe9a294ee07d20641ed4d93591c939e0e1b",
+      "receipt_sha256": "sha256:5421e5463f8e99927b0083892ad3da8b5a4eb4846c2d3ba98ab41e5cf81375ec",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-control-final",
+      "cases": {
+        "total": 214,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 112.033,
+      "available_mib": 8696,
+      "candidate_sha256": "sha256:883d936ce3cd6a4c6d2cd626f80476afb0af5d40c556fa620f5fb0ff10b0be5d",
+      "archive_sha256": "sha256:22b4ce28ac60869d4bd51622363569e914efaed7d2e7f2781cb461d1a22b1ac5",
+      "receipt_sha256": "sha256:c0828f3a96d69851d7882147b1494361769fe482bdb935633ab531270ab180b0",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-control-preflight-red",
+      "cases": {
+        "total": 2,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 51.219,
+      "available_mib": 8729,
+      "candidate_sha256": "sha256:dc3ddab39231a77985b279a787d1dcb9fee71aa4401b480fd4df17948531dcc9",
+      "archive_sha256": "sha256:493ec8af32a0d0ec7bbf6b660b73bb9ec32e52eeed5c9396197877af53ad9fd6",
+      "receipt_sha256": "sha256:789e6fdb9e2fc1cb0b3fcf5df7be017dd762ae7bcd0b5c2e15345e45b35b8288",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-control-regression",
+      "cases": {
+        "total": 216,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 111.422,
+      "available_mib": 8646,
+      "candidate_sha256": "sha256:57c0071bf7e2f6ec24474dc0848f73156faa08766a7e1f6628009ef5f0a9df47",
+      "archive_sha256": "sha256:da67dc7470132ac1c40c090fbbce10af3686f30c5f1cb482bd057aedd46f1197",
+      "receipt_sha256": "sha256:598d3b7640856b986d60edecfb644b18bff367be087fa8aec57c5909eff36fc6",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "unused_descriptors": [],
+  "final_pytest": {
+    "passed": 216,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 18,
+    "pytest_seconds": 97.85,
+    "controller_seconds": 111.422
+  },
+  "earlier_checkpoints": {
+    "core": 57,
+    "wiring": 85,
+    "pre_review": 214,
+    "overlap": true,
+    "note": "214 PASS lacked the pre-callback denial regression; it was not final acceptance. The added regression reproduced 1 FAIL / 1 PASS before the correction."
+  },
+  "format": {
+    "black": 11,
+    "isort": 11,
+    "passed": true
+  },
+  "types": {
+    "modules": 6,
+    "passed": true,
+    "follow_imports": "silent"
+  },
+  "architecture": {
+    "files": 440,
+    "dependencies": 1960,
+    "kept": 5,
+    "broken": 0,
+    "log_sha256": "sha256:b1593cb3d54ef94b1914c8f3cbfec363b39d6916d0c200fc8f0ef16e09f359cc"
+  },
+  "postgres_closure": {
+    "container_id": "sha256:58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": {
+    "mode": "read only",
+    "reviewer": "GPT-6 Luna Max with ECC guidance; Codex sole writer",
+    "core_rounds": 1,
+    "wiring_rounds": 2,
+    "actionable_finding": "Preflight denial entered authority uncertainty before callback execution. Reproduced, fixed by entering the protected scope before the mutation-entry marker, rechecked. Errors after callback entry remain uncertain.",
+    "final": "No material blockers reported in bounded corrected component; executable checks performed by lead."
+  },
+  "scope": [
+    "Private control permit and started storage-only lease share the exact process owner, PID guard, operation registry and physical loan tokens.",
+    "One simultaneous infrastructure loan, sequential reuse only after physical retirement; no receiver or delivery CPU/RAM costs.",
+    "Normal storage and delivery reservations remain closed for unknown authority.",
+    "Effective data budget max(0,S-1) precedes reconfigure, recovery and ceiling; PostgreSQL inventory is neither incremented nor double-debited.",
+    "Three monitor SQL stages and administrative read/write workers use the protected scope. Registered reads serialize without write invalidation.",
+    "Exact failed-close backend remains charged until actual close; concurrent registered read cannot open a second protected session.",
+    "Cached diagnostics distinguish reserved infrastructure, active operation and physical loan from data quantities; GET keeps zero I/O.",
+    "Real PostgreSQL adapters and HTTP/JWKS API/Bridge registration, CAS/revocation/ACL retain their existing assertions. Complete hierarchy in the three-stage probe fixture is controlled evidence, not physical M1 acceptance.",
+    "Factory tests retain 5/20/40 logical delivery footprints with two physical sessions each and an additional infrastructure credit in the envelope. These are simulated eligibility tests, not native concurrent models."
+  ],
+  "not_accepted": [
+    "T018 startup init_db/recovery before runtime binding",
+    "Remaining API/MCP and composite-operation normal SQL ingress, including target/domain provenance and sticky denial",
+    "Combined physical budgets / M1 acceptance T019",
+    "M2 shared reservations T012-T014",
+    "M3 ordinary elastic placement T015-T016",
+    "SDK/UI T022-T023, distributed US6 and global/provider gates"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261031-protected-sql-entry",
+    "applied": true,
+    "approval_sha256": "sha256:4a353f1c5c1e0e0f7f8efada07e017ee916d617a494f2fddeb2c5bb3b79d38c4",
+    "strict_lint_exit": 0
+  }
+}

@@ -97,6 +97,9 @@ def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> Ad
             storage_connection_loans=status.storage_connection_loans,
             storage_completion_credits=status.storage_completion_credits,
             storage_retirement_pending=status.storage_retirement_pending,
+            control_storage_slots=status.control_storage_slots,
+            control_inflight=status.control_inflight,
+            control_connection_loans=status.control_connection_loans,
         ),
         monitor=MonitorDiagnostics(
             stopping=value.stopping,

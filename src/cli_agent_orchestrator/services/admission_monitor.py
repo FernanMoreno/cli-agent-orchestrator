@@ -5,12 +5,13 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Callable, Iterator, Literal, Protocol
+from typing import Callable, Iterator, Literal, Protocol, TypeVar
 
 from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeNotFound,
     EnvelopeRevisionConflict,
 )
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.services.admission_bootstrap import (
     ResourceBootstrap,
     VerifiedResourceAttestation,
@@ -40,7 +41,10 @@ from cli_agent_orchestrator.services.delivery_admission import (
     AdmissionLedgerDiagnostic,
     AdmissionReason,
     DeliveryAdmission,
+    StorageControlPermit,
 )
+
+_ControlResult = TypeVar("_ControlResult")
 
 MonitorReason = (
     AdmissionReason
@@ -172,6 +176,7 @@ class AdmissionMonitor:
         owner: DeliveryAdmission,
         *,
         policy_loader: AdmissionPolicyLoader,
+        storage_control: StorageControlPermit | None = None,
         bootstrap: ResourceBootstrap,
         postgres: PostgresPressureSampler,
         scope_id: str,
@@ -182,6 +187,11 @@ class AdmissionMonitor:
     ):
         if not isinstance(scope_id, str) or not scope_id.strip():
             raise ValueError("monitor requires an operator source scope")
+        if owner.control_storage_slots != int(storage_control is not None) or (
+            storage_control is not None and not storage_control.belongs_to(owner)
+        ):
+            raise ValueError("monitor requires its exact process storage control permit")
+        self._storage_control = storage_control
         self.owner = owner
         self._policy_loader = policy_loader
         self._bootstrap = bootstrap
@@ -265,8 +275,11 @@ class AdmissionMonitor:
                     raise AuthorityChangeUnavailable("resource authority outcome is uncertain")
                 self._retired.clear()
                 self.owner.invalidate(expected_generation=self.owner.generation)
+            # A refused physical preflight proves the callback never entered.
+            # Only failures after this exact boundary can make its SQL uncertain.
+            with self._control_operation():
                 entered = True
-            yield
+                yield
         except BaseException as error:
             if entered and type(error) not in (EnvelopeRevisionConflict, EnvelopeNotFound):
                 with self._lifecycle_guard:
@@ -279,6 +292,32 @@ class AdmissionMonitor:
             if acquired:
                 self._retired.set()
                 self._refresh_guard.release()
+
+    @contextmanager
+    def _control_operation(self) -> Iterator[None]:
+        if self._storage_control is None:
+            yield  # Explicit legacy/manual construction only.
+        else:
+            with self._storage_control.operation(clock=self._clock):
+                yield
+
+    def control_call(self, callback: Callable[[], _ControlResult]) -> _ControlResult:
+        """Bind only inside the joined SQL worker, never its async waiter."""
+        with self._control_operation():
+            return callback()
+
+    @contextmanager
+    def authority_read(self) -> Iterator[None]:
+        """Serialize registered reads with probes/writes without write invalidation."""
+        with self._refresh_guard:
+            with self._lifecycle_guard:
+                if self._stopped:
+                    raise AuthorityChangeUnavailable("resource authority reader is stopped")
+                self._retired.clear()
+            try:
+                yield
+            finally:
+                self._retired.set()
 
     def _linux_sampler(self, attestation: VerifiedResourceAttestation) -> LinuxResourceSampler:
         return LinuxResourceSampler(
@@ -354,6 +393,8 @@ class AdmissionMonitor:
                 if self._stopped or lifecycle != self._lifecycle:
                     return MonitorResult("stopping")
             return self._cycle(generation)
+        except StorageAdmissionUnavailable:
+            return self._invalidate(generation, "probe_busy")
         except Exception:
             # Close stale admission even for a programming error, then expose it
             # to the owning caller instead of converting it to a healthy sample.
@@ -370,14 +411,14 @@ class AdmissionMonitor:
         configuration = loaded.configuration
         if configuration is None:
             return self._invalidate(generation, "policy_unavailable")
-        attestation = self._bootstrap.load_current().attestation
+        attestation = self.control_call(self._bootstrap.load_current).attestation
         if not is_verified_resource_attestation(attestation):
             return self._invalidate(generation, "authority_unavailable", reset_resources=True)
         assert attestation is not None
         budget = ResourceAmounts(
             attestation.claims.memory_budget_bytes,
             attestation.claims.cpu_budget_millicores,
-            attestation.claims.storage_budget_slots,
+            max(0, attestation.claims.storage_budget_slots - self.owner.control_storage_slots),
         )
         configured = self.owner.reconfigure(
             configuration.policy, budget=budget, expected_generation=generation
@@ -414,7 +455,7 @@ class AdmissionMonitor:
                 # Sampler parameters are installed; a subsequent published
                 # observation must still establish their capacity basis.
                 self._last_configuration = CachedAdmissionConfiguration(generation, configuration)
-        pressure_sample = self._postgres.sample()
+        pressure_sample = self.control_call(self._postgres.sample)
         with self._lifecycle_guard:
             self._last_postgres_probe = CachedPostgresProbe(
                 generation, pressure_sample, configuration.postgres
@@ -438,7 +479,7 @@ class AdmissionMonitor:
         with self._lifecycle_guard:
             self._last_resource_probe = CachedResourceProbe(generation, resource_sample)
         sample = resource_sample.observation
-        checked = self._bootstrap.load_current().attestation
+        checked = self.control_call(self._bootstrap.load_current).attestation
         if (
             not is_verified_resource_attestation(checked)
             or checked is None

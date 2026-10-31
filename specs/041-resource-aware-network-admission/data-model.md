@@ -39,3 +39,8 @@ CachedAdmissionConfiguration identifica configuración instalada y referencia pr
 Connection distingue _owns_raw y fachada borrow. StorageCloseRegistry mantiene raw/callback/closed-witness/loans opcionales por identidad en el PID; un record sin loan sigue siendo pendiente. PostgresPressureSampler lleva PID y referencia incierta, y retire_owned solo confirma cierre tras el retry del registro. Apertura incierta sin handle conserva el latch.
 
 El lifecycle del runtime une su pasada de retry tras los cuerpos físicos, mantiene binding hasta los cuatro testigos (registry limpio/sampler/owner/monitor) y no interpreta cancelación como cierre. El fork crea sampler propio tras detach confirmado y conserva referencias extranjeras sin locks/retirar tokens.
+
+
+## Crédito protegido de SQL T018
+
+StorageControlPermit privado por identidad y PID; _StorageControlReservation iniciada en el mismo registro, sin receptor/coste RAM/CPU. Un préstamo físico simultáneo; retorno exacto permite secuencia. Crédito reservado1 y actividad se muestran separados de committed normal; operaciones/préstamos totales incluyen control. Budget normal S−1 se instala antes de recovery. Denegación anterior a callback no marca autoridad incierta; el scope protege ejecución y cierre antes del retirement. No modelo de dominio compartidoM2 ni autorización nueva de datos.

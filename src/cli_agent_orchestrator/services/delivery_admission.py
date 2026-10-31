@@ -2,12 +2,16 @@
 
 import os
 import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from itertools import count
 from typing import Literal
 
 from cli_agent_orchestrator.clients.storage_admission import (
     StorageAdmissionUnavailable,
+    check_storage_admission,
+    physical_storage_scope,
     storage_close_uncertainty,
 )
 from cli_agent_orchestrator.services.admission_policy import (
@@ -56,6 +60,9 @@ class AdmissionSnapshot:
     storage_retirement_pending: int = 0
     storage_only_inflight: int = 0
     storage_only_started: int = 0
+    control_storage_slots: int = 0
+    control_inflight: int = 0
+    control_connection_loans: int = 0
 
     @property
     def delivery_inflight(self) -> int:
@@ -319,6 +326,70 @@ class StorageReservation(DeliveryReservation):
         super().__init__(owner, key, None, footprint)
 
 
+class _StorageControlReservation(StorageReservation):
+    """Already started infrastructure credit, excluded from normal data costs."""
+
+    def try_acquire_storage_connection(self, *, now: float) -> StorageConnectionReservation | None:
+        validate_clock(now)
+        owner = self._owner
+        with owner._guard:
+            if (
+                owner._control_lease is not self
+                or owner._leases.get(self._key) is not self
+                or self._state != "started"
+                or self._retirement_requested
+                or self._storage_connections
+            ):
+                return None
+            loan = StorageConnectionReservation(self, False)
+            self._storage_connections.add(loan)
+            owner._storage_connection_loans += 1
+            return loan
+
+    def take_storage_stage(self, *, now: float) -> StorageStageReservation | None:
+        validate_clock(now)
+        return None  # Control cannot convert its infrastructure credit into a data stage.
+
+
+class StorageControlPermit:
+    """Private server wiring capability; exact identity, never a capacity claim."""
+
+    def __init__(self, owner: "DeliveryAdmission"):
+        self._owner = owner
+
+    def belongs_to(self, owner: "DeliveryAdmission") -> bool:
+        return self._owner is owner and owner._control_permit is self
+
+    @contextmanager
+    def operation(self, *, clock: Callable[[], float]) -> Iterator[None]:
+        owner = self._owner
+        validate_clock(clock())
+        with owner._guard:
+            if (
+                not self.belongs_to(owner)
+                or not owner._accepting
+                or owner._control_lease is not None
+                or storage_close_uncertainty()
+            ):
+                raise StorageAdmissionUnavailable()
+            key = next(owner._sequence)
+            lease = _StorageControlReservation(owner, key, ResourceAmounts())
+            lease._state = "started"
+            owner._control_lease = lease
+            owner._leases[key] = lease
+            owner._started += 1
+            owner._storage_only_inflight += 1
+            owner._storage_only_started += 1
+        try:
+            with physical_storage_scope(lease, clock=clock):
+                try:
+                    yield
+                finally:
+                    check_storage_admission()
+        finally:
+            lease.finish_after_storage()
+
+
 class DeliveryAdmission:
     """One ledger shared by local entry paths; not a cluster reservation.
 
@@ -331,6 +402,8 @@ class DeliveryAdmission:
         self._validate_configuration(policy, budget)
         self._policy = policy
         self._budget = budget
+        self._control_permit: StorageControlPermit | None = None
+        self._control_lease: _StorageControlReservation | None = None
         self._committed = ResourceAmounts()
         self._pid = os.getpid()
         self._process_guard = threading.RLock()
@@ -349,6 +422,21 @@ class DeliveryAdmission:
         self._observation: CapacityObservation | None = None
         self._observation_ceiling: ResourceAmounts | None = None
         self._decision = AdmissionDecision(0, "unknown_capacity")
+
+    @classmethod
+    def with_storage_control(
+        cls, policy: AdmissionPolicy
+    ) -> tuple["DeliveryAdmission", StorageControlPermit]:
+        """Trusted process activation, before binding its consumers."""
+        owner = cls(policy)
+        permit = StorageControlPermit(owner)
+        owner._control_permit = permit
+        return owner, permit
+
+    @property
+    def control_storage_slots(self) -> int:
+        with self._guard:
+            return int(self._control_permit is not None)
 
     @property
     def _guard(self) -> threading.RLock:
@@ -570,6 +658,8 @@ class DeliveryAdmission:
                 self._storage_only_started -= 1
         if isinstance(lease, StorageReservation):
             self._storage_only_inflight -= 1
+        if self._control_lease is lease:
+            self._control_lease = None
         self._committed = self._committed - lease._remaining
         lease._remaining = ResourceAmounts()
         self._leases.pop(lease._key)
@@ -638,11 +728,18 @@ class DeliveryAdmission:
             resource_debt=debt,
             storage_connection_loans=self._storage_connection_loans,
             storage_completion_credits=(
-                self._committed.storage_slots - self._additional_storage_connections
+                self._committed.storage_slots
+                - self._additional_storage_connections
+                + int(self._control_lease is not None)
             ),
             storage_retirement_pending=self._storage_retirement_pending,
             storage_only_inflight=self._storage_only_inflight,
             storage_only_started=self._storage_only_started,
+            control_storage_slots=int(self._control_permit is not None),
+            control_inflight=int(self._control_lease is not None),
+            control_connection_loans=(
+                len(self._control_lease._storage_connections) if self._control_lease else 0
+            ),
         )
         return snapshot, decision
 

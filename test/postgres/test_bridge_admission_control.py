@@ -38,13 +38,14 @@ async def test_bridge_real_http_jwt_registration_keeps_incomplete_coverage_close
         "bridge-resource/native-http",
         repository=ResourceEnvelopeRepository(target_supplier=lambda: resource_target),
     )
-    owner = DeliveryAdmission(AdmissionPolicy())
+    owner, control = DeliveryAdmission.with_storage_control(AdmissionPolicy())
     bridge = Bridge(
         "ws://isolated", "native-http", "channel-token-is-not-an-admin", store=SimpleNamespace()
     )
     port = participant_api.BridgeAdmissionParticipant(bridge)
     monitor = AdmissionMonitor(
         owner,
+        storage_control=control,
         policy_loader=AdmissionPolicyLoader(source=lambda: {"version": 1, "policy": {}}),
         bootstrap=bootstrap,
         postgres=PostgresPressureSampler(target_supplier=lambda: resource_target),

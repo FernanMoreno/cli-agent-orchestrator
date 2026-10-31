@@ -164,6 +164,9 @@ class AdmissionOperationDiagnostics(StrictControlModel):
     storage_connection_loans: StrictInt = Field(ge=0)
     storage_completion_credits: StrictInt = Field(ge=0)
     storage_retirement_pending: StrictInt = Field(ge=0)
+    control_storage_slots: StrictInt = Field(default=0, ge=0, le=1)
+    control_inflight: StrictInt = Field(default=0, ge=0, le=1)
+    control_connection_loans: StrictInt = Field(default=0, ge=0, le=1)
 
     @model_validator(mode="after")
     def consistent_counts(self) -> "AdmissionOperationDiagnostics":
@@ -173,6 +176,10 @@ class AdmissionOperationDiagnostics(StrictControlModel):
             or self.reserved_operations != self.inflight_operations - self.started_operations
             or self.started_deliveries > self.inflight_deliveries
             or self.started_storage_only > self.inflight_storage_only
+            or self.control_inflight > self.control_storage_slots
+            or self.control_inflight > self.started_storage_only
+            or self.control_connection_loans > self.control_inflight
+            or self.control_connection_loans > self.storage_connection_loans
         ):
             raise ValueError("inconsistent admission operation counters")
         return self

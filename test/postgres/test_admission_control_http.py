@@ -61,9 +61,10 @@ def test_real_http_admin_registration_cas_revocation_and_runtime_acl(
         ),
         instance_supplier=lambda: identity.instance_id,
     )
-    owner = DeliveryAdmission(AdmissionPolicy())
+    owner, control = DeliveryAdmission.with_storage_control(AdmissionPolicy())
     monitor = AdmissionMonitor(
         owner,
+        storage_control=control,
         policy_loader=AdmissionPolicyLoader(source=lambda: {"version": 1, "policy": {}}),
         bootstrap=bootstrap,
         postgres=PostgresPressureSampler(target_supplier=lambda: target),
