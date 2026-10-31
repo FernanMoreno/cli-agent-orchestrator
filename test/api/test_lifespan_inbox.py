@@ -26,7 +26,7 @@ Mocking notes:
 
 import asyncio
 from contextlib import ExitStack, contextmanager
-from types import SimpleNamespace
+from types import CodeType, SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,6 +34,7 @@ import pytest
 from cli_agent_orchestrator.api.main import app, lifespan
 from cli_agent_orchestrator.backends.herdr_backend import HerdrBackend
 from cli_agent_orchestrator.plugins import PluginRegistry
+from cli_agent_orchestrator.services.storage_operation_admission import StorageOperationAdmission
 
 # --- Test doubles -------------------------------------------------------
 
@@ -65,11 +66,22 @@ class _FakeTask:
 def _make_fake_create_task(tasks: list) -> object:
     """Build a ``create_task`` replacement that records every created task."""
 
+    from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+    owned_codes = [
+        item
+        for item in run_owned_async.__code__.co_consts
+        if isinstance(item, CodeType) and item.co_name == "invoke"
+    ]
+    assert len(owned_codes) == 1
+
     def _fake_create_task(coro, *_args, **_kwargs) -> _FakeTask | asyncio.Task[None]:
         # Fake only the long-running actors. Discarding the finite shutdown
         # coroutine would skip the very cancellation/registry assertions this
         # fixture verifies. Use the loop directly to avoid this patched factory.
-        if asyncio.iscoroutine(coro) and coro.cr_code.co_name == "shutdown_running_lifespan":
+        if asyncio.iscoroutine(coro) and (
+            coro.cr_code.co_name == "shutdown_running_lifespan" or coro.cr_code is owned_codes[0]
+        ):
             return asyncio.get_running_loop().create_task(coro)
         task = _FakeTask(coro)
         tasks.append(task)
@@ -392,7 +404,9 @@ def _patched_real_inbox_lifespan(monkeypatch, *, timeout_override: float | None 
     monkeypatch.setattr(
         interactions_service,
         "get_default_interaction_service",
-        lambda: SimpleNamespace(initialize=lambda: None),
+        lambda: SimpleNamespace(
+            initialize=lambda: None, storage_admission=StorageOperationAdmission()
+        ),
     )
     monkeypatch.setattr(main_module, "get_backend", lambda: object())
     monkeypatch.setattr(main_module, "shutdown_telemetry", lambda: None)
@@ -456,3 +470,14 @@ async def _release_after_fifo_attempt(state: SimpleNamespace) -> None:
 
 async def _no_op_async(*_args, **_kwargs) -> None:
     return None
+
+
+@pytest.mark.asyncio
+async def test_task_double_executes_the_exact_owned_finite_worker():
+    from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+    tasks = []
+    with patch("asyncio.create_task", _make_fake_create_task(tasks)):
+        result = await run_owned_async(asyncio.sleep(0, result="finite callback executed"))
+    assert result == "finite callback executed"
+    assert tasks == []

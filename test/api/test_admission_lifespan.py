@@ -25,6 +25,9 @@ def wired_server(composed_server, monkeypatch):
         def factory(selected):
             assert selected is inbox
             f = operational_fixture()
+            f.repository.resolve_target = (
+                lambda: main.app.state.interaction_service.repository.target
+            )
             value = module.InboxAdmissionRuntime(
                 inbox,
                 monitor=f.monitor,

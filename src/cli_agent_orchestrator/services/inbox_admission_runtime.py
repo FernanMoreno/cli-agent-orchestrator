@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Generic, Protocol, TypeVar
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.storage_admission import storage_process_current
 from cli_agent_orchestrator.models.admission_control import AdmissionDiagnostics
 from cli_agent_orchestrator.models.resource_envelope import (
@@ -87,6 +88,8 @@ class InboxAdmissionRuntime:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._started = False
         self._closing = False
+        self._storage_participants: list[AdmissionParticipant] = []
+        self._bound_storage_participants: list[AdmissionParticipant] = []
         self._bound = False
         self._retired = False
         self._call: _ControlCall[Any] | None = None
@@ -104,6 +107,20 @@ class InboxAdmissionRuntime:
     def available(self) -> bool:
         return self._started and not self._closing and not self._retired
 
+    def add_storage_participant(
+        self, participant: AdmissionParticipant, *, target: DatabaseTarget
+    ) -> None:
+        """Trusted composition only, before binding any process participant."""
+        if self._bound or self._started or self._closing or self._retired:
+            raise AdmissionRuntimeUnavailable("storage participants must be wired before start")
+        if not self.bootstrap.matches_primary_target(target):
+            raise ValueError("storage participant requires the configured main target")
+        if participant is self.inbox or any(
+            item is participant for item in self._storage_participants
+        ):
+            raise ValueError("storage participant is already registered")
+        self._storage_participants.append(participant)
+
     async def start(self) -> None:
         if self._started or self._closing or self._retired:
             raise AdmissionRuntimeUnavailable("admission runtime cannot restart")
@@ -112,18 +129,31 @@ class InboxAdmissionRuntime:
             self.monitor.owner, clock=self._clock, retirement=lambda: self.retired
         )
         self._bound = True
-        self.inbox.start_accepting()
         try:
+            for participant in self._storage_participants:
+                participant.bind_admission(
+                    self.monitor.owner, clock=self._clock, retirement=lambda: self.retired
+                )
+                self._bound_storage_participants.append(participant)
+            self.inbox.start_accepting()
+            for participant in self._bound_storage_participants:
+                participant.start_accepting()
             await self.monitor.start()
         except BaseException:
             self.inbox.stop_accepting()
+            for participant in self._bound_storage_participants:
+                participant.stop_accepting()
             raise
         self._started = True
 
     def close_admission(self) -> None:
+        if self._retired:
+            return  # Shared participants may already belong to a newer lifetime.
         self._closing = True
         if self._bound:
             self.inbox.stop_accepting()
+        for participant in self._bound_storage_participants:
+            participant.stop_accepting()
         self.monitor.stop_accepting()
 
     def _check_request(self, principal: object) -> None:
@@ -254,7 +284,24 @@ class InboxAdmissionRuntime:
                 timeout = float(
                     max(settings["provider_init_timeout"], settings["mcp_request_timeout"])
                 )
-            await self.inbox.drain(timeout_s=timeout)
+            from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+            async def drain_participants() -> None:
+                results = await asyncio.gather(
+                    self.inbox.drain(timeout_s=timeout),
+                    *(
+                        participant.drain(timeout_s=timeout)
+                        for participant in self._bound_storage_participants
+                    ),
+                    return_exceptions=True,
+                )
+                for result in results:
+                    if isinstance(result, BaseException):
+                        raise result
+
+            # Join every participant even if another one fails or the waiter
+            # is cancelled; no lease/binding is erased by a partial drain.
+            await run_owned_async(drain_participants())
         from cli_agent_orchestrator.clients.storage_admission import retry_storage_closes
         from cli_agent_orchestrator.services.work_blocking import run_owned_async
 

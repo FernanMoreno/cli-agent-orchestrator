@@ -136,6 +136,18 @@ def physical_storage_scope(
         _CURRENT.reset(token)
 
 
+def _current_storage_owner() -> StorageConnectionOwner | None:
+    """Trusted service composition inspects the exact current physical scope."""
+    scope = _CURRENT.get()
+    if not _PROCESS_STORAGE_CLOSES.process_current or (
+        scope is not None and not scope.is_current()
+    ):
+        if scope is not None:
+            scope.fail()
+        raise StorageAdmissionUnavailable()
+    return scope.owner if scope is not None else None
+
+
 def acquire_storage_connection() -> StorageConnectionLoan | None:
     """Must precede physical checkout/open, including setup and pre-ping.
 

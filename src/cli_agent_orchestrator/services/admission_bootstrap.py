@@ -303,6 +303,18 @@ class ResourceBootstrap:
         )
         return AttestationUpdate(record.revision, record.active)
 
+    def matches_primary_target(self, target: DatabaseTarget) -> bool:
+        """Pin a service to the configured application store, not a shared-domain claim."""
+        if not isinstance(target, DatabaseTarget) or target.scope != "main":
+            return False
+        expected = self._repository.resolve_target()
+        return (
+            isinstance(expected, DatabaseTarget)
+            and expected.scope == "main"
+            and expected.identity == target.identity
+            and expected.store_id == target.store_id
+        )
+
     def load_current(self) -> AttestationLoadResult:
         try:
             at = self._clock()

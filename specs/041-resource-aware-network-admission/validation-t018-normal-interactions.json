@@ -1,0 +1,366 @@
+{
+  "schema": "caos.spec041.validation.v1",
+  "verified_utc": "2026-10-31T23:12:46.899466+00:00",
+  "base_head": "6d979d4baa1ba6168803758b17e5454abd687c95",
+  "status": "normal interaction SQL component validated",
+  "t018_complete": false,
+  "global_acceptance": false,
+  "native_model_or_provider_cli_executed": false,
+  "tested_files": {
+    "src/cli_agent_orchestrator/api/interactions.py": "sha256:b7d0bd1785d26d1376725446690647c5ec9d24b2aeab2dd04a57e153e731b798",
+    "src/cli_agent_orchestrator/api/main.py": "sha256:dcecf16bd4c4c4ceaa01aa2af6674fee0bb1764a5f3f666e94780b7a619d8724",
+    "src/cli_agent_orchestrator/clients/storage_admission.py": "sha256:de67f6de53e7c1ef438b8ca8f9b019c545181cbc53fbdf4269fb32197a8452b4",
+    "src/cli_agent_orchestrator/services/admission_bootstrap.py": "sha256:a04f3b41b00ad35725fab30e12e5a22090a5b09c0a489a64af2f573b01460ce2",
+    "src/cli_agent_orchestrator/services/delivery_admission.py": "sha256:dbe3b7839bd84ee8099cf7c5b7d980b68f7ee593736425b6e11f641028d0b3e6",
+    "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": "sha256:d34a2bbebbf64ecd2aa70c932e096e4a2926a81a3fdcaecede1ded9f24cb76b4",
+    "src/cli_agent_orchestrator/services/interactions/service.py": "sha256:7007d27a8b7f6b6d647ee48b74e7693df9e7c2c571e319a5bc489d7e772ddbce",
+    "src/cli_agent_orchestrator/services/storage_operation_admission.py": "sha256:9772a794b971d373fc9f684f1c43ede44e0924d313b6251fe6aeb2311d19ff04",
+    "test/api/test_admission_lifespan.py": "sha256:07570a2cf1f4bafc6d71a45c2bfc21b050f9c9141186986a5be903bf3562a403",
+    "test/api/test_interaction_storage_lifespan.py": "sha256:cf283315afe3fd8692d5b6d38d033d1de16d1ba747fbb1c3bc22c34f053d3ab2",
+    "test/api/test_interaction_storage_lifetime.py": "sha256:b9e8d22ef34e8bca939a0ae6dee576d61c78571dc2fb17064e301d47c8b4ec40",
+    "test/api/test_interactions_transport.py": "sha256:bcb04bc8723579e7e27d8ce0321381d9edbeccaf749de3609e88422334feaeaf",
+    "test/api/test_lifespan_inbox.py": "sha256:c8fd2c0d2a0a9b484c5d8ceaf1cc69fe2a12ce61d894eee994ec05f69c4b9071",
+    "test/api/test_scope_coverage.py": "sha256:317a23fb629edb1c701427429f9f0afbf7d7081244ce589c541aac5b1cb4643c",
+    "test/integration/test_interaction_storage_admission.py": "sha256:53a0a2f118c766d549eebf7b7e948aae67e2c8ce9a5772648d0ce021f371732b",
+    "test/integration/test_interaction_storage_runtime.py": "sha256:31d4c0035581027d1a4b1b0eb32fa83a4c3fa3338e9d9c32f9bb60c9b184fa52",
+    "test/services/test_storage_operation_admission.py": "sha256:0c792cc66e0467af57749bc7858287d8ca81a4fc4170c93be99df6f5e9e0498c"
+  },
+  "phases": [
+    {
+      "phase": "t018-normal-port-red",
+      "cases": {
+        "total": 8,
+        "failure": 8,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 49.081,
+      "available_mib": 8801,
+      "candidate_sha256": "sha256:b450570dc2147831b329e2b66e4dc09848664f496a93fb9c3f3e85237d57e669",
+      "archive_sha256": "sha256:6edeca35258b15c1eead28add3926c06c9c7c0f9faeb1c90801d0c58528dfe0c",
+      "receipt_sha256": "sha256:2c3cce01e2d9f3fa480e6e2de9ae4a8eba712eb3517cedaef841e4d9b3e73f4c",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-port-core",
+      "cases": {
+        "total": 75,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 55.491,
+      "available_mib": 8774,
+      "candidate_sha256": "sha256:a31fc50b844cbe5a846e6b8a05b01597bebce4b99cd675ee1fe5e43a3ab80d02",
+      "archive_sha256": "sha256:d0480f7132fe8f739dd3a57c9e0f176aa2f717152f9fd61d19ca3480fda65e0b",
+      "receipt_sha256": "sha256:8244b15ae1ae382385ce37bbda04240674a620c58adac91f11c3adb04c786ec4",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-port-boundaries-red",
+      "cases": {
+        "total": 3,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 49.323,
+      "available_mib": 8617,
+      "candidate_sha256": "sha256:5e6df04b856f8cd5b340ee2d1d394ba44b4b44dd81ebd0cbb15d832954e3cb1a",
+      "archive_sha256": "sha256:f69844f6656506a8c47b32c312e58a02e8ee24c3443e722f7f6aaa53c7af32af",
+      "receipt_sha256": "sha256:9b1bb11cde2d46a41e63325dc7b587d86ec8f03fc051466b86e7ea67a1f6d3a4",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-port-green",
+      "cases": {
+        "total": 78,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 53.965,
+      "available_mib": 8709,
+      "candidate_sha256": "sha256:1d9a41fe25535479faabfd97670392c326e5ee09cb90dfd43edb45d71d779ce3",
+      "archive_sha256": "sha256:bb8291ecb9c30214c08470b687197d6683ec0151d90746c907f37f5fdd107b9e",
+      "receipt_sha256": "sha256:fe219a293bd2d7aecbd237e93481916f4f0de14563f000367738abe9a57e7f65",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-interactions-red-r2",
+      "cases": {
+        "total": 6,
+        "failure": 6,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 71.979,
+      "available_mib": 8558,
+      "candidate_sha256": "sha256:503ddf4353a614e58596de029e5c6dcad6cadfb048fe6a89176e1773b4ab52a2",
+      "archive_sha256": "sha256:135d58168e2e7ba1b00986d13369c48122ae9a05a8a6fe64f7999f9f99c25a04",
+      "receipt_sha256": "sha256:8daee7e56405831b7fc9dccb5827fe5c733a2701c73b29269b649650b4e4e048",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-interactions-green",
+      "cases": {
+        "total": 59,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 127.409,
+      "available_mib": 7959,
+      "candidate_sha256": "sha256:6bef77cc8f084e4c4a3cdb0a93d4ff60cbf9a25721a3581168fb7f1ea7ba9fc4",
+      "archive_sha256": "sha256:346ceec172d5675cd99b76dded43efbdbff77de0cfe58fa77afdb184250b7231",
+      "receipt_sha256": "sha256:b38050b80387371d1b9388ed8408a3cde66c6296c7c67b035a016802fc1fd6c7",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-initialize-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 70.965,
+      "available_mib": 8549,
+      "candidate_sha256": "sha256:1455f1230585dfdd158665b92274077b559e62c563bd88579b46fa2c4d100041",
+      "archive_sha256": "sha256:45c6cc727e5600b3b59039467bff73f0998e90529e264cc52002dc237ac99717",
+      "receipt_sha256": "sha256:792f80c5c596b803f41aaff4de7f36b8c0600eddf15d53f407bda881f6dbea3f",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-interactions-regression",
+      "cases": {
+        "total": 461,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 770.242,
+      "available_mib": 8808,
+      "candidate_sha256": "sha256:f77976a5512e705b6b4c33f6644dcde0b0aa70ca780514300669bdc674beac2b",
+      "archive_sha256": "sha256:c4f6167368fa7f3760d2a49113f40812d9e044ad2aac583c8f6171e1e2aeb978",
+      "receipt_sha256": "sha256:5fb8866fe5fa73f2ce62f466e8aafa964e55f11cc7b82fe59417a0fae5dac36b",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-interactions-final",
+      "cases": {
+        "total": 463,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 751.038,
+      "available_mib": 8383,
+      "candidate_sha256": "sha256:6a5e2399cf208d3d9058ab460ae72979c2a2a840255e3f71b541ba5cd74fc6b1",
+      "archive_sha256": "sha256:da4497d90d7ec58400063976fbf7fbeaf1a84523d5a81f2262e1c8276e018b0a",
+      "receipt_sha256": "sha256:a83c8f40861558fb2eb079d77751a40cc62412cdd6ae7f46a7862d307664c112",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-api-boundaries-red",
+      "cases": {
+        "total": 4,
+        "failure": 3,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 91.782,
+      "available_mib": 8723,
+      "candidate_sha256": "sha256:a57af8572e7cace988e95bb22b1ad86842be11aad3ad2004657a53d817b79846",
+      "archive_sha256": "sha256:0203eea54ce7792e179f3e89461d8edc3e753b2390e2d7b001aac5de4b285d6f",
+      "receipt_sha256": "sha256:7fceb6b8eacdccfc814db2f631d5710ab9ff74d89fbf7c22cfcd3eaf6514114b",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-api-boundaries-green",
+      "cases": {
+        "total": 70,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 109.242,
+      "available_mib": 8456,
+      "candidate_sha256": "sha256:e7ab623c411bc5b9a8a29f4970f51f156e39b306087aff027f55cb74ed599bc9",
+      "archive_sha256": "sha256:16a6cb53d970f955f100c4c6ea00aac960bffe630aa8ec7b351c5aed65c36a59",
+      "receipt_sha256": "sha256:30eaff13cee3763a75947371ace8145263712cc68180e68187cd433e65bb508e",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-admission-authority-audit",
+      "cases": {
+        "total": 71,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 116.029,
+      "available_mib": 8785,
+      "candidate_sha256": "sha256:23cbe7fa3c7188fc2adbee3bcefe6acfdd34a128fc366482ab202b8fba5602dc",
+      "archive_sha256": "sha256:11d74d85932860fddc79f815190907b1c7ba57c02eb2ae05dada74952f475e4a",
+      "receipt_sha256": "sha256:078bb352bf5965d3b74f769e5a97af689bf6feb9df0ccdb783a453135458bcfd",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t018-normal-interactions-acceptance",
+      "cases": {
+        "total": 539,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 904.31,
+      "available_mib": 8643,
+      "candidate_sha256": "sha256:500319a356b9ce758e27729443a29d18a4b2033f0e1521a6be885a637f63e90e",
+      "archive_sha256": "sha256:c34704f85a7dd37fc2baea80324f328868acc761501498855040a992fc4839a9",
+      "receipt_sha256": "sha256:e7eaf73f3fc584f94b0e55a335450dd0b5838098f2d084145a26c9fb85ef6108",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "unused_descriptors": [
+    {
+      "phase": "t018-normal-interactions-red",
+      "executed": false,
+      "reason": "Cancellation regression added before execution; superseded by red-r2. Original descriptor remains closed."
+    }
+  ],
+  "final_pytest": {
+    "passed": 539,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 18,
+    "pytest_seconds": 888.42,
+    "controller_seconds": 904.31
+  },
+  "earlier_checkpoints": {
+    "core": 75,
+    "corrected_core": 78,
+    "wiring": 59,
+    "first_broad": 461,
+    "second_broad": 463,
+    "authority_audit": 71,
+    "overlap": true,
+    "not_final_acceptance": "Earlier broad PASS did not cover the late retired close, finite-task fake or final raw-call/authorization-audit changes; final includes all previous paths and new guards."
+  },
+  "additional_offline_reproducers": {
+    "sticky_epoch_denial": "AssertionError reproduced, _deny now marks physical parent; same script GREEN and pytest regression included.",
+    "bound_initialize": "Fake repository reproduced pre-admission schema access; real PG RED2 includes this and unjoined startup. Fixed both.",
+    "retired_runtime_close": "Corrected script reproduced stale owner closing rebound port; first omitted bootstrap and is preparation error only. Current script GREEN plus real two-runtime regression.",
+    "finite_task_double": "Correct PYTHONPATH script reproduced finite callback discarded; first missing test-module path is preparation error only. Fixed exact CodeType matching, sentinel regression GREEN.",
+    "capabilities_error": "Actual endpoint with sealed service mock reproduced uncaught StorageAdmissionUnavailable; now structured unavailable.",
+    "wrapped_authority_audit": "Permissive @wraps guard was incorrectly accepted; unwrapping/signature overrides now rejected; executable and pytest negatives included."
+  },
+  "format": {
+    "black": 17,
+    "isort": 17,
+    "passed": true
+  },
+  "types": {
+    "modules": 8,
+    "passed": true,
+    "follow_imports": "silent",
+    "main_untyped_body_notes_retained": true
+  },
+  "architecture": {
+    "files": 441,
+    "dependencies": 1967,
+    "kept": 5,
+    "broken": 0,
+    "log_sha256": "sha256:d61e2c145507cd25051d920262dca1b776f5f8c801611f89524c0df53a6dc112"
+  },
+  "postgres_closure": {
+    "container_id": "sha256:58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "review": {
+    "mode": "read only",
+    "reviewers": "GPT-6 Luna Max with ECC; Codex sole writer",
+    "corrected_findings": [
+      "Control could escape through an unbound service; exact normal scope validation now includes legacy.",
+      "Closed port blocked already owned completion; only exact normal started parent can finish, with no fresh grant.",
+      "Restart could cross active lifetimes; active-zero/epoch fence and sticky denial now apply.",
+      "Startup bound verification and cancellation needed complete physical boundaries.",
+      "Retired runtime could close a newly rebound Inbox/service.",
+      "Legacy task fake discarded finite owned work.",
+      "Capabilities raw authentication and AG-UI projection bypassed common join/error path.",
+      "Global authority audit lacked exact resource-admin recognition; wrapped signature could hide executed guard."
+    ],
+    "final": "Bounded corrected code reviewed without material outstanding ownership findings; executable verification performed by lead."
+  },
+  "scope": [
+    "Reusable StorageOperationAdmission; no per-provider quota or global delivery count.",
+    "Each main-store InteractionService transaction/read owns a normal storage-only footprint1 including cold schema verification, or reuses the exact current normal lease.",
+    "Control, foreign/copied scopes and stale epochs cannot authorize normal interaction SQL; errors mark sticky denial.",
+    "Logical lifetime spans waits without an independent storage credit during sleep; joined drain and physical owner retirement precede replacement.",
+    "API/MCP five typed questions and answer/ACK contract runs with real PG under normal admission; legacy contract assertions preserved.",
+    "Raw API invocation preserves AgentActor identity before JSON encoding. Capabilities overload is a fixed structured HTTP503 with zero SQL.",
+    "AG-UI projection uses an off-loop joined worker, preserves sanitized fallback and revocation validation; real SQL pause/cancel test keeps loop available.",
+    "Runtime joins all successful participant bindings even under errors/cancellation; pinning scope/main target/store_id is an application-store check, not shared-domain M2 proof.",
+    "A retired runtime cannot close the reused Inbox or service of its successor.",
+    "Global route audit verifies the actual sealed JWT/admin dependency, rejects weak/rebound/wrapped guards, and adds no open-read or mutating-route exemption.",
+    "Startup initializer waiter is joined even before runtime creation; that does not claim startup resource admission."
+  ],
+  "not_accepted": [
+    "T018 prebind init_db/initial recovery storage admission and process owner coordinator",
+    "Other raw API input SQL and browser-auth target/domain accounting",
+    "Synchronous SQL inside the three async wait polls can still block the loop; safe ownership is not a throughput/NFR acceptance claim",
+    "Combined physical budgets / M1 / T019, M2 shared reservations, M3 placement",
+    "SDK/UI / T022-T023, distributed US6, native provider and global gates"
+  ],
+  "obsidian": {
+    "operation_id": "save-20261101-normal-sql-lifetimes",
+    "applied": true,
+    "approval_sha256": "sha256:18ec6930059852ea921c0fe4bc6a674111b1c968a14cbea06890d98598c9386a",
+    "strict_lint_issues": 0,
+    "as_of": "2026-11-01"
+  }
+}

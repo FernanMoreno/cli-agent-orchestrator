@@ -44,3 +44,8 @@ El lifecycle del runtime une su pasada de retry tras los cuerpos físicos, manti
 ## Crédito protegido de SQL T018
 
 StorageControlPermit privado por identidad y PID; _StorageControlReservation iniciada en el mismo registro, sin receptor/coste RAM/CPU. Un préstamo físico simultáneo; retorno exacto permite secuencia. Crédito reservado1 y actividad se muestran separados de committed normal; operaciones/préstamos totales incluyen control. Budget normal S−1 se instala antes de recovery. Denegación anterior a callback no marca autoridad incierta; el scope protege ejecución y cierre antes del retirement. No modelo de dominio compartidoM2 ni autorización nueva de datos.
+
+
+## Puerto normal de operaciones y lifetimes
+
+StorageOperationAdmission liga dueño/clock/PID/retirement y epoch por servicio. La actividad lógica puede existir con cero leases entre sondeos; cada transacción abre StorageReservation1 propia o reutiliza parent normal exacto. Control nunca sirve datos. Epoch viejo, contexto copiado y binding ajeno fallan sticky. Active0 y dueño físico0 no son conteos de agentes. Runtime mantiene los bindings logrados hasta retry/witness/owner0 y no puede mutar a su sucesor tras retired. El target configurado es pin de aplicación, no identidad de dominio compartido.

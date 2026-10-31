@@ -56,6 +56,79 @@ def _has_scope_dependency(route) -> bool:
     return False
 
 
+def _admission_operator_is_live() -> bool:
+    """Pin the executed sealed JWT/admin dependency, without an open-route exemption."""
+    from cli_agent_orchestrator.api import admission_routes
+
+    guard = admission_routes.operator
+    try:
+        if (
+            not inspect.isfunction(guard)
+            or inspect.unwrap(guard) is not guard
+            or "__signature__" in vars(guard)
+        ):
+            return False
+        principal = inspect.signature(guard, follow_wrapped=False).parameters["principal"].default
+        node = ast.parse(textwrap.dedent(inspect.getsource(guard))).body[0]
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+    if not (
+        inspect.iscoroutinefunction(guard)
+        and getattr(principal, "dependency", None) is auth.get_current_principal
+        and guard.__globals__.get("get_current_principal") is auth.get_current_principal
+        and guard.__globals__.get("is_verified_principal") is auth.is_verified_principal
+        and guard.__globals__.get("Principal") is auth.Principal
+        and guard.__globals__.get("SCOPE_ADMIN") == auth.SCOPE_ADMIN
+        and len(node.body) == 2
+        and isinstance(node.body[0], ast.If)
+        and not node.body[0].orelse
+        and len(node.body[0].body) == 1
+        and isinstance(node.body[0].body[0], ast.Raise)
+        and isinstance(node.body[1], ast.Return)
+        and isinstance(node.body[1].value, ast.Name)
+        and node.body[1].value.id == "principal"
+    ):
+        return False
+    expected = ast.parse(
+        'not is_verified_principal(principal) or principal.kind != "jwt" or SCOPE_ADMIN not in principal.scopes',
+        mode="eval",
+    ).body
+    if ast.dump(node.body[0].test) != ast.dump(expected):
+        return False
+    denial = node.body[0].body[0].exc
+    return (
+        isinstance(denial, ast.Call)
+        and isinstance(denial.func, ast.Name)
+        and denial.func.id == "failure"
+        and len(denial.args) == 2
+        and all(isinstance(item, ast.Constant) for item in denial.args)
+        and [item.value for item in denial.args] == [403, "resource_admin_required"]
+        and not denial.keywords
+    )
+
+
+def _has_admission_authority(route) -> bool:
+    from cli_agent_orchestrator.api import admission_routes
+
+    handlers = {
+        ("GET", "/admission/resource-envelope"): admission_routes.registered,
+        ("POST", "/admission/resource-envelope"): admission_routes.attest,
+        ("POST", "/admission/resource-envelope/revoke"): admission_routes.revoke,
+        ("GET", "/admission/diagnostics"): admission_routes.diagnostics,
+    }
+    keys = [(method, route.path) for method in getattr(route, "methods", ())]
+    if len(keys) != 1 or keys[0] not in handlers or not _admission_operator_is_live():
+        return False
+    expected = handlers[keys[0]]
+    if route.endpoint is not expected or route.dependant.call is not expected:
+        return False
+    principal = inspect.signature(expected).parameters["principal"].default
+    return getattr(principal, "dependency", None) is admission_routes.operator and any(
+        dependency.name == "principal" and dependency.call is admission_routes.operator
+        for dependency in route.dependant.dependencies
+    )
+
+
 def _direct_guard_calls(endpoint, name):
     """Read executed top-level guards, excluding nested or conditional markers."""
     function = ast.parse(textwrap.dedent(inspect.getsource(endpoint))).body[0]
@@ -515,7 +588,7 @@ def _interaction_route_contract(route):
                 marker in source
                 for marker in (
                     "ifcapability:",
-                    "service.authenticate_agent,capability",
+                    '_owned_service_call(service,"authenticate_agent",capability)',
                     'get_current_principal(request,request.headers.get("Authorization"))',
                     "is_verified_principal(principal)",
                     "_scope(principal,SCOPE_READ)",
@@ -736,6 +809,7 @@ def test_every_mutating_route_is_scope_or_verified_work_authority_gated():
             or _has_manual_transport_authority(route)
             or _has_local_peer_authority(route)
             or _has_interaction_authority(route)
+            or _has_admission_authority(route)
         ):
             missing.append(f"{sorted(mutating)} {route.path}")
     assert not missing, (
@@ -826,6 +900,7 @@ def test_every_disclosure_bearing_get_route_is_gated_or_explicitly_open():
             or _has_manual_transport_authority(route)
             or _has_local_peer_authority(route)
             or _has_interaction_authority(route)
+            or _has_admission_authority(route)
         )
         and route.path not in _OPEN_READS
     ]
@@ -1840,3 +1915,93 @@ def test_registered_local_peer_with_pinned_grant_rejects_invalid_signature(
         )
     assert response.status_code == 403
     assert response.json()["detail"]["kind"] == "scope_denied"
+
+
+def test_admission_authority_audit_covers_exact_live_routes():
+    routes = [route for route in app.routes if getattr(route, "path", "").startswith("/admission/")]
+    assert {(method, route.path) for route in routes for method in route.methods} == {
+        ("GET", "/admission/resource-envelope"),
+        ("POST", "/admission/resource-envelope"),
+        ("POST", "/admission/resource-envelope/revoke"),
+        ("GET", "/admission/diagnostics"),
+    }
+    assert all(_has_admission_authority(route) for route in routes)
+
+
+def test_admission_authority_audit_rejects_rebound_dependency(monkeypatch):
+    route = next(
+        route for route in app.routes if getattr(route, "path", "") == "/admission/diagnostics"
+    )
+    assert _has_admission_authority(route)
+    dependency = next(item for item in route.dependant.dependencies if item.name == "principal")
+    monkeypatch.setattr(dependency, "call", lambda: None)
+    assert not _has_admission_authority(route)
+
+
+def test_admission_authority_audit_rejects_rebound_verifier(monkeypatch):
+    from cli_agent_orchestrator.api import admission_routes
+
+    assert _admission_operator_is_live()
+    monkeypatch.setattr(admission_routes, "is_verified_principal", lambda value: True)
+    assert not _admission_operator_is_live()
+
+
+@pytest.mark.parametrize(
+    "removed", ['principal.kind != "jwt"', "SCOPE_ADMIN not in principal.scopes"]
+)
+def test_admission_authority_audit_rejects_weakened_executed_guard(tmp_path, monkeypatch, removed):
+    from cli_agent_orchestrator.api import admission_routes
+
+    assert _admission_operator_is_live()
+    original = admission_routes.operator
+    source = textwrap.dedent(inspect.getsource(original))
+    assert sum(removed in line for line in source.splitlines()) == 1
+    weakened = "\n".join(line for line in source.splitlines() if removed not in line) + "\n"
+    path = tmp_path / "weakened_admission_operator.py"
+    path.write_text(weakened)
+    namespace = dict(original.__globals__)
+    exec(compile(weakened, str(path), "exec"), namespace)
+    monkeypatch.setattr(admission_routes, "operator", namespace["operator"])
+    assert not _admission_operator_is_live()
+
+
+def test_admission_authority_audit_rejects_permissive_wrapped_guard(tmp_path, monkeypatch):
+    from cli_agent_orchestrator.api import admission_routes
+
+    original = admission_routes.operator
+    assert _admission_operator_is_live()
+    namespace = dict(original.__globals__)
+    namespace["original_operator"] = original
+    source = (
+        "from functools import wraps\n"
+        "@wraps(original_operator)\n"
+        "async def operator(principal=Depends(get_current_principal)):\n"
+        "    return principal\n"
+    )
+    path = tmp_path / "wrapped_resource_operator.py"
+    path.write_text(source)
+    exec(compile(source, str(path), "exec"), namespace)
+    wrapper = namespace["operator"]
+    assert inspect.unwrap(wrapper) is original
+    monkeypatch.setattr(admission_routes, "operator", wrapper)
+    assert not _admission_operator_is_live()
+
+
+def test_admission_authority_audit_rejects_override_signature(monkeypatch):
+    from types import FunctionType
+
+    from cli_agent_orchestrator.api import admission_routes
+
+    original = admission_routes.operator
+    assert _admission_operator_is_live()
+    guard = FunctionType(
+        original.__code__,
+        original.__globals__,
+        "operator",
+        original.__defaults__,
+        original.__closure__,
+    )
+    guard.__annotations__ = dict(original.__annotations__)
+    guard.__signature__ = inspect.signature(original)
+    monkeypatch.setattr(admission_routes, "operator", guard)
+    assert not _admission_operator_is_live()

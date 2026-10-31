@@ -57,6 +57,7 @@ from cli_agent_orchestrator.services.interactions.service import (
     InteractionService,
     InteractionStale,
 )
+from cli_agent_orchestrator.services.work_blocking import run_owned_async
 
 
 class _InteractionAPIRoute(APIRoute):
@@ -265,16 +266,22 @@ def _safe_problem(exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=payload)
 
 
-async def _invoke(service: InteractionService, method: str, *args: Any, **kwargs: Any) -> Any:
-    """Run synchronous durable operations off the event loop and normalize errors."""
-    try:
+async def _owned_service_call(
+    service: InteractionService, method: str, *args: Any, **kwargs: Any
+) -> Any:
+    """Join one real service call and preserve internal identity before wire encoding."""
+    with service.storage_admission.lifetime():
         operation = getattr(service, method)
         if inspect.iscoroutinefunction(operation):
-            result = await operation(*args, **kwargs)
-        else:
-            result = await asyncio.to_thread(operation, *args, **kwargs)
-            if inspect.isawaitable(result):
-                result = await result
+            return await operation(*args, **kwargs)
+        result = await run_owned_async(asyncio.to_thread(operation, *args, **kwargs))
+        return await result if inspect.isawaitable(result) else result
+
+
+async def _invoke(service: InteractionService, method: str, *args: Any, **kwargs: Any) -> Any:
+    """Normalize durable-call errors and project a successful result onto the wire."""
+    try:
+        result = await _owned_service_call(service, method, *args, **kwargs)
     except InteractionError as exc:
         return _safe_problem(exc)
     except Exception as exc:
@@ -832,8 +839,8 @@ async def interaction_capabilities(
     capability = request.headers.get(_AGENT_CAPABILITY_HEADER)
     if capability:
         try:
-            agent_actor = await asyncio.to_thread(service.authenticate_agent, capability)
-        except InteractionError as exc:
+            agent_actor = await _owned_service_call(service, "authenticate_agent", capability)
+        except Exception as exc:
             return _safe_problem(exc)
         actor: Principal | AgentActor = agent_actor
     else:

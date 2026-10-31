@@ -566,6 +566,18 @@ class DeliveryAdmission:
             self._policy, self._observation, now=now, committed=committed, budget=budget
         )
 
+    def owns_normal_storage(self, lease: object) -> bool:
+        """Exact registered normal lease; a control credit cannot serve data SQL."""
+        with self._guard:
+            return (
+                isinstance(lease, DeliveryReservation)
+                and lease._owner is self
+                and self._leases.get(lease._key) is lease
+                and lease is not self._control_lease
+                and lease._state == "started"
+                and not lease._retirement_requested
+            )
+
     def can_reserve(self, receiver: str, *, now: float) -> bool:
         """Advisory eligibility only; an effect still needs try_reserve and start."""
         validate_clock(now)

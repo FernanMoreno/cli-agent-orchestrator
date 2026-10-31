@@ -1715,7 +1715,12 @@ async def lifespan(app: FastAPI):
     )
 
     app.state.interaction_service = get_default_interaction_service()
-    await asyncio.to_thread(app.state.interaction_service.initialize)
+    interaction_storage = app.state.interaction_service.storage_admission
+    interaction_storage.bind_admission(None)
+    interaction_storage.start_accepting()
+    from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+    await run_owned_async(asyncio.to_thread(app.state.interaction_service.initialize))
     _seed_default_skills_at_startup()
     _reconcile_memory_at_startup()
     try:
@@ -1842,6 +1847,9 @@ async def lifespan(app: FastAPI):
         admission_runtime = runtime_from_environment(inbox_service)
         if admission_runtime is not None:
             app.state.inbox_admission_runtime = admission_runtime
+            admission_runtime.add_storage_participant(
+                interaction_storage, target=app.state.interaction_service.repository.target
+            )
             await admission_runtime.start()
         else:
             previous = getattr(app.state, "inbox_admission_runtime", None)
@@ -3110,11 +3118,16 @@ async def agui_stream(
                 logger.debug("agui_stream: terminal listing failed for %s", sess.get("id"))
         return build_dashboard_snapshot(sessions, terminals, list(scopes))
 
-    def _interaction_projection() -> Dict:
+    async def _interaction_projection() -> Dict:
         try:
-            from cli_agent_orchestrator.api.interactions import get_interaction_service
+            from cli_agent_orchestrator.api.interactions import (
+                _owned_service_call,
+                get_interaction_service,
+            )
 
-            page = get_interaction_service(request).projection_snapshot(
+            page = await _owned_service_call(
+                get_interaction_service(request),
+                "projection_snapshot",
                 cursor=interaction_cursor,
                 limit=interaction_limit,
             )
@@ -3131,7 +3144,7 @@ async def agui_stream(
         # Fleet backend reads can take time. Revalidate at the projection
         # boundary so revoked scopes never get a final ledger snapshot.
         await validate()
-        fleet["interactions"] = _interaction_projection()
+        fleet["interactions"] = await _interaction_projection()
         # The projection is a database read and may race with session revocation.
         # Check again before this snapshot can be emitted to the stream.
         current_scopes = await validate()
@@ -3252,7 +3265,7 @@ async def agui_stream(
                     # heartbeat, then refresh the current scopes in that state.
                     if prev_snapshot is not None:
                         curr_snapshot = dict(prev_snapshot)
-                        curr_snapshot["interactions"] = _interaction_projection()
+                        curr_snapshot["interactions"] = await _interaction_projection()
                         try:
                             current_scopes = await validate()
                         except HTTPException:

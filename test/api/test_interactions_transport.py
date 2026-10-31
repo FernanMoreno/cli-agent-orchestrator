@@ -20,6 +20,7 @@ from cli_agent_orchestrator.services.interactions.models import (
     WaitResult,
 )
 from cli_agent_orchestrator.services.interactions.service import InteractionService
+from cli_agent_orchestrator.services.storage_operation_admission import StorageOperationAdmission
 
 QUESTION_ID = "d97001ba-d4ed-4c78-b3b9-22fa8c77631d"
 GROUP_ID = "2e1fc625-a391-4bfd-a62d-4dddbcbf70a3"
@@ -28,7 +29,9 @@ GROUP_ID = "2e1fc625-a391-4bfd-a62d-4dddbcbf70a3"
 def _service_mock():
     # Keep the transport double within the production service contract, including
     # available methods and the app-scoped resolver's declared service type.
-    return Mock(spec=InteractionService)
+    service = Mock(spec=InteractionService)
+    service.storage_admission = StorageOperationAdmission()
+    return service
 
 
 def _client(monkeypatch, service, *, scopes=None):

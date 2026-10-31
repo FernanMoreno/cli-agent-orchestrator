@@ -13,7 +13,20 @@ import time
 import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Iterable, Literal, Mapping, Sequence, cast
+from functools import wraps
+from typing import (
+    Any,
+    Callable,
+    Concatenate,
+    Coroutine,
+    Iterable,
+    Literal,
+    Mapping,
+    ParamSpec,
+    Sequence,
+    TypeVar,
+    cast,
+)
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -70,6 +83,7 @@ from cli_agent_orchestrator.services.interactions.models import (
     WorkSourceBinding,
 )
 from cli_agent_orchestrator.services.interactions.policy import InteractionPolicy
+from cli_agent_orchestrator.services.storage_operation_admission import StorageOperationAdmission
 
 _AGENT_SEAL = object()
 _MAX_ACTIVE = 100
@@ -261,6 +275,26 @@ def _work_binding(value: object | None) -> WorkSourceBinding | None:
     return result
 
 
+_WaitParams = ParamSpec("_WaitParams")
+_WaitResult = TypeVar("_WaitResult")
+
+
+def _owned_interaction_wait(
+    function: Callable[
+        Concatenate["InteractionService", _WaitParams], Coroutine[Any, Any, _WaitResult]
+    ],
+) -> Callable[Concatenate["InteractionService", _WaitParams], Coroutine[Any, Any, _WaitResult]]:
+    @wraps(function)
+    async def invoke(
+        self: "InteractionService", *args: _WaitParams.args, **kwargs: _WaitParams.kwargs
+    ) -> _WaitResult:
+        # Retain only lifecycle identity while asleep; each poll owns its SQL.
+        with self.storage_admission.lifetime():
+            return await function(self, *args, **kwargs)
+
+    return invoke
+
+
 class InteractionService:
     """The single service authority for source-bound questions and receipts."""
 
@@ -275,31 +309,39 @@ class InteractionService:
         if self.work_repository.target.identity != repository.target.identity:
             raise ValueError("interaction and Work repositories must share one PostgreSQL target")
         self.policy = policy or InteractionPolicy()
+        self._storage_admission = StorageOperationAdmission()
         self._schema_ready = False
         self._recovery_done = False
         self._lock = threading.RLock()
+
+    @property
+    def storage_admission(self) -> StorageOperationAdmission:
+        return self._storage_admission
 
     def _ensure_schema(self) -> None:
         if self._schema_ready:
             return
         with self._lock:
             if not self._schema_ready:
-                self.repository.initialize()
-                self._schema_ready = True
+                with self.storage_admission.operation():
+                    self.repository.initialize()
+                    self._schema_ready = True
 
     @contextmanager
     def _transaction(self):
-        self._ensure_schema()
-        with self.repository.transaction() as connection:
-            self.repository._verify(connection)
-            yield connection
+        with self.storage_admission.operation():
+            self._ensure_schema()
+            with self.repository.transaction() as connection:
+                self.repository._verify(connection)
+                yield connection
 
     @contextmanager
     def _read(self):
-        self._ensure_schema()
-        with self.repository.read_connection() as connection:
-            self.repository._verify(connection)
-            yield connection
+        with self.storage_admission.operation():
+            self._ensure_schema()
+            with self.repository.read_connection() as connection:
+                self.repository._verify(connection)
+                yield connection
 
     def _expire_before_read(self) -> None:
         """Apply bounded expiry/escalation transitions before protected reads."""
@@ -1539,6 +1581,7 @@ class InteractionService:
             ).fetchall()
             return any(self._required_pending_count(connection, group["group_id"]) for group in row)
 
+    @_owned_interaction_wait
     async def wait_for_required(
         self,
         terminal_id: str,
@@ -1606,6 +1649,7 @@ class InteractionService:
                 return state
             await asyncio.sleep(min(0.25, remaining))
 
+    @_owned_interaction_wait
     async def wait_for_native_manual(
         self,
         terminal_id: str,
@@ -2858,6 +2902,7 @@ class InteractionService:
                 capability_digest=source["capability_hash"],
             )
 
+    @_owned_interaction_wait
     async def wait_for_answers(
         self,
         capability: object,
