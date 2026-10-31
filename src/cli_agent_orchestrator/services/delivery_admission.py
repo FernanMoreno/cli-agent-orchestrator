@@ -41,6 +41,26 @@ class AdmissionSnapshot:
     resource_debt: ResourceAmounts
 
 
+@dataclass(frozen=True, eq=False)
+class StorageStageReservation:
+    """One physical storage stage; copies cannot retire the registered owner."""
+
+    _lease: "DeliveryReservation"
+
+    def finish(self) -> bool:
+        lease = self._lease
+        owner = lease._owner
+        with owner._guard:
+            if (
+                lease._state != "started"
+                or owner._leases.get(lease._key) is not lease
+                or lease._storage_stage is not self
+            ):
+                return False
+            lease._storage_stage = None
+            return lease._release_storage_locked()
+
+
 class DeliveryReservation:
     """A handoff can be cancelled only before one physical worker starts it."""
 
@@ -53,6 +73,7 @@ class DeliveryReservation:
         self._state: ReservationState = "reserved"
         self._footprint = footprint
         self._remaining = footprint
+        self._storage_stage: StorageStageReservation | None = None
 
     @property
     def footprint(self) -> ResourceAmounts:
@@ -90,7 +111,43 @@ class DeliveryReservation:
                 return False
             if self._state != "started":
                 raise RuntimeError("delivery reservation has not started")
+            if self._storage_stage is not None:
+                raise RuntimeError("active storage stage must finish physically first")
             return self._owner._release_locked(self)
+
+    def take_storage_stage(self, *, now: float) -> StorageStageReservation | None:
+        """Claim already charged storage or reserve storage alone for reentry.
+
+        This does not start SQL or wait for capacity. The physical caller owns
+        the token through completion, including uncertain cleanup; an awaiter
+        cannot release it. Memory, CPU and receiver ownership remain charged.
+        """
+        validate_clock(now)
+        owner = self._owner
+        with owner._guard:
+            if (
+                self._state != "started"
+                or owner._leases.get(self._key) is not self
+                or self._storage_stage is not None
+            ):
+                return None
+            needs_storage = not self._remaining.storage_slots
+            if needs_storage:
+                if not owner._accepting:
+                    return None
+                decision = owner._current_decision(now)
+                if (
+                    decision.reason not in ("capacity_available", "resource_exhausted")
+                    or decision.resource_capacity.storage_slots <= owner._committed.storage_slots
+                ):
+                    return None
+            stage = StorageStageReservation(self)
+            if needs_storage:
+                unit = ResourceAmounts(storage_slots=1)
+                owner._committed = owner._committed + unit
+                self._remaining = self._remaining + unit
+            self._storage_stage = stage
+            return stage
 
     def release_storage(self) -> bool:
         """Physical storage-stage completion, never cancellation of its awaiter."""
@@ -99,13 +156,17 @@ class DeliveryReservation:
             if (
                 self._state != "started"
                 or owner._leases.get(self._key) is not self
+                or self._storage_stage is not None
                 or not self._remaining.storage_slots
             ):
                 return False
-            released = ResourceAmounts(storage_slots=self._remaining.storage_slots)
-            owner._committed = owner._committed - released
-            self._remaining = self._remaining - released
-            return True
+            return self._release_storage_locked()
+
+    def _release_storage_locked(self) -> bool:
+        released = ResourceAmounts(storage_slots=self._remaining.storage_slots)
+        self._owner._committed = self._owner._committed - released
+        self._remaining = self._remaining - released
+        return True
 
 
 class DeliveryAdmission:

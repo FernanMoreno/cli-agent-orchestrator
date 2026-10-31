@@ -63,3 +63,44 @@ def test_real_pending_row_survives_denial_and_delivers_after_capacity(
     ]
     assert owner.snapshot(now=clock[0]).inflight == service._active_operations == 0
     assert service._delivery_locks == {}
+
+
+def test_storage_stages_between_real_transactions_keep_delivery_ownership(isolated_memory_db):
+    """Component composition only: Inbox does not yet invoke these stage tokens."""
+    assert db.engine.dialect.name == "postgresql"
+    db.create_terminal("staged-receiver", "staged-session", "worker", "opencode_cli", "reviewer")
+    owner = DeliveryAdmission(AdmissionPolicy())
+    owner.observe(
+        CapacityObservation(10.0, 2**32, 2**32, 16000, 16000, 1),
+        now=10.0,
+        generation=owner.generation,
+    )
+    first = owner.try_reserve("staged-receiver", now=10.0).reservation
+    assert first is not None and first.start()
+    stage = first.take_storage_stage(now=10.0)
+    assert stage is not None
+    try:
+        row = db.create_inbox_message("sender", "staged-receiver", "etapas café 中文")
+    finally:
+        assert stage.finish()
+    assert owner.snapshot(now=10.0).committed.storage_slots == 0
+    assert owner.try_reserve("staged-receiver", now=10.0).reason == "receiver_busy"
+    other = owner.try_reserve("other-receiver", now=10.0).reservation
+    assert other is not None and other.start()
+    assert first.take_storage_stage(now=10.0) is None
+    assert other.finish()
+    stage = first.take_storage_stage(now=10.0)
+    assert stage is not None
+    try:
+        actual = db.get_inbox_messages("staged-receiver")
+        assert [(message.id, message.status) for message in actual] == [
+            (row.id, MessageStatus.PENDING)
+        ]
+    finally:
+        assert stage.finish()
+    snapshot = owner.snapshot(now=10.0)
+    assert snapshot.started == 1 and snapshot.committed.storage_slots == 0
+    assert snapshot.committed.memory_bytes == first.footprint.memory_bytes
+    assert snapshot.committed.cpu_millicores == first.footprint.cpu_millicores
+    assert first.finish()
+    assert owner.snapshot(now=10.0).inflight == 0

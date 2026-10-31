@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-31",
+  "verified_utc": "2026-10-31T11:38:19.606461+00:00",
+  "status": "PASS_STORAGE_STAGE_COMPONENT_NOT_T018_COMPLETE_NOT_M1",
+  "scope": "Owned storage-stage primitive only; no production callsite wiring",
+  "base_head": "6ba1a413309e5bd178e9bd0f9be220ee1e199ebb",
+  "tested_files_sha256": {
+    "src/cli_agent_orchestrator/services/delivery_admission.py": "dfcaa7e758ae4321d6d3052582af65d4ed7651c456ab82ff7d9863d138b28c93",
+    "test/services/test_storage_stage_reservation.py": "1e6a2b5631c589e5a17c2030a620ca5afdadcc3da5be61f3dadf111d3cb69851",
+    "test/integration/test_inbox_resource_admission.py": "008da593b1e12752bced2f5a0fd33bd88cb12ad9ea66c10fb9de956bee0b6bd0"
+  },
+  "phases": [
+    {
+      "phase": "t018-storage-stage-red",
+      "cases": {
+        "total": 10,
+        "failure": 10,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 46.294,
+      "available_mib": 9596,
+      "candidate_source_stamp": "f7c2fe941794b1a18a170af9a3b21ea23d4caf7d75ef40388b28e589879bcc78",
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-storage-stage-red/t018-storage-stage-red/receipt.json"
+    },
+    {
+      "phase": "t018-stage-green-r2",
+      "cases": {
+        "total": 113,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 60.77,
+      "available_mib": 9451,
+      "candidate_source_stamp": "62820d642526291af528104d2b5743dd1cc324c59bde5241c1d05349c6e89639",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-stage-green-r2/t018-stage-green-r2/receipt.json"
+    },
+    {
+      "phase": "t018-consumer-regression",
+      "cases": {
+        "total": 74,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "controller_seconds": 149.939,
+      "available_mib": 9462,
+      "candidate_source_stamp": "62820d642526291af528104d2b5743dd1cc324c59bde5241c1d05349c6e89639",
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      },
+      "private_receipt": "/home/felni/.cache/caos-spec041-20261030/t018-consumer-regression/t018-consumer-regression/receipt.json"
+    }
+  ],
+  "architecture": {
+    "files": 436,
+    "dependencies": 1934,
+    "kept": 5,
+    "broken": 0
+  },
+  "format": "Black/isort3filesPASS",
+  "types": "mypy1sourcePASS; follow-imports=silent/default untyped coverage",
+  "independent_review": "Codex read-only GO for component; active-token invalidation/reconfigure/stop cases added before GREEN",
+  "postgres_closure": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "m1_preflight": {
+    "private_root": "/home/felni/.cache/caos-spec041-m1-preflight-20261031",
+    "actual_pool_max": 4,
+    "actual_storage_headroom": 4,
+    "hierarchy_coverage": "partial",
+    "pid1_namespace_witness": "permission denied",
+    "load_or_model_started": false,
+    "authority_or_hierarchy_flags_relaxed": false
+  },
+  "preserved_limits": [
+    "audited pool max4",
+    "checkout2s",
+    "memory minimum6144MiB",
+    "existing deadlines and assertions"
+  ],
+  "not_accepted": [
+    "T018 production storage boundaries and diagnostics",
+    "T019 physical M1",
+    "M2/M3 distributed coordination",
+    "SDK/UI",
+    "global regression gates"
+  ]
+}
