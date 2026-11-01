@@ -1,0 +1,228 @@
+{
+  "schema": "caos.spec041.t014-native-late-retirement.v1",
+  "date": "2026-11-01",
+  "base_head": "66efac79c49e40e3a7f09d816f265410e12455a4",
+  "scope": "T014.A automatic observation of late exact native helpers after original positive full native cleanup proof",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-native-late-final",
+    "cases": 610,
+    "passed": 610,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 662.092,
+    "available_mib": 8206,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "05f4870d1892a2ea891edf15bb527fa63792bfa6ab64f59382a6e9e4dd54f8e9",
+    "production_archive_match": 6,
+    "owned_python_archive_match": 11,
+    "foreign_graphify_preserved": 12,
+    "history": [
+      {
+        "phase": "t014-native-late-observer-red",
+        "cases": {
+          "total": 5,
+          "failure": 5,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-late-core-green",
+        "cases": {
+          "total": 120,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-late-composition-green",
+        "cases": {
+          "total": 21,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-late-docker-green",
+        "cases": {
+          "total": 4,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-late-attach-green",
+        "cases": {
+          "total": 1,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      }
+    ],
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/backends/docker_backend.py",
+        "sha256": "61cdf188dad59bf22e891415daa9afd3bbc2ff20cbd3db9ab42671c9d1a5e87d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+        "sha256": "6d4b6e1c024a4b541bb275d9174f749d18049fe5f389f7ce7b1eb3da6f00e26b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "2b0c279a17feb859d23e0fcfbbe34c185ec8da0581314778333a9447a21edcb5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "8d0c80afa0dcf1666420464f69afac4fad8be0e515db72ff68c46a9a2a10f1a4"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "88ecd638c5a396779f96fba4158893cd28d72f3f7987cf96e917009c0c1eb777"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/work_process_effect.py",
+        "sha256": "9cdb0e67180a02114bdc318050bd451fe48295f51dd732576742aab002e3b3d2"
+      },
+      {
+        "path": "test/backends/test_docker_backend_contracts.py",
+        "sha256": "891fde4fdfe0a15ac697dce89ec1f4ed5b42112e9b32cb3feb6e13dd8b8474fd"
+      },
+      {
+        "path": "test/integration/t098/test_work_launch_dispatch.py",
+        "sha256": "5e60459d6e3795fe2ccc0c128be2a0081e353dfab100367cc08cc740faf3e508"
+      },
+      {
+        "path": "test/postgres/test_native_late_retirement.py",
+        "sha256": "f516c9890dcffc0c7b2788e1568b8ab30f9718427533d2328df5c67783016721"
+      },
+      {
+        "path": "test/services/test_native_late_retirement.py",
+        "sha256": "d9e94934db0ba7766af50916323af3ba013d0514306a9041a3cdbf817237e653"
+      },
+      {
+        "path": "test/services/test_work_proxy_resource_retirement.py",
+        "sha256": "9215fec9b5b2395f9cb7f32f3da75ea6b8c6da421c6e4acb07e2706a426fed3b"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 11
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 11
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 6
+    }
+  ],
+  "architecture": {
+    "files": 447,
+    "dependencies": 2006,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 9,
+    "nodes": 537,
+    "edges": 1196,
+    "dangling": 159,
+    "partial": true,
+    "private": true,
+    "foreign_files_preserved": 12
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-positive-native-late-helpers",
+    "paths": 3,
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "b1f162eba51842deb76d70cfd08e8fe4",
+      "f38519eaa829491880d8f9a3fc04e91d",
+      "bf2371d5702341e885d456c8d1592f6b"
+    ],
+    "blocking_findings": 0,
+    "luna_source_and_test_read_review": true,
+    "root_actual_diff_review": true,
+    "assessment": "Keep pre-lifecycle retry PID validation: recording a diagnostic after an inherited-lock failure must not touch that inherited lock. Successful finish is the only token-removal path and discards the late registry under the same guard, including manual retirement. Comments pin observer contract and coordinator exit invariant. Added attach-start failure case. Truthy non-bool rejection is implemented by exact is True; optional extra test was not a blocker."
+  },
+  "implemented": [
+    "Per-DeliveryAdmission strong exact-token registry; only original physical_effect_scope with full native cleanup confirmed can register a token whose helper is still alive.",
+    "Nonblocking PID-checked retry guard, native observations outside admission locks, exact same-guard record removal with token retirement; no SQL or Work effects in observers.",
+    "Existing monitor worker retries before authority/lifecycle checks; existing shared worker retries throughout drain; runtime retries before participants and before final metadata retirement.",
+    "Docker native proof is confirmed only after container/image cleanup plus closed or nonexistent attach process. Retained exact reader/proxy observers independently keep the charge until positive termination.",
+    "Unknown native start/container or an unconfirmed empty/closed owner set remains charged and is never promoted by periodic observation.",
+    "No new agent thread, SQL pool, global delivery ceiling or announced-agent scan; only actually admitted owner records are traversed."
+  ],
+  "evidence_boundaries": [
+    "610 distinct cases in one final execution, no FAIL/ERROR/SKIP; prior counts are retained only as history.",
+    "Actual PostgreSQL coordinator releases original mapped quantities automatically after a real owned helper thread exits, with one native effect, released revision4, clean usage and unchanged process metadata.",
+    "Actual DockerWorkBackend executes with fake daemon/attach transport: late EOF with confirmed native cleanup releases resources after reader termination while Work stays reconcile and no result is accepted; unknown cleanup keeps the charge.",
+    "Failed attach before any Popen owner plus confirmed container/image cleanup releases safely without late registration; no actual Docker daemon/provider acceptance claimed.",
+    "Bubblewrap composition seam tests preserve original manual cases and add automatic observation; full native typed proof remains mandatory.",
+    "New tests cover absent proof, empty owners, observer error, other owner, manual retirement, simultaneous retry/busy, callback outside ledger guard, foreign PID, stopped monitor and retryable runtime shutdown.",
+    "Intermediate composition had19PASS/2new fixture expectation failures: reader join happens before normal cleanup. Test expectations were corrected to Work reconcile and one fallback kill=True cleanup call; assertions were strengthened for no accepted result/one process/no replay. Production limits and cleanup budgets were unchanged."
+  ],
+  "remaining": [
+    "Unknown container/native starts need an original-owner cleanup capability and actual cleanup/absence proof; A performs observation only.",
+    "Later Docker reconcile proves native artifacts absent but currently has no production caller/admission-token bridge; do not equate existing Work cleanup-state reconciliation with original resource retirement or auto-run historical jobs.",
+    "Whole-generation process metadata retirement, provider quotas, ordinary elastic placement, physical M1/M2/M3, configuration SDK/UI and global gates remain open."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

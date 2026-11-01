@@ -1299,12 +1299,9 @@ class DockerWorkBackend(TmuxBackend):
                 reader.join(timeout=1)
             if proxy_thread is not None:
                 proxy_thread.join(timeout=5)
-            if (
-                mcp_owner_stopped
-                and (process is None or process.poll() is not None)
-                and not any(reader.is_alive() for reader in readers)
-                and (proxy_thread is None or not proxy_thread.is_alive())
-            ):
+            if mcp_owner_stopped and (process is None or process.poll() is not None):
+                # Full container/image cleanup proves the native tree closed.
+                # Exact retained reader/proxy observers still hold the token if late.
                 confirm_native_effect_closed()
             if mcp_owner_stopped and mcp_proxy is not None:
                 if proxy_thread is not None and proxy_thread.is_alive():

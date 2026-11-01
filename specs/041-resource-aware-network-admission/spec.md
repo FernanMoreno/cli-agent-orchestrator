@@ -206,3 +206,10 @@ La aceptación de esta extensión requiere el mismo recorrido desde HTTP, SDK y 
 ## Precisión T014 — handoff durable de cierre físico confirmado
 
 Un propietario original puede registrar durablemente el cierre de una operación solo después de confirmar su body, préstamos SQL y dueños nativos/helpers. Si cae tras ese registro y antes de devolver cantidades, un custodio admin independiente y ya financiado puede finalizar esas cantidades una vez mediante CAS/audit. No se infiere cierre de un estado releasing histórico, caducidad, PID o runtime.retired. El acuse libera recursos, no reejecuta ni completa Work, y nunca retira créditos de metadatos. Operaciones activas/inciertas sin ese testigo siguen cargadas. Cambios de autoridad/vista no impiden terminar recursos realmente cerrados de la encarnación original.
+
+
+## Precisión T014 — observación tardía de dueños físicos ya cerrados
+
+Si el backend confiable confirmó el cierre nativo completo, pero un helper exacto sobrevivió al join existente, la reserva debe conservarse y observarse de nuevo sin intervención manual. Solo se registran tokens con prueba positiva original; ni owners vacíos ni salida del Popen prueban cierre de contenedor/árbol. El observador trabaja únicamente sobre reservas realmente admitidas de su dueño local, no agentes anunciados, y no crea un pool o techo global. Callbacks y observaciones quedan fuera de locks de admisión. Errores conservan cargo, identidad y registro; las cadencias solo pautan, nunca expiran autoridad.
+
+La observación usa los workers de control existentes y sigue disponible durante el drenaje antes de retirar metadatos. Un helper que termine permite exactamente un retiro y el posterior handoff durable ya implementado. No ejecuta SQL de reparación de negocio, replays ni cierres históricos. Un contenedor/arranque cuyo cierre completo siga sin probarse queda cargado: su limpieza activa/reconciliación es otro protocolo, no una inferencia del observador.

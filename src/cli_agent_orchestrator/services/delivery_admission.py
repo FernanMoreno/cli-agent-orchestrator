@@ -135,6 +135,16 @@ class DeliveryRetirementHold:
             return owner._release_locked(self._lease)
 
 
+@dataclass(frozen=True)
+class PhysicalCloseResult:
+    pending: int
+    busy: bool = False
+
+    @property
+    def clean(self) -> bool:
+        return self.pending == 0 and not self.busy
+
+
 @dataclass(frozen=True, eq=False)
 class PhysicalEffectReservation:
     """Exact native owner; thread completion never confirms this token."""
@@ -160,6 +170,7 @@ class PhysicalEffectReservation:
         return owner
 
     def retain(self, native_owner: object, closed: Callable[[], bool]) -> None:
+        """Retain a nonblocking native observer; it must perform no SQL or Work effect."""
         owner = self._owner()
         with owner._guard:
             if self not in self._lease._physical_effects:
@@ -168,6 +179,14 @@ class PhysicalEffectReservation:
                 raise ValueError("native owner requires a closure observer")
             if not any(value[0] is native_owner for value in self._owners):
                 self._owners.append((native_owner, closed))
+
+    def _register_late(self) -> None:
+        """Trusted scope only, after its positive full native closure proof."""
+        owner = self._owner()
+        with owner._guard:
+            lease = self._lease
+            if owner._leases.get(lease._key) is lease and self in lease._physical_effects:
+                owner._physical_closes.add(self)
 
     def finish(self) -> bool:
         owner = self._owner()
@@ -190,6 +209,7 @@ class PhysicalEffectReservation:
             ):
                 return False
             lease._physical_effects.remove(self)
+            owner._physical_closes.discard(self)
             self._owners.clear()
             if (
                 lease._retirement_requested
@@ -661,6 +681,8 @@ class DeliveryAdmission:
         self._storage_connection_loans = 0
         self._additional_storage_connections = 0
         self._storage_retirement_pending = 0
+        self._physical_closes: set[PhysicalEffectReservation] = set()
+        self._physical_retry_guard = threading.Lock()
         self._accepting = True
         self._generation = 0
         self._observation: CapacityObservation | None = None
@@ -977,6 +999,32 @@ class DeliveryAdmission:
         if completion is not None:
             completion._cleanup_leases.remove(lease)
         return True
+
+    def retry_physical_closes(self) -> PhysicalCloseResult:
+        """Observe only this owner's positively confirmed late native closes.
+
+        Built-in observers are nonblocking native-handle checks. Neither callbacks
+        nor native I/O run under the admission guard; no new effect or SQL runs.
+        Unknown starts/trees have never entered this exact-owner registry.
+        """
+        self._guard  # Reject a fork before touching an inherited retry lock.
+        if not self._physical_retry_guard.acquire(blocking=False):
+            with self._guard:
+                return PhysicalCloseResult(len(self._physical_closes), busy=True)
+        try:
+            with self._guard:
+                tokens = tuple(self._physical_closes)
+            # Only finish removes a registered token, and it always discards this
+            # set under the same owner guard; a lease cannot bypass that retirement.
+            for token in tokens:
+                try:
+                    token.finish()
+                except Exception:
+                    pass  # Preserve the exact token and charge on observation failure.
+            with self._guard:
+                return PhysicalCloseResult(len(self._physical_closes))
+        finally:
+            self._physical_retry_guard.release()
 
     def wait_retirement_ready(self, *, timeout_s: float) -> DeliveryRetirementHold | None:
         validate_clock(timeout_s)

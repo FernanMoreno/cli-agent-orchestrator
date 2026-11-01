@@ -368,6 +368,7 @@ class AdmissionMonitor:
                 self._last_cycle_result = CachedMonitorResult(self.owner.generation, at, result)
 
     def refresh(self) -> MonitorResult:
+        self.owner.retry_physical_closes()  # Before authority I/O or lifecycle locks.
         with self._lifecycle_guard:
             ticket = self._lifecycle
         try:

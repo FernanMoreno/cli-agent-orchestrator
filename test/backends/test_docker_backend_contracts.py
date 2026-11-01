@@ -6,6 +6,7 @@ import json
 import socket
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from test.backends.test_docker_backend import _restriction
 from types import SimpleNamespace
@@ -507,9 +508,18 @@ def test_cleanup_cannot_claim_absence_during_daemon_outage(native):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad_protocol", [False, True])
+@pytest.mark.parametrize(
+    "bad_protocol,late_cleanup",
+    [
+        (False, "none"),
+        (True, "none"),
+        (False, "closed"),
+        (False, "unknown"),
+        (False, "attach_failed"),
+    ],
+)
 async def test_durable_dispatch_real_authority_and_content_with_native_transport(
-    native, monkeypatch, tmp_path, bad_protocol
+    native, monkeypatch, tmp_path, bad_protocol, late_cleanup
 ):
     """Real database/credentials/content bind setup and GO; only Docker I/O is fake."""
     from test.integration.t098.test_work_launch_dispatch import _setup
@@ -519,6 +529,13 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
 
     _, seam = native
     worker = _minimal_static_worker()
+    release_reader, reader_entered = threading.Event(), threading.Event()
+    owner = None
+    if late_cleanup != "none":
+        from test.services.test_delivery_admission import create, observe
+
+        owner = create()
+        assert observe(owner, 2)
     runtime = {}
     processes = []
     inspected = []
@@ -533,6 +550,8 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
         worker_binary=worker,
         contract_paths=(str(tmp_path),),
         contract_write_paths=(),
+        resource_admission=owner,
+        resource_clock=lambda: 10,
     )
     seam.response = preflight_responses
     receipt = gateway.admit(principal, request)
@@ -607,10 +626,18 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
             self.saved = self.getvalue()
             super().close()
 
+    class LateReader(io.BytesIO):
+        def readline(self, *args):
+            reader_entered.set()
+            assert release_reader.wait(30), "owned Docker reader was not released"
+            return super().readline(*args)
+
     class Attach:
         def __init__(self, command, **options):
             assert command[3:] == ["container", "start", "--attach", "--interactive", CONTAINER]
             assert options["close_fds"] is True
+            if late_cleanup == "attach_failed":
+                raise OSError("controlled attach start failure after container creation")
             self.stdin = Input()
             ready = {
                 "protocol": 1,
@@ -623,7 +650,7 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
             protocol = docker.DockerWorkBackend._frame(b"CAO-READY/1 ", json.dumps(ready).encode())
             protocol += b"CAO-OUT/1 stdout 5\nhello\nCAO-OUT/1 stderr 4\nwarn\nCAO-EXIT/1 0\n"
             self.stdout = io.BytesIO(b"invalid protocol\n" if bad_protocol else protocol)
-            self.stderr = io.BytesIO()
+            self.stderr = LateReader() if late_cleanup != "none" else io.BytesIO()
             self.returncode = 0
             self.killed = False
             processes.append(self)
@@ -638,25 +665,78 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
             self.killed = True
 
     monkeypatch.setattr(docker.subprocess, "Popen", Attach)
-    if bad_protocol:
-        with pytest.raises(DeliveryUncertain):
-            await gateway.dispatch_registered_next()
-        assert repository.get_work(receipt.work_item_id)["state"] == "reconcile"
-        assert ["container", "kill", CONTAINER] in [call[0][3:] for call in seam.calls]
-    else:
-        dispatched = await gateway.dispatch_registered_next()
-        assert dispatched["id"] == receipt.work_item_id
-        persisted = repository.get_work(receipt.work_item_id)
-        assert dispatched == persisted
-        assert persisted["state"] == "running"
-        assert persisted["accepted_result_id"] is None
-        assert persisted["attempts"][-1]["state"] == "sent"
-        assert persisted["attempts"][-1]["id"] == receipt.attempt_id
-        assert persisted["attempts"][-1]["generation"] == receipt.generation
-        assert processes[0].stdin.saved.endswith(b"CAO-GO/1\n")
-        assert b"frozen task context\n\npayload for exact worker" in processes[0].stdin.saved
-        assert len(inspected) == 3 and inspected[0]["State"]["Running"] is True
-    assert ["container", "rm", "--force", CONTAINER] in [call[0][3:] for call in seam.calls]
-    assert ["image", "rm", "--force", backend._attempt_image_tag(attempt_id, generation)] in [
-        call[0][3:] for call in seam.calls
-    ]
+    cleanup_calls = []
+    if late_cleanup == "unknown":
+
+        def unavailable(*args, **kwargs):
+            cleanup_calls.append(kwargs)
+            return False
+
+        monkeypatch.setattr(backend, "_cleanup_container", unavailable)
+    native_threads = []
+    try:
+        if bad_protocol or late_cleanup != "none":
+            with pytest.raises(DeliveryUncertain):
+                await gateway.dispatch_registered_next()
+            assert repository.get_work(receipt.work_item_id)["state"] == "reconcile"
+            if bad_protocol:
+                assert ["container", "kill", CONTAINER] in [call[0][3:] for call in seam.calls]
+        else:
+            dispatched = await gateway.dispatch_registered_next()
+            assert dispatched["id"] == receipt.work_item_id
+            persisted = repository.get_work(receipt.work_item_id)
+            assert dispatched == persisted
+            assert persisted["state"] == "running"
+            assert persisted["accepted_result_id"] is None
+            assert persisted["attempts"][-1]["state"] == "sent"
+            assert persisted["attempts"][-1]["id"] == receipt.attempt_id
+            assert persisted["attempts"][-1]["generation"] == receipt.generation
+            assert processes[0].stdin.saved.endswith(b"CAO-GO/1\n")
+            assert b"frozen task context\n\npayload for exact worker" in processes[0].stdin.saved
+            assert len(inspected) == 3 and inspected[0]["State"]["Running"] is True
+        if late_cleanup != "unknown":
+            assert ["container", "rm", "--force", CONTAINER] in [call[0][3:] for call in seam.calls]
+        assert ["image", "rm", "--force", backend._attempt_image_tag(attempt_id, generation)] in [
+            call[0][3:] for call in seam.calls
+        ]
+        if owner is not None and late_cleanup == "attach_failed":
+            assert processes == [] and not owner._physical_closes
+            assert owner.snapshot(now=10).inflight == 0
+            persisted = repository.get_work(receipt.work_item_id)
+            assert persisted["state"] == "reconcile" and persisted["accepted_result_id"] is None
+        elif owner is not None:
+            assert reader_entered.is_set()
+            assert owner.snapshot(now=10).inflight == 1
+            tokens = [
+                token for lease in owner._leases.values() for token in lease._physical_effects
+            ]
+            assert len(tokens) == 1
+            native_threads = [
+                obj for obj, _ in tokens[0]._owners if isinstance(obj, threading.Thread)
+            ]
+            assert len(native_threads) == 2 and any(thread.is_alive() for thread in native_threads)
+            assert bool(owner._physical_closes) is (late_cleanup == "closed")
+            release_reader.set()
+            for thread in native_threads:
+                thread.join(3)
+                assert not thread.is_alive()
+            assert owner.retry_physical_closes().clean
+            assert owner.snapshot(now=10).inflight == int(late_cleanup == "unknown")
+            assert owner.retry_physical_closes().clean
+            persisted = repository.get_work(receipt.work_item_id)
+            assert persisted["state"] == "reconcile" and persisted["accepted_result_id"] is None
+            assert len(processes) == 1  # Resource closure never replays or completes Work.
+            if late_cleanup == "unknown":
+                assert cleanup_calls == [{"kill": True}]
+                assert not owner._physical_closes
+            else:
+                assert not tokens[0].finish()
+    finally:
+        release_reader.set()
+        if owner is not None:
+            for lease in tuple(owner._leases.values()):
+                for token in tuple(lease._physical_effects):
+                    for obj, _ in tuple(token._owners):
+                        if isinstance(obj, threading.Thread):
+                            obj.join(3)
+            owner.retry_physical_closes()

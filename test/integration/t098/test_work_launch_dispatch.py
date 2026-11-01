@@ -187,6 +187,8 @@ def _setup(
     contract_paths=None,
     contract_write_paths=None,
     lease_seconds=300,
+    resource_admission=None,
+    resource_clock=time.monotonic,
 ):
     repository = WorkRepository(tmp_path / "t098.db")
     repository.initialize()
@@ -280,7 +282,12 @@ def _setup(
     )
     marker = tmp_path / "worker-input.bin"
     backend = backend_factory(marker, repository)
-    gateway = build_durable_launch_gateway(repository, backends={"test": backend})
+    gateway = build_durable_launch_gateway(
+        repository,
+        backends={"test": backend},
+        resource_admission=resource_admission,
+        resource_clock=resource_clock,
+    )
     assert set(gateway._launch_runtime_provider._runtime._admission.deliveries.adapters) == {
         ("launch", 2),
         ("agent_step", 1),

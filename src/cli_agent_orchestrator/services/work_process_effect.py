@@ -63,7 +63,11 @@ def physical_effect_scope(lease: DeliveryReservation | None) -> Iterator[_Native
             or (effect.observed and not effect.attempted)
             or (not effect.gated and not effect.attempted)
         ):
-            token.finish()
+            if not token.finish() and effect.closed:
+                try:
+                    token._register_late()
+                except Exception:
+                    pass  # A failed registration never masks the body or frees its charge.
 
 
 def observe_native_effect() -> None:

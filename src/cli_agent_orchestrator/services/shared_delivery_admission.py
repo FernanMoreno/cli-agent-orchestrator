@@ -520,6 +520,7 @@ class SharedDeliveryCoordinator:
         while True:
             try:
                 item = owner.wait_retirement_ready(timeout_s=self._interval)
+                owner.retry_physical_closes()  # Also runs while shared drain owns late holds.
             except Exception:
                 return  # Foreign process: keep every charge.
             fresh = None
@@ -546,6 +547,8 @@ class SharedDeliveryCoordinator:
                     if attempt is not fresh and self._retire(attempt):
                         del retry[key]
             with self._guard:
+                # A late native hold remains in _attempts until physical retirement;
+                # this worker cannot exit ahead of the hold it must later consume.
                 if not self._accepting and not self._attempts:
                     return
 

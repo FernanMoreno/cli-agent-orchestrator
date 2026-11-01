@@ -128,3 +128,9 @@ Solo el coordinador con hold exacto ya cerrado puede producir el marcador privad
 
 
 El endpoint exige version1 y expected_revision entero estricto3..2^63−2, sin actor/binding/testigo suministrado por el cliente. Devuelve version1/mismosUUID/state=released/revision=esperada+1. Sin marcador409/resource_closure_unproven; conflicto de revisión/estado/acción409/resource_operation_conflict; indisponibilidad o ACK incierto503/resource_control_unavailable, sin eco de errores y no-store. Reutilizar exactamente action_id/operation_id/revisión tras respuesta incierta; una nueva acción no es un reintento idempotente. El catálogo no incorpora un campo de elegibilidad y releasing por sí solo no demuestra testigo. Preparación conserva su contrato previo. [Evidencia del componente](../validation-t014-closure-handoff.json).
+
+
+T014.A (componente validado): el registro privado de cierres tardíos solo acepta un token desde el scope original después de confirmación nativa completa. Reintentos exactos no conceden autoridad desde TTL/PID/Popen/owners vacíos y no amplían HTTP/MCP. El cargo del helper dura hasta su terminación positiva; ningún retry ejecuta Work ni resuelve su estado de negocio. Filtrar por dueño local y mantener registro/cargo tras cualquier incertidumbre. La retirada física confirmada permite al coordinador producir el marcador durable existente.
+
+
+PhysicalCloseResult.clean acredita solo el registro de cierres ya elegibles del dueño, no todos los recursos físicos: los nativos sin prueba ni registro siguen en el ledger y snapshot.inflight impide retirar runtime. Observers deben ser no bloqueantes y no ejecutar SQL ni Work. Un error de reader previo al cleanup puede dejar el negocio reconcile aunque el recurso se retire más tarde; este acuse local no cambia ese estado. [Validación T014.A](../validation-t014-native-late-retirement.json).

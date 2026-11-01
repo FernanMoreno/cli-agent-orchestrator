@@ -17,9 +17,10 @@ from cli_agent_orchestrator.services.work_process_effect import (
 )
 
 
+@pytest.mark.parametrize("automatic", [False, True])
 @pytest.mark.parametrize("held_alive", [False, True])
 def test_parent_gate_error_joins_proxy_and_never_overrides_a_live_thread(
-    tmp_path, monkeypatch, held_alive
+    tmp_path, monkeypatch, held_alive, automatic
 ):
     repository, binding, _, identity = _bound_worker(tmp_path)
     joins = []
@@ -110,5 +111,9 @@ def test_parent_gate_error_joins_proxy_and_never_overrides_a_live_thread(
     if held_alive:
         threads[0].alive = False
         token = next(iter(lease._physical_effects))
-        assert token.finish()
+        if automatic:
+            assert owner.retry_physical_closes().clean
+            assert not token.finish()
+        else:
+            assert token.finish()
         assert owner.snapshot(now=10.0).inflight == 0

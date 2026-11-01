@@ -443,6 +443,7 @@ class InboxAdmissionRuntime:
             shared.stop_accepting()
         from cli_agent_orchestrator.services.work_blocking import run_owned_async
 
+        await run_owned_async(asyncio.to_thread(self.monitor.owner.retry_physical_closes))
         timeout = self._resolve_drain_timeout() if self._bound or shared is not None else 0.0
         if self._bound:
 
@@ -476,9 +477,10 @@ class InboxAdmissionRuntime:
         def retire_storage() -> None:
             # Participants have joined their physical bodies. Retry only the
             # process registry's already requested exact closes, once per stop.
+            native_result = self.monitor.owner.retry_physical_closes()
             result = retry_storage_closes()
             sampler_retired = self.monitor.retire_storage()
-            if not result.clean or sampler_retired is not True:
+            if not native_result.clean or not result.clean or sampler_retired is not True:
                 raise AdmissionRuntimeUnavailable("physical storage cleanup has not retired")
 
         # A cancelled waiter never detaches the close callback or frees its

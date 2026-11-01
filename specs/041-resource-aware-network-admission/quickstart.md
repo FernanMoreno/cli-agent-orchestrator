@@ -52,3 +52,10 @@ El puerto productivo registra el token del efecto externo automáticamente. Un b
 Con el runtime shared ya activado y el control del custodio financiado, un JWT admin puede consultar POST /admission/shared/debt. Solo una operación cuyo coordinador original haya registrado el cierre puede finalizarse por POST /admission/shared/release-witnessed: version1, UUID de acción persistido antes del envío, UUID de operación y revisión esperada del cierre. La revisión depende del historial; no asumir siempre3. No enviar binding, actor ni un supuesto testigo. Un estado releasing del inventario no demuestra por sí solo elegibilidad.
 
 Ante200, comprobar los mismos UUID, state=released y revisión+1. Ante503/cancelación/confirmación perdida, repetir la misma acción y payload; nunca volver a ejecutar Work como reparación. Ante409 conservar el estado y distinguir resource_closure_unproven de resource_operation_conflict; ni ausencia del PID ni fin de página conceden permiso. Los créditos de metadatos siguen cargados. La aceptación con SQL/HTTP y procesos propios se detalla en [validación](validation-t014-closure-handoff.json); no sustituye los gates físicos M1/M2/M3.
+
+
+## Helpers que terminan después del join
+
+El backend debe conservar cada handle exacto y confirmar solo su cierre nativo completo. Esa confirmación no elimina los observers de readers/proxy: si siguen vivos, el token queda registrado en su propio DeliveryAdmission. Monitor, coordinador compartido y stop reobservan automáticamente; no hace falta token.finish manual ni existe una nueva herramienta MCP para forzarlo. Un stop puede conservar retired=False mientras quede helper; tras su terminación positiva un siguiente intento puede cerrar, sin borrar el cargo.
+
+Un contenedor/árbol realmente incierto no entra en ese registro por el mero fin de Popen, por tiempo o por ausencia de owners. El resultado clean del registro no demuestra cierre de esos otros holders. Work puede permanecer reconcile aunque CPU/memoria/sesiones ya hayan vuelto; no reejecutarlo ni cerrar jobs históricos como reparación de recursos. [Evidencia](validation-t014-native-late-retirement.json).
