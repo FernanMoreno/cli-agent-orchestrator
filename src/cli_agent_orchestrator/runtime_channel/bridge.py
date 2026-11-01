@@ -1001,12 +1001,15 @@ async def _amain() -> None:
     reader: asyncio.Task | None = None
     control = None
     runtime = None
+    primary_failure: BaseException | None = None
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, bridge.stop)
     try:
         runtime = runtime_from_environment(
             BridgeAdmissionParticipant(bridge),
-            bootstrap_factory=lambda: scoped_process_bootstrap("bridge-resource/" + runtime_id),
+            bootstrap_factory=lambda: scoped_process_bootstrap(
+                "bridge-resource/" + runtime_id, terminal_generation=True
+            ),
         )
         if runtime is not None:
             from cli_agent_orchestrator.api.admission_server import AdmissionControlServer
@@ -1046,30 +1049,50 @@ async def _amain() -> None:
                 error = None if control_task.cancelled() else control_task.exception()
                 raise AdmissionRuntimeUnavailable("resource control server stopped") from error
             await reader
+    except BaseException as failure:
+        primary_failure = failure
+        raise
     finally:
 
         async def cleanup() -> None:
-            if runtime is not None:
-                runtime.close_admission()
-            bridge.stop()
             try:
-                if reader is not None:
-                    await asyncio.gather(reader, return_exceptions=True)
-                await bridge.drain()
+                # Stop transport ingress without closing the paid control lane.
+                bridge.stop()
+                if runtime is not None and runtime.available:
+                    await runtime.seal_terminal_generation()
+                # Unexpected controller loss already closed the owner. No new
+                # seal query is funded there; absent evidence keeps credits held.
             finally:
+                if runtime is not None:
+                    runtime.close_admission()
+                bridge.stop()
                 try:
-                    for task in tasks:
-                        task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    if reader is not None:
+                        await asyncio.gather(reader, return_exceptions=True)
+                    await bridge.drain()
                 finally:
                     try:
-                        if control is not None:
-                            await control.stop()
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
                     finally:
-                        if runtime is not None:
-                            await runtime.stop()
+                        try:
+                            if control is not None:
+                                await control.stop()
+                        finally:
+                            if runtime is not None:
+                                await runtime.stop()
 
-        await run_owned_async(cleanup())
+        try:
+            await run_owned_async(cleanup())
+        except BaseException:
+            if primary_failure is None:
+                raise
+            # Keep the first failure after joining cleanup. Do not turn an
+            # incomplete shutdown into authorization to retire metadata.
+            primary_failure.add_note(
+                "Shutdown was not fully confirmed; metadata retirement remains unauthorized."
+            )
 
 
 def main() -> None:

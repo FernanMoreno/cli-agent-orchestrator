@@ -841,7 +841,12 @@ def verify_component(connection: Connection, migrations):
 
 
 def _protect_runtime_readonly_table(
-    connection: Connection, target: DatabaseTarget, name: str, label: str
+    connection: Connection,
+    target: DatabaseTarget,
+    name: str,
+    label: str,
+    *,
+    append_only: bool = False,
 ) -> None:
     relation = connection.execute(
         """SELECT c.oid,c.relkind FROM pg_catalog.pg_class c
@@ -874,7 +879,10 @@ def _protect_runtime_readonly_table(
                     sql.SQL(",").join(columns), table, grantee
                 )
             )
-    connection.execute(sql.SQL("GRANT SELECT ON TABLE {} TO {}").format(table, runtime_role))
+    privileges = sql.SQL("SELECT, INSERT" if append_only else "SELECT")
+    connection.execute(
+        sql.SQL("GRANT {} ON TABLE {} TO {}").format(privileges, table, runtime_role)
+    )
     checks = []
     parameters: list[object] = []
     for privilege in (
@@ -894,10 +902,21 @@ def _protect_runtime_readonly_table(
             parameters.extend((target.user, relation[0]))
         checks.append(check)
     effective = connection.execute("SELECT " + ",".join(checks), tuple(parameters)).fetchone()
-    if effective is None or not effective[0] or any(effective[1:]):
+    if effective is None or tuple(effective) != (
+        True,
+        append_only,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+    ):
         # Remaining inherited privileges must fail the migration, not be
         # revoked from a potentially shared role outside this schema's scope.
-        raise SchemaMismatch(f"PostgreSQL runtime role must have read-only {label}s")
+        raise SchemaMismatch(
+            f"PostgreSQL runtime role must have {'append-only' if append_only else 'read-only'} {label}s"
+        )
 
 
 def protect_runtime_authority_tables(connection: Connection, target: DatabaseTarget) -> None:
@@ -915,6 +934,14 @@ def protect_runtime_authority_tables(connection: Connection, target: DatabaseTar
         ("_cao_resource_witness_releases", "resource witnessed release"),
     ):
         _protect_runtime_readonly_table(connection, target, protected_name, protected_label)
+
+    _protect_runtime_readonly_table(
+        connection,
+        target,
+        "_cao_resource_generation_seals",
+        "resource generation seal",
+        append_only=True,
+    )
 
 
 def migrate_component(target: DatabaseTarget, migrations):

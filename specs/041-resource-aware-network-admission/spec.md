@@ -221,3 +221,12 @@ Antes de ampliar cleanup automático, contrastar que una excepción de arranque 
 
 
 El mismo contrato de arranque sin acuse aplica a Bubblewrap: ninguna excepción de Popen sin handle devuelto acredita no-arranque ni limpieza física; se conserva el cargo y la excepción tipada declara limpieza incierta.
+
+
+## T014.C1 — sello irreversible de generación (componente validado; cierre/créditos pendientes)
+
+El retiro futuro de créditos requiere primero impedir productores posteriores de la generación exacta. Un sello durable no prueba cierre físico y no devuelve ningún cargo. Solo la composición confiable de un participante con ciclo terminal puede solicitarlo para su propio binding/PID; jamás se infiere desde runtime.retired, TTL, revocación o PID ajeno. stop normal de API conserva la reactivación en el mismo proceso. El único productor inicial será cleanup terminal del Bridge; el método de runtime y protocolo de persistencia serán comunes a todos los participantes terminales.
+
+Serializar sello contra adquisiciones nuevas y primera activación mediante el lock de membresía/generación. Replays exactos de recibos ya aceptados siguen siendo lecturas del resultado, no permisos para otro efecto. Lecturas y cierre de operaciones, testigo original, aborto, devolución auditada y revocación siguen posibles. Rechazar nueva cobertura/activación, reserva raw o mapeada, crédito o membresía activa de la generación sellada. Otras generaciones quedan intactas.
+
+Persistencia aditiva v7 con tablas/checksums1–6 conservados, sello append-only y ACL efectiva SELECT+INSERT sin UPDATE/DELETE ni privilegios peligrosos/PUBLIC. Capacidad de sello opaca ligada a la composición/binding; no recibirla por HTTP/MCP ni fabricar principal admin para un hecho de proceso. SQL del sello conserva financiamiento normal hasta cierre real; fallo o acuse perdido no puede omitir el drenaje ni liberar créditos. El sello no implementa el testigo final de generación ni su custodio/decremento.

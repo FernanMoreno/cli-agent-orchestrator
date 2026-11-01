@@ -144,9 +144,17 @@ def test_applied_v1_to_v5_checksums_are_frozen_and_v6_is_additive():
         5: "9cb73d9762cb8c0d846bb2ecdee811744c6c72029b830d623c2452e43762f8aa",
     }
     assert {m.version: m.checksum for m in RESOURCE_ADMISSION_MIGRATIONS[:5]} == expected
-    assert [m.version for m in RESOURCE_ADMISSION_MIGRATIONS] == [1, 2, 3, 4, 5, 6]
+    assert [m.version for m in RESOURCE_ADMISSION_MIGRATIONS] == [1, 2, 3, 4, 5, 6, 7]
     assert len(RESOURCE_ADMISSION_MIGRATIONS[4].tables) == 10
     assert len(RESOURCE_ADMISSION_MIGRATIONS[5].tables) == 11
+    assert (
+        RESOURCE_ADMISSION_MIGRATIONS[5].checksum
+        == "ee8f728301be19bc59c6574cefb69cb4df6819f8b943629bf30f289d3d1e7208"
+    )
+    assert len(RESOURCE_ADMISSION_MIGRATIONS[6].tables) == 12
+    assert set(RESOURCE_ADMISSION_MIGRATIONS[6].tables) - set(
+        RESOURCE_ADMISSION_MIGRATIONS[5].tables
+    ) == {"_cao_resource_generation_seals"}
 
 
 def test_observed_counter_underflow_blocks_new_admission_before_sql_without_repair(
@@ -378,6 +386,20 @@ def test_v5_upgrade_keeps_every_historical_state_unmarked_and_old_reader_closed(
         verify_component(writer, previous)
         with pytest.raises(SchemaMismatch):
             verify_component(writer, RESOURCE_ADMISSION_MIGRATIONS)
+    previous6 = RESOURCE_ADMISSION_MIGRATIONS[:6]
+    migrate_component(target, previous6)
+    with connect(target, readonly=True) as reader:
+        verify_component(reader, previous6)
+        old_rows = reader.execute(
+            sql.SQL(
+                "SELECT state,revision,closure_witness_revision FROM {} ORDER BY revision"
+            ).format(sql.Identifier(target.schema, "_cao_resource_operations"))
+        ).fetchall()
+        assert old_rows == [(state, revision, None) for revision, state in enumerate(states, 1)]
+        with pytest.raises(SchemaMismatch):
+            verify_component(reader, previous)
+        with pytest.raises(SchemaMismatch):
+            verify_component(reader, RESOURCE_ADMISSION_MIGRATIONS)
     migrate_component(target, RESOURCE_ADMISSION_MIGRATIONS)
     with connect(target, readonly=True) as reader:
         rows = reader.execute(
@@ -389,6 +411,9 @@ def test_v5_upgrade_keeps_every_historical_state_unmarked_and_old_reader_closed(
         verify_component(reader, RESOURCE_ADMISSION_MIGRATIONS)
         with pytest.raises(SchemaMismatch):
             verify_component(reader, previous)
+
+        with pytest.raises(SchemaMismatch):
+            verify_component(reader, previous6)
 
 
 def test_witness_audit_remains_owner_written_after_generic_later_grants(pair):

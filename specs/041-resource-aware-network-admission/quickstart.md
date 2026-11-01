@@ -59,3 +59,10 @@ Ante200, comprobar los mismos UUID, state=released y revisión+1. Ante503/cancel
 El backend debe conservar cada handle exacto y confirmar solo su cierre nativo completo. Esa confirmación no elimina los observers de readers/proxy: si siguen vivos, el token queda registrado en su propio DeliveryAdmission. Monitor, coordinador compartido y stop reobservan automáticamente; no hace falta token.finish manual ni existe una nueva herramienta MCP para forzarlo. Un stop puede conservar retired=False mientras quede helper; tras su terminación positiva un siguiente intento puede cerrar, sin borrar el cargo.
 
 Un contenedor/árbol realmente incierto no entra en ese registro por el mero fin de Popen, por tiempo o por ausencia de owners. El resultado clean del registro no demuestra cierre de esos otros holders. Work puede permanecer reconcile aunque CPU/memoria/sesiones ya hayan vuelto; no reejecutarlo ni cerrar jobs históricos como reparación de recursos. [Evidencia](validation-t014-native-late-retirement.json).
+
+
+## Ciclo terminal y sello C1
+
+El Bridge configurado para admisión compartida usa la misma raíz de composición con ciclo terminal explícito. Detiene transporte/coordinador, une el control aceptado y registra el sello con su crédito de control todavía financiado; después cierra y drena todos los participantes. El stop normal de API no sella: reutiliza la misma generación/crédito al reconstruir el lifetime. No existe un nuevo endpoint ni ajuste de modelo para forzar un sello o retirar un crédito.
+
+El esquema resource_admission vigente pasa a7 mediante bootstrap controlado del dueño; runtime solo verifica. Una generación sellada niega nueva cobertura/reserva/inicio, sin negar lecturas, ACKs exactos o cierre original. Si falta coordinador/control o hay cierre incierto, no se infiere sello ni cierre y el crédito sigue cargado. Una consulta de diagnóstico/completion todavía financiada tampoco convierte el sello en prueba de fin físico: el custodio y testigo completos siguen pendientes. [Evidencia](validation-t014-generation-seal.json).

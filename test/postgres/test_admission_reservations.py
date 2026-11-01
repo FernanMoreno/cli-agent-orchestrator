@@ -122,6 +122,10 @@ def test_registration_and_authority_acl_survive_later_generic_grants(shared):
                 is False
             )
 
+        from test.postgres.test_admission_generation_seal import assert_seal_acl
+
+        assert_seal_acl(runtime, target)
+
 
 def test_multidomain_denial_is_atomic_and_unknown_member_is_not_authority(shared):
     target, repository, current, m = shared

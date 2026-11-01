@@ -29,6 +29,10 @@ from cli_agent_orchestrator.models.resource_envelope import (
     ResourceEnvelopeRecord,
     envelope_integer,
 )
+from cli_agent_orchestrator.models.resource_generation import (
+    TerminalGenerationAuthority,
+    _issue_terminal_generation_authority,
+)
 from cli_agent_orchestrator.security.auth import SCOPE_ADMIN, is_verified_principal
 from cli_agent_orchestrator.services.admission_policy import validate_clock
 from cli_agent_orchestrator.services.local_peer_identity import (
@@ -76,7 +80,10 @@ if hasattr(os, "register_at_fork"):
 
 
 def scoped_process_bootstrap(
-    scope: str, *, repository: ResourceEnvelopeRepository | None = None
+    scope: str,
+    *,
+    repository: ResourceEnvelopeRepository | None = None,
+    terminal_generation: bool = False,
 ) -> "ResourceBootstrap":
     """Bind one local resource participant without accessing peer credentials.
 
@@ -100,6 +107,7 @@ def scoped_process_bootstrap(
         identity = _scoped_identity(os.getpid(), profile, scope)
     return ResourceBootstrap(
         repository=repository,
+        terminal_generation=terminal_generation,
         binding_supplier=lambda target: capture_server_binding(
             target, identity_supplier=lambda: identity
         ),
@@ -227,11 +235,44 @@ class ResourceBootstrap:
         binding_supplier: Callable[[DatabaseTarget], ResourceBinding] = capture_server_binding,
         instance_supplier: Callable[[], str] = lambda: current_process_identity().instance_id,
         clock: Callable[[], float] = time.monotonic,
+        terminal_generation: bool = False,
     ):
+        if type(terminal_generation) is not bool:
+            raise ValueError("terminal generation lifecycle must be explicit")
+        self._terminal_generation = terminal_generation
+        self._terminal_authority: TerminalGenerationAuthority | None = None
+        self._terminal_authority_pid = os.getpid()
+        self._terminal_authority_guard = threading.Lock()
         self._repository = repository if repository is not None else ResourceEnvelopeRepository()
         self._capture = binding_supplier
         self._instance = instance_supplier
         self._clock = clock
+
+    @property
+    def terminal_generation(self) -> bool:
+        return self._terminal_generation and self._terminal_authority_pid == os.getpid()
+
+    def issue_terminal_generation_authority(
+        self, original_binding: ResourceBinding
+    ) -> TerminalGenerationAuthority:
+        if not self._terminal_generation or self._terminal_authority_pid != os.getpid():
+            raise PermissionError("resource participant has no current terminal lifecycle")
+        if (
+            type(original_binding) is not ResourceBinding
+            or original_binding.process_pid != self._terminal_authority_pid
+            or original_binding.instance_id != self._server_instance()
+        ):
+            raise ValueError("terminal resource original binding mismatch")
+        # Never replace the admitted view with a fresh capture during shutdown.
+        # Recheck before an inherited lock if a trusted supplier changed process.
+        if self._terminal_authority_pid != os.getpid():
+            raise PermissionError("terminal resource participant process changed")
+        with self._terminal_authority_guard:
+            if self._terminal_authority is None:
+                self._terminal_authority = _issue_terminal_generation_authority(original_binding)
+            elif self._terminal_authority.binding != original_binding:
+                raise ValueError("terminal resource original binding changed")
+            return self._terminal_authority
 
     @staticmethod
     def _administrator(principal: object) -> str:

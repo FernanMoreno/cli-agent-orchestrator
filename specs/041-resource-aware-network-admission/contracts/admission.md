@@ -140,3 +140,9 @@ T014.B1 (en diagnóstico): no equiparar process=None o falta de CompletedProcess
 
 
 B1 validado por componente: el marcador de arranque no observado solo añade deuda al token exacto/PID; no autoriza efectos ni confirma cierre desde otro hilo. La comprobación bajo el guard común impide adelantar confirmación a la actualización del marcador. No hay clear por TTL/ausencia de artifacts; Bubblewrap preserva snapshot y cleanup_confirmed=False sin handle. Fallos opacos de exec pueden retener deuda aun si stdlib reaped internamente: falta prueba positiva original. [Validación](../validation-t014-native-start-ack.json).
+
+
+T014.C1 (componente validado): generación sellada impide nuevos productores con lock común y conserva acknowledgements idempotentes ya aceptados, lecturas y cierres. Capacidad interna no transferible de binding exacto, solo ciclo terminal; no DTO cliente ni autoridad para liberar recursos. El sello append-only no cambia uso/cantidades/revisiones de créditos, no acredita muerte ni cierre SQL, y API lifespan ordinario sigue reutilizable.
+
+
+El sello es un hecho negativo append-only de servidores cooperantes confiables, no una firma criptográfica ni RLS: el permiso SQL INSERT puede escribir la fila y la capacidad opaca se valida en el servidor Python. No concede autoridad de cierre físico ni devolución. Solo Bridge opta hoy por ciclo terminal; pérdida del control o coordinador ausente no producen sello, y los créditos permanecen. El último SQL usa el permiso de control original antes de cerrar owner/participantes. [Validación](../validation-t014-generation-seal.json).

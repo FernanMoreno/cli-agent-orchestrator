@@ -91,3 +91,8 @@ _cao_resource_operations.closure_witness_revision es nullable: filas históricas
 ## T014.A — registro local de cierres tardíos elegibles
 
 DeliveryAdmission conserva _physical_closes con referencias fuertes a tokens exactos y un guard de retry no bloqueante. Solo physical_effect_scope registra tras prueba positiva original y finish rechazado por helper tardío. finish quita token físico y registro bajo el mismo guard de dueño, después de observar fuera del lock y volver a comprobar identidad. PhysicalCloseResult contiene pending/busy/clean; no es un DTO HTTP ni autoridad de cierre global. El resultado limpio no sustituye inflight ni retira metadatos. Estado local efímero de propiedad; el ledger/cargos durables sigue en PostgreSQL/esquema6 sin migración nueva en este corte. [Validación](validation-t014-native-late-retirement.json).
+
+
+## T014.C1 — hecho de sello terminal (esquema7)
+
+_cao_resource_generation_seals usa PK(instance_id,process_generation), seal_id único/estable por realm+generación, PID/nacimiento y digest del binding original, reason=terminal y created_at de auditoría. El runtime solo SELECT+INSERT; prohíbe UPDATE/DELETE/privilegios peligrosos y PUBLIC/ACL de columnas, incluso después de grants genéricos. AUTHORITY_TABLES conserva el tuple de versiones históricas; GENERATION_SEAL_TABLES añade el objeto únicamente a v7 y a comprobaciones actuales de dueño/manifest. No cambia créditos, allocations, usage ni estados/revisiones previos. No es testigo de cierre y no se expira por tiempo. La capacidad Python opaca es memoria de autoridad del proceso, no persistencia alternativa a PostgreSQL. [Validación](validation-t014-generation-seal.json).

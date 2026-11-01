@@ -1,0 +1,418 @@
+{
+  "schema": "caos.spec041.t014-generation-seal.v1",
+  "date": "2026-11-01",
+  "base_head": "8bc4a87181b7f8909b87191adb4025df07cc90e4",
+  "scope": "T014.C1 irreversible producer fence for an explicitly terminal shared process generation; no physical closure or metadata credit retirement",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-generation-seal-final",
+    "cases": 818,
+    "passed": 818,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous628cases_preserved": true,
+    "selected_test_files": 53,
+    "seconds": 780.223,
+    "available_mib": 7945,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "4c1608e92d8a03849c79e8722f3a523f9b3f0eb324952f5f5de93437a8c2ce05",
+    "production_archive_match": 8,
+    "owned_python_archive_match": 18,
+    "foreign_graphify_preserved": 12,
+    "history": [
+      {
+        "phase": "t014-generation-seal-red",
+        "cases": {
+          "total": 2,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-core-green",
+        "cases": {
+          "total": 2,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-bootstrap-red",
+        "cases": {
+          "total": 1,
+          "failure": 1,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-identity-green",
+        "cases": {
+          "total": 16,
+          "failure": 0,
+          "error": 3,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-identity-green-r2",
+        "cases": {
+          "total": 16,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-lifecycle-red",
+        "cases": {
+          "total": 6,
+          "failure": 6,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-lifecycle-green",
+        "cases": {
+          "total": 23,
+          "failure": 1,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-server-exit-green",
+        "cases": {
+          "total": 1,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-public-acl-red",
+        "cases": {
+          "total": 2,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-protocol-green",
+        "cases": {
+          "total": 40,
+          "failure": 0,
+          "error": 19,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-protocol-green-r2",
+        "cases": {
+          "total": 40,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-primary-error-red",
+        "cases": {
+          "total": 3,
+          "failure": 1,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-primary-error-green",
+        "cases": {
+          "total": 14,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-prepare-green",
+        "cases": {
+          "total": 1,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-generation-seal-dependencies-green",
+        "cases": {
+          "total": 145,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      }
+    ],
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "dc8ae06cb109a7a02dd047e20114733199dbf4b2fbc06ce2b7c018daf66d89ac"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+        "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "1756f15186fed08726fd8b4a09ffbe94317047e49317ce29043163220e616c74"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "14ce3c6a552526365967b4868924091a9b88e0c5bea61373aaebb44a5cc80a57"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "fff8134f18fa2e7f713a22556b181c9e258c637057dfa5a27e8adea17d47ee01"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+        "sha256": "e011aeef484ea3ec49d9b69f6e3eb232d86521f1372b281d2d5204f329b1046e"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "d1708ea76bf74684e3689be02313779ae608428e6f1c0acdd2b03c047ac5b049"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "bf9d53a403f0bda9cad141ad297d251ead8da967c0c1142e0b79ffece093e99b"
+      },
+      {
+        "path": "test/postgres/test_admission_admin_abort.py",
+        "sha256": "9ae1e2a85fd1ef1f00c394d56d46c7a893941e4d94211fcf6bdf3a2b3c8300be"
+      },
+      {
+        "path": "test/postgres/test_admission_closure_handoff.py",
+        "sha256": "c46da13141b94098cf0f6465df695bed6ae9d41de151977abf24196005902308"
+      },
+      {
+        "path": "test/postgres/test_admission_generation_seal.py",
+        "sha256": "532c2903e1a11219d1cc4ecafd0fa9e90614b0a420b9bde21880999a5cd28acf"
+      },
+      {
+        "path": "test/postgres/test_admission_metadata_credits.py",
+        "sha256": "c9e0cdb1ae7697b6b502124d0e313e8b39af5028840f493c6b022899c2e42bc0"
+      },
+      {
+        "path": "test/postgres/test_admission_reservations.py",
+        "sha256": "2d8d36e6940e31f18b3305052427207970769a426a2380ded486aa4724d3c0dc"
+      },
+      {
+        "path": "test/postgres/test_generation_seal_prepare.py",
+        "sha256": "c03c4c0709b2bcba57b49ac08c1e6f250b0fb77c2a408624bb379302ce089d48"
+      },
+      {
+        "path": "test/postgres/test_generation_seal_races.py",
+        "sha256": "de516ef9119584575715a4a65aef71849183b0287a20cf09a18662e0113a4ef0"
+      },
+      {
+        "path": "test/postgres/test_generation_seal_runtime.py",
+        "sha256": "b6fa710f7b449893368a3e7069a9f5635f597151ea42068e26fac7a09a11629b"
+      },
+      {
+        "path": "test/runtime_channel/test_admission_lifecycle.py",
+        "sha256": "76ea7750d10591e64b6c8e6afdd667ccf389fe31b5cdc5e9a66377f20481f4c5"
+      },
+      {
+        "path": "test/services/test_generation_seal_authority.py",
+        "sha256": "cb7c3b7153477096a73ec4f322956a7e0dda999c2e1675c4ce86d66ad60326c0"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 18
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 18
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 8
+    }
+  ],
+  "frozen_migrations": {
+    "base_head": "8bc4a87181b7f8909b87191adb4025df07cc90e4",
+    "frozen_versions": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "checksums": [
+      "6d1c5b17a332de83c647c2498f757da432ac13b502b2cead06d4c3950f5ef49e",
+      "c183ecaffafcce3a3166fea88a0aea54bfd00d5820b20e9e5594105f1a2c8f40",
+      "e4881dd35a2c59659a6395d31dd342c8cd7b0b9e6946998e4419cdd04eff98af",
+      "1faa34ac79c790de65d8776a8a078360b9788cdf259d359ac12e0eefe85a01c1",
+      "9cb73d9762cb8c0d846bb2ecdee811744c6c72029b830d623c2452e43762f8aa",
+      "ee8f728301be19bc59c6574cefb69cb4df6819f8b943629bf30f289d3d1e7208"
+    ],
+    "old_table_counts": [
+      7,
+      7,
+      9,
+      9,
+      10,
+      11
+    ],
+    "new_table_count": 12
+  },
+  "architecture": {
+    "files": 448,
+    "dependencies": 2011,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 10,
+    "nodes": 575,
+    "edges": 1460,
+    "dangling": 152,
+    "partial": true,
+    "private": true,
+    "foreign_files_preserved": 12
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-terminal-generation-seal",
+    "paths": 3,
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "d2a5d79e0755468c8f65a93470921cd3",
+      "e5de4239b03d45449c2f85fec1277a83",
+      "d4ccc2401e224c79b8b2399ba1b5bc94"
+    ],
+    "peer_scope": "Partial design/core/lifecycle source reviews; peer explicitly did not read all tests or workflow files. Root verified source and executable evidence independently.",
+    "luna_migration_audit_and_private_test_drafts": true,
+    "root_reviewed_and_integrated_drafts": true,
+    "root_actual_diff_review": true
+  },
+  "implemented": [
+    "Migration7 adds one append-only generation seal table; versions1–6/checksums/table tuples remain frozen.",
+    "Explicit trusted terminal lifecycle capability retains the admitted original binding, rejects copying/serialization and foreign PID before locks; deterministic realm/generation UUID supports same-generation bootstrap retry.",
+    "Generation membership gate serializes seal with new raw/mapped reservations, fresh coverage and first activation. Existing receipt/active acknowledgements, reads and original closure remain allowed.",
+    "New credits and active memberships cannot revive a sealed generation; exact existing credit ACK and revocation remain available; another generation is unaffected.",
+    "Runtime role has SELECT+INSERT on facts only; UPDATE/DELETE/dangerous privileges and PUBLIC/column ACL drift are rejected, including NULL/empty ACL handling. Protected historical authority tables stay readonly.",
+    "Bridge quiesces transport and the mapped coordinator, refuses new operator requests, joins the accepted control call and rereads late coverage before the final paid query. Full participant/owner/monitor close and joins happen in finally.",
+    "Unexpected controller loss skips an unfunded seal; absent coordinator/global close uncertainty creates no seal SQL. Ordinary API.stop remains reusable and never seals.",
+    "The first supervision error survives a secondary seal/shutdown failure with a fixed note forbidding metadata retirement."
+  ],
+  "evidence_boundaries": [
+    "Final distinct cases only; all628previous case identities retained, no FAIL/ERROR/SKIP. Prior attempts remain history and are not summed.",
+    "Actual existing PostgreSQL with real advisory lock wait observation, two transaction contenders and read-only observer; this is protocol concurrency, not physical multi-node acceptance.",
+    "Actual funded control connection has control_connection_loans=1 during seal SQL; credits/usage remain unchanged, then ordinary lifecycle drains.",
+    "Actual local prepare retains the same control lane across preparing and active commits; seal queues behind it, records while an admitted body remains live, denies a later body before SQL, and permits original release with metadata1 still charged.",
+    "Postcommit binding acknowledgement loss is reproduced after the real transaction commits; a fresh bootstrap acknowledges the original stable seal once. This is not a claimed network-driver commit-loss experiment.",
+    "Controller/reader/cancellation/secondary-failure tests use real lifecycle objects with controlled channel transport and probes; no new provider or native sandbox acceptance.",
+    "Opaque authority is a trusted-server Python boundary, not a PostgreSQL cryptographic predicate or RLS. The cooperating runtime SQL role can insert a negative fact directly."
+  ],
+  "remaining": [
+    "The seal is not physical closure: control/read/completion SQL can still run while its original funding remains held. A future exact whole-generation physical witness and independently funded audited credit custodian are required.",
+    "No coordinator, lost control, unresolved storage close or unconfirmed seal leaves credits charged; process PID/TTL/runtime.retired is never sufficient.",
+    "No historical RECONCILE_REQUIRED jobs were closed/replayed. Unknown native cleanup, quotas, elastic placement, physical M1/M2/M3, SDK/UI and global acceptance remain open."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

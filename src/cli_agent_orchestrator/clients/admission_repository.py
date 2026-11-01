@@ -23,6 +23,7 @@ from cli_agent_orchestrator.clients.admission_schema import (
     _BASE_AUTHORITY_TABLES,
     ADMIN_ACTION_TABLES,
     AUTHORITY_TABLES,
+    GENERATION_SEAL_TABLES,
     LEDGER_TABLES,
     METADATA_CREDIT_TABLES,
     RESOURCE_ADMISSION_MIGRATIONS,
@@ -60,6 +61,11 @@ from cli_agent_orchestrator.models.admission_domains import (
     canonical_id,
 )
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding, envelope_integer
+from cli_agent_orchestrator.models.resource_generation import (
+    GenerationSeal,
+    TerminalGenerationAuthority,
+    is_terminal_generation_authority,
+)
 
 
 class SharedAdmissionDenied(RuntimeError):
@@ -124,6 +130,7 @@ _TABLES.update(
 )
 _TABLES["admin_actions"] = ADMIN_ACTION_TABLES[0]
 _TABLES["witness_releases"] = WITNESS_RELEASE_TABLES[0]
+_TABLES["generation_seals"] = GENERATION_SEAL_TABLES[0]
 _TRANSITIONS = {
     "preparing": {"active", "released"},
     "active": {"releasing", "uncertain"},
@@ -224,6 +231,29 @@ class ResourceAdmissionRepository:
         ).fetchone()
         if unsafe is None or unsafe[0] is not False:
             raise SchemaMismatch("Shared ledger runtime privileges are unsafe")
+        append_only = connection.execute(
+            """SELECT c.relkind IN ('r','p')
+                AND has_table_privilege(current_user,c.oid,'SELECT')
+                AND has_table_privilege(current_user,c.oid,'INSERT')
+                AND NOT EXISTS (
+                    SELECT 1 FROM aclexplode(CASE WHEN cardinality(c.relacl)>0 THEN c.relacl ELSE acldefault('r',c.relowner) END) a
+                    WHERE a.grantee=0)
+                AND NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_attribute att,
+                    LATERAL aclexplode(CASE WHEN cardinality(att.attacl)>0 THEN att.attacl END) a
+                    WHERE att.attrelid=c.oid AND a.grantee=0)
+                AND NOT (has_any_column_privilege(current_user,c.oid,'UPDATE')
+                    OR has_table_privilege(current_user,c.oid,'DELETE')
+                    OR has_table_privilege(current_user,c.oid,'TRUNCATE')
+                    OR has_any_column_privilege(current_user,c.oid,'REFERENCES')
+                    OR has_table_privilege(current_user,c.oid,'TRIGGER')
+                    OR has_table_privilege(current_user,c.oid,'MAINTAIN'))
+                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                WHERE n.nspname=%s AND c.relname=%s""",
+            (self.target.schema, GENERATION_SEAL_TABLES[0]),
+        ).fetchone()
+        if append_only is None or append_only[0] is not True:
+            raise SchemaMismatch("Resource generation seals require append-only runtime privileges")
 
     @contextmanager
     def _runtime(self, *, require_usage: bool = False) -> Iterator[Connection]:
@@ -267,9 +297,9 @@ class ResourceAdmissionRepository:
                 JOIN pg_catalog.pg_roles r ON r.rolname=current_user
                 WHERE n.nspname=%s AND c.relname=ANY(%s)""",
                 (
-                    len(AUTHORITY_TABLES + LEDGER_TABLES),
+                    len(AUTHORITY_TABLES + LEDGER_TABLES + GENERATION_SEAL_TABLES),
                     self.target.schema,
-                    list(AUTHORITY_TABLES + LEDGER_TABLES),
+                    list(AUTHORITY_TABLES + LEDGER_TABLES + GENERATION_SEAL_TABLES),
                 ),
             ).fetchone()
             if owned is None or owned[0] is not True:
@@ -310,9 +340,78 @@ class ResourceAdmissionRepository:
         )
         self._lock(connection, _MEMBERSHIP_FAMILY, (identity,))
 
+    def _require_generation_open(self, connection: Connection, binding: ResourceBinding) -> None:
+        # Caller holds the same generation/membership gate as the seal writer.
+        row = self._query(
+            connection,
+            "SELECT seal_id FROM {generation_seals} WHERE instance_id=%s AND process_generation=%s",
+            (binding.instance_id, binding.process_generation),
+        ).fetchone()
+        if row is not None:
+            raise SharedAdmissionDenied("Resource generation is sealed")
+
+    def seal_current_generation(self, authority: TerminalGenerationAuthority) -> GenerationSeal:
+        """Append an original terminal owner's negative producer fence.
+
+        This is not closure evidence and never changes credits, usage or Work.
+        The caller keeps this query funded until its actual connection ends.
+        """
+        self._check_pid()
+        if not is_terminal_generation_authority(authority):
+            raise SharedAdmissionDenied("Terminal resource generation authority is unavailable")
+        binding = self.current_binding()
+        if authority.binding != binding:
+            raise SharedAdmissionDenied("Terminal resource generation belongs to another binding")
+        with self._runtime() as connection:
+            self._lock_membership(connection, binding)
+            self._query(
+                connection,
+                """INSERT INTO {generation_seals}
+                    (instance_id,process_generation,seal_id,process_pid,process_started_at,binding_sha256,reason)
+                    VALUES (%s,%s,%s,%s,%s,%s,'terminal') ON CONFLICT DO NOTHING""",
+                (
+                    binding.instance_id,
+                    binding.process_generation,
+                    authority.seal_id,
+                    binding.process_pid,
+                    binding.process_started_at,
+                    binding_digest(authority.binding),
+                ),
+            )
+            row = self._query(
+                connection,
+                "SELECT * FROM {generation_seals} WHERE instance_id=%s AND process_generation=%s",
+                (binding.instance_id, binding.process_generation),
+            ).fetchone()
+            if row is None or (
+                str(row["seal_id"]),
+                row["process_pid"],
+                row["process_started_at"],
+                row["binding_sha256"],
+                row["reason"],
+            ) != (
+                authority.seal_id,
+                binding.process_pid,
+                binding.process_started_at,
+                binding_digest(authority.binding),
+                "terminal",
+            ):
+                raise SharedRevisionConflict("Terminal resource generation seal changed")
+            if self.current_binding() != binding:
+                raise SharedAdmissionDenied("Terminal resource generation binding changed")
+        try:
+            if self.current_binding() != binding:
+                raise SharedAdmissionDenied("Terminal resource generation binding changed")
+        except SharedAdmissionDenied:
+            raise SharedCommitUncertain(
+                "Terminal resource generation seal requires reconciliation"
+            ) from None
+        return GenerationSeal(authority.seal_id, binding.instance_id, binding.process_generation)
+
     def _membership_basis(
         self, connection: Connection, binding: ResourceBinding
     ) -> tuple[list[Record], str]:
+        self._require_generation_open(connection, binding)
         members = self._query(
             connection,
             """SELECT * FROM {members} WHERE instance_id=%s AND process_generation=%s
@@ -474,6 +573,8 @@ class ResourceAdmissionRepository:
             self._require_usage_basis()
         with self._owner(principal_id, require_usage=metadata_credit_id is not None) as connection:
             self._lock_membership(connection, binding)
+            if active:
+                self._require_generation_open(connection, binding)
             if metadata_credit_id is not None:
                 self._lock(connection, _CREDIT_FAMILY, (metadata_credit_id,))
             self._lock(connection, _DOMAIN_FAMILY, (domain_id,))
@@ -591,6 +692,7 @@ class ResourceAdmissionRepository:
             ):
                 raise SharedRevisionConflict("Metadata credit identity or payload changed")
             return credit
+        self._require_generation_open(connection, binding)
         domain = self._domain(connection, domain_id)
         member = self._query(
             connection,
@@ -1223,8 +1325,7 @@ class ResourceAdmissionRepository:
         )
         membership_hash = None
         with self._runtime(require_usage=True) as connection:
-            if cost is not None:
-                self._lock_membership(connection, binding)
+            self._lock_membership(connection, binding)
             self._lock(connection, _OPERATION_FAMILY, (operation_id,))
             existing = self._query(
                 connection, "SELECT * FROM {operations} WHERE operation_id=%s", (operation_id,)
@@ -1239,6 +1340,7 @@ class ResourceAdmissionRepository:
                 ):
                     raise SharedRevisionConflict("Resource operation payload changed")
                 return _receipt(existing)
+            self._require_generation_open(connection, binding)
             if cost is not None:
                 domains, membership_hash = self._membership_basis(connection, binding)
                 if require_metadata:
@@ -1334,6 +1436,8 @@ class ResourceAdmissionRepository:
                 return _receipt(row)  # Exact CAS acknowledgement retry, no new transition.
             if row["revision"] != expected_revision or state not in _TRANSITIONS[row["state"]]:
                 raise SharedRevisionConflict("Resource operation state or revision changed")
+            if state == "active":
+                self._require_generation_open(connection, binding)
             allocations = self._query(
                 connection,
                 "SELECT * FROM {allocations} WHERE operation_id=%s ORDER BY domain_id",

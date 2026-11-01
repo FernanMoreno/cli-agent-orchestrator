@@ -210,7 +210,9 @@ async def test_cancelled_control_start_and_stop_close_late_startup_listener(monk
         await value.stop()
 
 
-@pytest.mark.parametrize("cancel", [False, True, "server_exit"])
+@pytest.mark.parametrize(
+    "cancel", [False, True, "server_exit", "seal_failure", "reader_and_seal_failure"]
+)
 @pytest.mark.asyncio
 async def test_amain_activates_control_before_reader_and_retires_complete_lifetime(
     monkeypatch, tmp_path, cancel
@@ -226,6 +228,7 @@ async def test_amain_activates_control_before_reader_and_retires_complete_lifeti
     f = fixture()
     controls, values, backgrounds = [], [], []
     entered = asyncio.Event()
+    seals, terminal_scopes = [], []
     original_server = server_api.AdmissionControlServer
 
     def controller(participant, *, bootstrap_factory):
@@ -237,6 +240,14 @@ async def test_amain_activates_control_before_reader_and_retires_complete_lifeti
             clock=lambda: f.clock[0],
             drain_timeout_s=10,
         )
+
+        async def seal():
+            assert not f.monitor._stopped
+            seals.append("seal")
+            if cancel in {"seal_failure", "reader_and_seal_failure"}:
+                raise OSError("controlled terminal seal failure")
+
+        value.seal_terminal_generation = seal
         values.append(value)
         return value
 
@@ -257,10 +268,13 @@ async def test_amain_activates_control_before_reader_and_retires_complete_lifeti
         assert self._resource_clock is values[0].clock
         entered.set()
         await asyncio.sleep(0)
-        if cancel:
+        if cancel == "reader_and_seal_failure":
+            raise AdmissionRuntimeUnavailable("controlled original reader failure")
+        if cancel is True or cancel == "server_exit":
             await self._stop.wait()
 
-    def scoped(scope):
+    def scoped(scope, *, terminal_generation=False):
+        terminal_scopes.append(terminal_generation)
         assert scope == "bridge-resource/Control-Node"
         return f.bootstrap
 
@@ -292,11 +306,20 @@ async def test_amain_activates_control_before_reader_and_retires_complete_lifeti
             controls[0].task.cancel()
             with pytest.raises(AdmissionRuntimeUnavailable):
                 await asyncio.wait_for(asyncio.shield(main), 15)
-        elif cancel:
+        elif cancel is True:
             main.cancel()
             await asyncio.sleep(0)
             main.cancel()
             with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(main), 15)
+        elif cancel == "reader_and_seal_failure":
+            with pytest.raises(
+                AdmissionRuntimeUnavailable, match="controlled original reader failure"
+            ) as caught:
+                await asyncio.wait_for(asyncio.shield(main), 15)
+            assert any("metadata retirement" in note for note in caught.value.__notes__)
+        elif cancel == "seal_failure":
+            with pytest.raises(OSError, match="controlled terminal seal failure"):
                 await asyncio.wait_for(asyncio.shield(main), 15)
         else:
             await asyncio.wait_for(asyncio.shield(main), 15)
@@ -307,6 +330,9 @@ async def test_amain_activates_control_before_reader_and_retires_complete_lifeti
     assert values[0].retired and controls[0].task.done()
     assert controls[0].url is None and len(backgrounds) == 3
     assert signals == [signal.SIGINT, signal.SIGTERM]
+
+    assert seals == ([] if cancel == "server_exit" else ["seal"])
+    assert terminal_scopes == [True]
 
 
 @pytest.mark.asyncio

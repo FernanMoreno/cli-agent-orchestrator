@@ -178,7 +178,7 @@ def test_v1_to_v4_checksums_are_preserved_and_v5_is_additive():
         4: "1faa34ac79c790de65d8776a8a078360b9788cdf259d359ac12e0eefe85a01c1",
     }
     assert {m.version: m.checksum for m in RESOURCE_ADMISSION_MIGRATIONS[:4]} == expected
-    assert [m.version for m in RESOURCE_ADMISSION_MIGRATIONS] == [1, 2, 3, 4, 5, 6]
+    assert [m.version for m in RESOURCE_ADMISSION_MIGRATIONS] == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_audit_authority_stays_readonly_after_later_generic_grants(pair):

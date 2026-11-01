@@ -29,6 +29,10 @@ from cli_agent_orchestrator.models.admission_domains import (
     SharedResourceCost,
 )
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
+from cli_agent_orchestrator.models.resource_generation import (
+    GenerationSeal,
+    TerminalGenerationAuthority,
+)
 from cli_agent_orchestrator.services.admission_bootstrap import ResourceBootstrap
 from cli_agent_orchestrator.services.delivery_admission import (
     DeliveryAdmission,
@@ -53,6 +57,8 @@ class SharedResourceRepository(Protocol):
     """Private backend port; implementations hold the exact operation lock."""
 
     def current_binding(self) -> ResourceBinding: ...
+
+    def seal_current_generation(self, authority: TerminalGenerationAuthority) -> GenerationSeal: ...
 
     def metadata_coverage_current(self) -> MetadataCoverage: ...
 

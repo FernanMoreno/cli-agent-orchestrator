@@ -27,6 +27,7 @@ from cli_agent_orchestrator.models.resource_envelope import (
     ResourceEnvelopeRecord,
     envelope_integer,
 )
+from cli_agent_orchestrator.models.resource_generation import GenerationSeal
 from cli_agent_orchestrator.services.admission_bootstrap import AttestationUpdate, ResourceBootstrap
 from cli_agent_orchestrator.services.admission_diagnostics import diagnostics_response
 from cli_agent_orchestrator.services.admission_domains import (
@@ -102,6 +103,7 @@ class InboxAdmissionRuntime:
         if recovery_repository is not None and shared_repository is None:
             raise ValueError("resource recovery requires shared admission composition")
         self._pid = os.getpid()
+        self._terminal_closing = False
         self.inbox = inbox
         self.monitor = monitor
         self.bootstrap = bootstrap
@@ -137,7 +139,9 @@ class InboxAdmissionRuntime:
 
     @property
     def available(self) -> bool:
-        return self._started and not self._closing and not self._retired
+        return (
+            self._started and not self._closing and not self._terminal_closing and not self._retired
+        )
 
     def add_storage_participant(
         self, participant: AdmissionParticipant, *, target: DatabaseTarget
@@ -404,6 +408,64 @@ class InboxAdmissionRuntime:
         self.inbox.notify_admission_changed()
         return receipt
 
+    async def _join_control_call(self) -> None:
+        call = self._call
+        if call is not None and not call.future.cancelled():
+            wrapped = asyncio.wrap_future(call.future)
+            wrapped.add_done_callback(
+                lambda future: None if future.cancelled() else future.exception()
+            )
+            try:
+                await asyncio.shield(wrapped)
+            except Exception:
+                # The control response owns this result. Uncertain effects stay
+                # latched in the process authority state, never auto-cleared.
+                pass
+        if call is not None and not call.finished.is_set():
+            raise AdmissionRuntimeUnavailable("physical resource control has not retired")
+
+    async def seal_terminal_generation(self) -> GenerationSeal | None:
+        """Quiesce shared producers, then append a still-funded terminal fence.
+
+        The caller quiesces its transport first and performs full stop in finally.
+        Participant.stop_accepting also stops the owner, so it must follow this
+        last control transaction. A seal is never a physical closure witness.
+        """
+        self._check_process()
+        repository = self._shared_repository
+        if repository is None or not self._started or self._retired:
+            return None  # No activated shared producer; no seal or closure claimed.
+        if asyncio.get_running_loop() is not self._loop or self._closing:
+            raise AdmissionRuntimeUnavailable("terminal resource control is unavailable")
+        if not self.bootstrap.terminal_generation:
+            raise PermissionError("resource participant has a reusable lifecycle")
+        self._terminal_closing = True  # Reject new operator calls before joining an accepted one.
+        if self._shared is not None:
+            self._shared.stop_accepting()
+
+        from cli_agent_orchestrator.services.work_blocking import run_owned_async
+
+        async def seal() -> GenerationSeal | None:
+            await self._join_control_call()
+            # A late activation may have published its exact original coverage.
+            shared = self._shared
+            if shared is None:
+                return None
+            shared.stop_accepting()
+            authority = self.bootstrap.issue_terminal_generation_authority(shared.coverage.binding)
+            control = self.monitor.storage_control
+            if control is None:
+                raise AdmissionRuntimeUnavailable("terminal resource control is not funded")
+
+            def funded() -> GenerationSeal:
+                with self.monitor.authority_read():
+                    with control.operation(clock=self._clock, wait=True):
+                        return repository.seal_current_generation(authority)
+
+            return await asyncio.to_thread(funded)
+
+        return await run_owned_async(seal())
+
     def _resolve_drain_timeout(self) -> float:
         timeout = self._drain_timeout
         if timeout is None:
@@ -423,20 +485,7 @@ class InboxAdmissionRuntime:
             await self.monitor.stop()
         except Exception as error:
             failure = error
-        call = self._call
-        if call is not None and not call.future.cancelled():
-            wrapped = asyncio.wrap_future(call.future)
-            wrapped.add_done_callback(
-                lambda future: None if future.cancelled() else future.exception()
-            )
-            try:
-                await asyncio.shield(wrapped)
-            except Exception:
-                # The control response owns this result. Uncertain effects stay
-                # latched in the process authority state, never auto-cleared.
-                pass
-        if call is not None and not call.finished.is_set():
-            raise AdmissionRuntimeUnavailable("physical resource control has not retired")
+        await self._join_control_call()
         # Re-read after the join: a late activation may have published it.
         shared = self._shared
         if shared is not None:

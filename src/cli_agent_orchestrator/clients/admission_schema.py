@@ -20,6 +20,8 @@ WITNESS_RELEASE_TABLES = ("_cao_resource_witness_releases",)
 AUTHORITY_TABLES = _ABORT_AUTHORITY_TABLES + WITNESS_RELEASE_TABLES
 LEDGER_TABLES = ("_cao_resource_usage", "_cao_resource_operations", "_cao_resource_allocations")
 
+GENERATION_SEAL_TABLES = ("_cao_resource_generation_seals",)
+
 RESOURCE_ADMISSION_MIGRATIONS = (
     ComponentMigration(
         component="resource_admission",
@@ -205,5 +207,24 @@ RESOURCE_ADMISSION_MIGRATIONS = (
             )""",
         ),
         tables=AUTHORITY_TABLES + LEDGER_TABLES,
+    ),
+    ComponentMigration(
+        component="resource_admission",
+        scope="main",
+        version=7,
+        statements=(
+            """CREATE TABLE _cao_resource_generation_seals (
+                instance_id UUID NOT NULL, process_generation UUID NOT NULL,
+                seal_id UUID NOT NULL UNIQUE,
+                process_pid BIGINT NOT NULL CHECK (process_pid>0),
+                process_started_at DOUBLE PRECISION NOT NULL CHECK (
+                    process_started_at>0 AND process_started_at<'Infinity'::double precision),
+                binding_sha256 TEXT NOT NULL CHECK (binding_sha256 ~ '^[0-9a-f]{64}$'),
+                reason TEXT NOT NULL CHECK (reason='terminal'),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (instance_id,process_generation)
+            )""",
+        ),
+        tables=AUTHORITY_TABLES + LEDGER_TABLES + GENERATION_SEAL_TABLES,
     ),
 )
