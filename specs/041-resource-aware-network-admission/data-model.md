@@ -57,3 +57,7 @@ resource_admission v1 añade cuatro tablas de autoridad (_cao_resource_domains, 
 Operation conserva ID idempotente, instancia/generación/PID/inicio y huella exacta; allocations conserva dominio/encarnación/revisiones de dominio y membresía/cantidad. preparing/active/releasing/uncertain siguen en committed; released retira cantidades originales una vez. Presupuesto reducido conserva deuda y la encarnación no se sustituye silenciosamente. Uso incremental y auditoría MVCC independiente son conceptos distintos; la auditoría no repara. SharedCommitUncertain distingue grant no confirmable después del commit, con identidad/cargo retenidos.
 
 Este modelo está validado como backend T012; no representa wiring T013, recuperación física T014 ni aceptación M2/M3. [Recibo](validation-t012-shared-ledger.json).
+
+## T013 — huella y modo de reserva
+
+SharedResourceCost es un valor inmutable de bytes, millicores y sesiones, enteros no negativos dentro de BIGINT y al menos una dimensión positiva; no contiene IDs de dominio, propietario o permisos. El cableado pendiente deberá convertir la huella local del servidor al valor, sin aceptar la decisión de un modelo. Operations añade membership_sha256 y cost_sha256: ambos null para raw anterior, ambos digests canónicos para mapeado. Se conserva el conjunto completo de miembros del proceso, incluidas unidades de coste0. El índice por instance/generation evita recorrer otras encarnaciones. No existe aún ticket compartido de retiro, cuota de proveedor ni conexión del consumidor.

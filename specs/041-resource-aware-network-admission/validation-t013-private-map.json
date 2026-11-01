@@ -1,0 +1,152 @@
+{
+  "schema": "caos.spec041.t013.private-membership-mapping.v1",
+  "base_head": "227ecb87481327f9e92113a1cfc340bef55d053e",
+  "status": "BACKEND_PREREQUISITE_VALIDATED_T013_OPEN",
+  "scope": [
+    "private incarnation membership map",
+    "atomic set/enrollment serialization",
+    "all-member activation fingerprint including zero-cost domains",
+    "explicit host and node budgets for positive memory/cpu",
+    "storage budget for positive session cost",
+    "raw/mapped mode separation and v1 header preservation",
+    "real two-process contention and lost acknowledgement in both modes"
+  ],
+  "phases": {
+    "t013-private-map-red": {
+      "cases": {
+        "total": 7,
+        "failure": 7,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "seconds": 36.763,
+      "available_mib": 8817,
+      "candidate_sha256": "ca75e4e5ad54f5d2374a26958c27796f7b5a5443e2a863bde0af8fbcef8fe259",
+      "controller_sha256": "df50ae0438c9c841751678efb44f98efbac016e52e9e572216b8d5dbaab623eb",
+      "candidate_archive_sha256": "49ccf91081ca1b220cb3f1a6e851afb40472afb61a6c56ccf76896efdcf836b0",
+      "source_preserved": true,
+      "dispatch_closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    "t013-private-map-green": {
+      "cases": {
+        "total": 55,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "seconds": 66.029,
+      "available_mib": 8304,
+      "candidate_sha256": "077b2b5e83bd2a1d9da03ef31011ada6c3ce5ab287e2ade5616b00eb3dcdd067",
+      "controller_sha256": "112884db3d42e08ea97cced012d3f8eb6de6180c7133cbc6a218d0d9667fc726",
+      "candidate_archive_sha256": "cdb59acfee1a6cdd6def7dd8ec5b18f36b84d73786c4c98428d64b0ad7141eb6",
+      "source_preserved": true,
+      "dispatch_closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    "t013-host-node-red": {
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "seconds": 34.588,
+      "available_mib": 8783,
+      "candidate_sha256": "fa60c2063e9bb41d61726b1e29f40405cd92655c1b25140fe390a2fa88c43dd6",
+      "controller_sha256": "eaee984e9227063bbc5cb49e73f03c0dd90bc7c274390a2412b6f212640eb979",
+      "candidate_archive_sha256": "b79966b03cce4ff09681792c835a1911b6195d4db4b836c9fcbb0366d83d53a8",
+      "source_preserved": true,
+      "dispatch_closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    "t013-private-map-regression": {
+      "cases": {
+        "total": 247,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "seconds": 178.193,
+      "available_mib": 8699,
+      "candidate_sha256": "52593ea1b86f860f1a90404b40e5d9cb28ab5264f3286dc00df42233b08e51a9",
+      "controller_sha256": "2605018e3b1be4839dca2902590ec5857d9a1e14724171b0ea79553e4d620acb",
+      "candidate_archive_sha256": "883c81ef7125bd219e6e6ed7409cb77ba1356b14fc365287cad153d0220001b8",
+      "source_preserved": true,
+      "dispatch_closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    }
+  },
+  "tested_python_sha256": {
+    "src/cli_agent_orchestrator/models/admission_domains.py": "278306bfda1786a37a4d485d0bf129e08b137900ab51df2a42029bf411489c88",
+    "src/cli_agent_orchestrator/clients/admission_schema.py": "d9015f8157864706734fc5410c25651d84f9b501c40b14cd3e63db83661080eb",
+    "src/cli_agent_orchestrator/clients/admission_repository.py": "e03be31127bf28a3435b831704cde83178558530ab2d1985222e749d4f5e71d8",
+    "test/postgres/test_admission_reservations.py": "e5540cdfdf3201762c830a25160ff970aeeb1ddee3afdd7f74615aa603a55c3a",
+    "test/postgres/test_shared_admission_mapping.py": "80534f09a9f870493baaa60a4df304442f30e2005302c0d0bbae329c2e50a88c"
+  },
+  "exact_tested_python_preserved": true,
+  "postgres_final": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "architecture": {
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "graphify": {
+    "scope": "7 source files only; partial AST, source verified",
+    "nodes": 338,
+    "raw_edges": 829,
+    "dangling_edges": 91,
+    "directed_endpoint_collapses_if_simple_graph": 34,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "foreign_graphify_preserved": true
+  },
+  "reviews": [
+    "Codex Luna Max ECC nfr_boundary_read_review: bounded mapping GO; no physical integration acceptance",
+    "Codex Luna Max ECC acceptance_scope_audit: physical retirement/metadata headroom prerequisites"
+  ],
+  "pending": [
+    "T013 Inbox/Work physical integration",
+    "separate explicit shared metadata capacity",
+    "exact local retirement hold and joined cleanup after producer stop",
+    "provider quota semantics and enforcement",
+    "T014 distributed recovery",
+    "T018 remaining SQL coverage",
+    "T019/T020 physical acceptance",
+    "T021/T022 SDK/UI",
+    "T023 final documentation/global gates"
+  ],
+  "native_model_or_provider_cli_run": false,
+  "full_acceptance": false,
+  "knowledge": {
+    "operation_id": "markdown-20261101-complete-resource-membership",
+    "changed_pages": 3,
+    "strict_lint_issues": 0
+  }
+}

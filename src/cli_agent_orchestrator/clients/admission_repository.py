@@ -13,6 +13,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Callable, Iterator, Sequence, cast
+from uuid import NAMESPACE_OID, uuid5
 
 import psutil
 from psycopg import sql
@@ -35,6 +36,7 @@ from cli_agent_orchestrator.models.admission_domains import (
     DomainSpec,
     ReservationState,
     SharedReservation,
+    SharedResourceCost,
     UsageMismatch,
     canonical_id,
 )
@@ -62,6 +64,7 @@ class SharedCapacityUnavailable(RuntimeError):
 
 _DOMAIN_FAMILY = 0x43414F44
 _OPERATION_FAMILY = 0x43414F4F
+_MEMBERSHIP_FAMILY = 0x43414F4D
 _TABLES = dict(
     zip(
         (
@@ -223,6 +226,73 @@ class ResourceAdmissionRepository:
         for key in sorted({self._lock_key(identity) for identity in identities}):
             connection.execute("SELECT pg_catalog.pg_advisory_xact_lock(%s,%s)", (family, key))
 
+    def _lock_membership(self, connection: Connection, binding: ResourceBinding) -> None:
+        # Membership writers and complete-map readers share this gate. Always
+        # acquire before operation and domain locks; the UUID is realm-scoped
+        # by _lock_key, and a collision only adds serialization.
+        identity = str(
+            uuid5(NAMESPACE_OID, _json((binding.instance_id, binding.process_generation)))
+        )
+        self._lock(connection, _MEMBERSHIP_FAMILY, (identity,))
+
+    def _membership_basis(
+        self, connection: Connection, binding: ResourceBinding
+    ) -> tuple[list[Record], str]:
+        members = self._query(
+            connection,
+            """SELECT * FROM {members} WHERE instance_id=%s AND process_generation=%s
+            ORDER BY domain_id""",
+            (binding.instance_id, binding.process_generation),
+        ).fetchall()
+        if not members:
+            raise SharedAdmissionDenied("Complete resource membership is unavailable")
+        self._lock(connection, _DOMAIN_FAMILY, tuple(str(m["domain_id"]) for m in members))
+        domains = []
+        basis = []
+        for member in members:
+            domain = self._domain(connection, str(member["domain_id"]))
+            if (
+                not member["active"]
+                or member["binding_sha256"] != binding_digest(binding)
+                or not domain["active"]
+            ):
+                raise SharedAdmissionDenied("Complete resource membership is unavailable")
+            domains.append(domain)
+            basis.append(
+                (
+                    str(domain["domain_id"]),
+                    str(domain["incarnation"]),
+                    domain["revision"],
+                    domain["kind"],
+                    domain["unit"],
+                    member["revision"],
+                    member["binding_sha256"],
+                )
+            )
+        return domains, hashlib.sha256(_json(basis).encode()).hexdigest()
+
+    @staticmethod
+    def _cost_requests(
+        domains: Sequence[Record], cost: SharedResourceCost
+    ) -> tuple[DomainRequest, ...]:
+        amounts = {
+            "bytes": cost.memory_bytes,
+            "millicores": cost.cpu_millicores,
+            "postgres_session": cost.storage_slots,
+        }
+        for unit, amount in amounts.items():
+            required = {"storage"} if unit == "postgres_session" else {"host", "node"}
+            present = {d["kind"] for d in domains if d["unit"] == unit}
+            if amount and not required.issubset(present):
+                raise SharedAdmissionDenied("Resource footprint is not completely covered")
+        return tuple(
+            DomainRequest(
+                str(d["domain_id"]), str(d["incarnation"]), d["revision"], amounts[d["unit"]]
+            )
+            for d in domains
+            if amounts[d["unit"]]
+        )
+
     def _domain(self, connection: Connection, domain_id: str) -> Record:
         row = self._query(
             connection, "SELECT * FROM {domains} WHERE domain_id=%s", (domain_id,)
@@ -315,6 +385,7 @@ class ResourceAdmissionRepository:
         ):
             raise ValueError("Invalid resource membership provision")
         with self._owner(principal_id) as connection:
+            self._lock_membership(connection, binding)
             self._lock(connection, _DOMAIN_FAMILY, (domain_id,))
             self._domain(connection, domain_id)
             key = (domain_id, binding.instance_id, binding.process_generation)
@@ -418,10 +489,32 @@ class ResourceAdmissionRepository:
             raise SharedAdmissionDenied("Shared resource accounting requires verification")
 
     def reserve(self, operation_id: str, requests: Sequence[DomainRequest]) -> SharedReservation:
+        """Low-level exact-domain protocol; does not promise complete mapping."""
+        return self._reserve(operation_id, requests, cost=None)
+
+    def reserve_for_cost(self, operation_id: str, cost: SharedResourceCost) -> SharedReservation:
+        """Map a trusted server footprint to the private incarnation's entire set.
+
+        An idempotent response acknowledges existing state, never another effect.
+        Delivery wiring must retain the operation ID through uncertain commits.
+        """
+        if type(cost) is not SharedResourceCost:
+            raise ValueError("Shared mapping requires a typed server footprint")
+        return self._reserve(operation_id, (), cost=cost)
+
+    def _reserve(
+        self,
+        operation_id: str,
+        requests: Sequence[DomainRequest],
+        *,
+        cost: SharedResourceCost | None,
+    ) -> SharedReservation:
         operation_id = canonical_id(operation_id)
         binding = self.current_binding()
         requests = tuple(requests)
-        if not requests or any(type(value) is not DomainRequest for value in requests):
+        if cost is None and (
+            not requests or any(type(value) is not DomainRequest for value in requests)
+        ):
             raise ValueError("Resource operation requires distinct typed domain quantities")
         requests = tuple(sorted(requests, key=lambda value: value.domain_id))
         if len({value.domain_id for value in requests}) != len(requests):
@@ -430,16 +523,32 @@ class ResourceAdmissionRepository:
         request_hash = hashlib.sha256(
             _json([asdict(value) for value in requests]).encode()
         ).hexdigest()
+        cost_hash = (
+            hashlib.sha256(_json(asdict(cost)).encode()).hexdigest() if cost is not None else None
+        )
+        membership_hash = None
         with self._runtime(require_usage=True) as connection:
+            if cost is not None:
+                self._lock_membership(connection, binding)
             self._lock(connection, _OPERATION_FAMILY, (operation_id,))
             existing = self._query(
                 connection, "SELECT * FROM {operations} WHERE operation_id=%s", (operation_id,)
             ).fetchone()
             if existing is not None:
                 self._check_owner(existing, binding)
-                if existing["request_sha256"] != request_hash:
+                if (
+                    existing["cost_sha256"] != cost_hash
+                    or (cost is None and existing["request_sha256"] != request_hash)
+                    or (cost is not None and existing["membership_sha256"] is None)
+                ):
                     raise SharedRevisionConflict("Resource operation payload changed")
                 return _receipt(existing)
+            if cost is not None:
+                domains, membership_hash = self._membership_basis(connection, binding)
+                requests = self._cost_requests(domains, cost)
+                request_hash = hashlib.sha256(
+                    _json([asdict(value) for value in requests]).encode()
+                ).hexdigest()
             self._lock(connection, _DOMAIN_FAMILY, tuple(value.domain_id for value in requests))
             confirmed = []
             for value in requests:
@@ -468,8 +577,8 @@ class ResourceAdmissionRepository:
             self._query(
                 connection,
                 """INSERT INTO {operations}
-                (operation_id,instance_id,process_generation,process_pid,process_started_at,binding_sha256,request_sha256,state,revision)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,'preparing',1)""",
+                (operation_id,instance_id,process_generation,process_pid,process_started_at,binding_sha256,request_sha256,state,revision,membership_sha256,cost_sha256)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'preparing',1,%s,%s)""",
                 (
                     operation_id,
                     binding.instance_id,
@@ -478,6 +587,8 @@ class ResourceAdmissionRepository:
                     binding.process_started_at,
                     binding_digest(binding),
                     request_hash,
+                    membership_hash,
+                    cost_hash,
                 ),
             )
             for value, member_revision, used in confirmed:
@@ -509,6 +620,8 @@ class ResourceAdmissionRepository:
         if state == "active":
             self._require_usage_basis()
         with self._runtime(require_usage=state == "active") as connection:
+            if state == "active":
+                self._lock_membership(connection, binding)
             self._lock(connection, _OPERATION_FAMILY, (operation_id,))
             row = self._query(
                 connection, "SELECT * FROM {operations} WHERE operation_id=%s", (operation_id,)
@@ -527,6 +640,12 @@ class ResourceAdmissionRepository:
             ).fetchall()
             if not allocations:
                 raise SchemaMismatch("Resource operation has no allocations")
+            if state == "active" and row["membership_sha256"] is not None:
+                _, current_membership = self._membership_basis(connection, binding)
+                if row["membership_sha256"] != current_membership:
+                    raise SharedRevisionConflict(
+                        "Complete resource membership changed before start"
+                    )
             self._lock(
                 connection, _DOMAIN_FAMILY, tuple(str(value["domain_id"]) for value in allocations)
             )

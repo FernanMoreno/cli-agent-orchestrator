@@ -234,7 +234,11 @@ def _race_worker(target, requests, gate, channel):
         channel.send(asdict(current))
         assert gate.wait(20)
         try:
-            receipt = repository.reserve(str(uuid4()), requests)
+            receipt = (
+                repository.reserve_for_cost(str(uuid4()), requests)
+                if type(requests) is m.SharedResourceCost
+                else repository.reserve(str(uuid4()), requests)
+            )
             channel.send(("reserved", receipt.operation_id, os.getpid()))
         except m.SharedCapacityUnavailable:
             channel.send(("saturated", None, os.getpid()))
@@ -245,8 +249,9 @@ def _race_worker(target, requests, gate, channel):
         channel.close()
 
 
-def test_two_real_processes_compete_for_one_session_without_overallocation(shared):
-    target, repository, _, _ = shared
+@pytest.mark.parametrize("mapped", (False, True))
+def test_two_real_processes_compete_for_one_session_without_overallocation(shared, mapped):
+    target, repository, _, module = shared
     a = domain(shared)
     context = multiprocessing.get_context("spawn")
     gate = context.Event()
@@ -254,9 +259,8 @@ def test_two_real_processes_compete_for_one_session_without_overallocation(share
     try:
         for _ in range(2):
             parent, child = context.Pipe()
-            process = context.Process(
-                target=_race_worker, args=(target, (request(a),), gate, child)
-            )
+            quantities = module.SharedResourceCost(storage_slots=1) if mapped else (request(a),)
+            process = context.Process(target=_race_worker, args=(target, quantities, gate, child))
             process.start()
             child.close()
             processes.append(process)
@@ -294,13 +298,21 @@ def test_two_real_processes_compete_for_one_session_without_overallocation(share
             channel.close()
 
 
-def test_lost_acquire_and_release_acknowledgements_reconcile_exactly_once(shared, monkeypatch):
+@pytest.mark.parametrize("mapped", (False, True))
+def test_lost_acquire_and_release_acknowledgements_reconcile_exactly_once(
+    shared, monkeypatch, mapped
+):
     from contextlib import contextmanager
 
     target, repository, _, m = shared
     a = domain(shared)
     operation = str(uuid4())
     real_connect = m.connect
+
+    def reserve():
+        if mapped:
+            return repository.reserve_for_cost(operation, m.SharedResourceCost(storage_slots=1))
+        return repository.reserve(operation, (request(a),))
 
     @contextmanager
     def lost_ack(selected, *args, **kwargs):
@@ -311,9 +323,9 @@ def test_lost_acquire_and_release_acknowledgements_reconcile_exactly_once(shared
     with monkeypatch.context() as patch:
         patch.setattr(m, "connect", lost_ack)
         with pytest.raises(RuntimeError, match="controlled-ack-lost"):
-            repository.reserve(operation, (request(a),))
+            reserve()
     assert repository.used(a.spec.domain_id) == 1
-    receipt = repository.reserve(operation, (request(a),))
+    receipt = reserve()
     assert receipt.revision == 1
     with monkeypatch.context() as patch:
         patch.setattr(m, "connect", lost_ack)

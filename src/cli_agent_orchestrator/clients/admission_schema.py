@@ -84,4 +84,22 @@ RESOURCE_ADMISSION_MIGRATIONS = (
         ),
         tables=AUTHORITY_TABLES + LEDGER_TABLES,
     ),
+    ComponentMigration(
+        component="resource_admission",
+        scope="main",
+        version=2,
+        statements=(
+            """ALTER TABLE _cao_resource_operations
+                ADD COLUMN membership_sha256 TEXT,
+                ADD COLUMN cost_sha256 TEXT,
+                ADD CONSTRAINT resource_operation_mapping CHECK (
+                    (membership_sha256 IS NULL AND cost_sha256 IS NULL) OR
+                    (membership_sha256 IS NOT NULL AND cost_sha256 IS NOT NULL
+                     AND membership_sha256 ~ '^[0-9a-f]{64}$'
+                     AND cost_sha256 ~ '^[0-9a-f]{64}$'))""",
+            """CREATE INDEX resource_members_process ON _cao_resource_members
+                (instance_id,process_generation,domain_id)""",
+        ),
+        tables=AUTHORITY_TABLES + LEDGER_TABLES,
+    ),
 )

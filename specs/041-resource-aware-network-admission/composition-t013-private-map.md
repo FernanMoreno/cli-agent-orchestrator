@@ -1,0 +1,15 @@
+# Composition review — T013 private membership prerequisite
+
+**Verdict: PASS WITH RISKS for this backend prerequisite; T013 remains open.**
+
+Changed subsystems: immutable domain cost models, versioned PostgreSQL schema and shared repository; no delivery consumers, API, MCP, SDK or provider clients changed. Upstream administrative provisioning and downstream Inbox/Work physical owners/control/shutdown were read against source.
+
+The transaction contract uses private current binding, READ COMMITTED, member-set→operation→effective domain-key ordering and original quantities. Set and domain writers share their relevant gates. All declared members, including zero-cost domains, fence activation. Positive memory/CPU requires host and node; sessions require storage. Idempotent ACK acknowledges existing state and is never a second permission to execute. Raw/v2 metadata remain distinct; version1 migration bytes are unchanged and its header survives nullable expansion. The metadata index is transactional DDL, without an unproven zero-lock online deployment claim.
+
+Executed247 tests against the existing identity-checked PostgreSQL, with original audited pool and controller resource gates. Native scenarios cover two real processes competing for1session in both modes, actual blocking membership writer, changed/withdrawn/zero-cost membership, all3quantity units/5domain categories, atomic failure, CAS, old headers, exact retry, lost acquire/release ACK, live debt and independent counter divergence. The four host/node negatives failed before the fix. Existing bootstrap, role/ACL, registry, catalog, schema/source checksum, error and dispatch guards also ran. Format5 and types3 pass. Full-repository Import Linter:5contracts kept/0broken. No independently evolving external contract changed, so HTTP/Pact/provider runs do not apply to this checkpoint.
+
+Codex Luna Max ECC read review found no material blocker in the final mapping diff. An independent physical-lifecycle review identified the next requirements: retain local receiver/cost with an exact retirement hold, use separate explicitly charged metadata headroom, and join registered cleanup through shutdown. No SQL belongs under the local lease guard or raw-close registry. Control_call is not a wait queue and its invalidated permit cannot serve cleanup after stop. Missing these prerequisites is why Inbox/Work wiring is still pending.
+
+Graphify used a private AST extraction of7source files:338nodes/829rawedges,0model tokens. Partial graph warning:91dangling endpoints and34potential simple-graph endpoint collapses; raw records retained and important paths verified in source. All12foreign Graphify files preserved. Final PostgreSQL check: same container/owner,0otherclients/0testdatabases/0testroles.
+
+Residual gates: actual delivery wiring, all physical SQL/control/startup budgets, provider quotas, distributed recovery and physical M1/M2/M3/network acceptance; SDK/UI remain separate. These tests do not prove topology completeness, hidden ancestors, deployment at production-sized metadata tables, or global acceptance.

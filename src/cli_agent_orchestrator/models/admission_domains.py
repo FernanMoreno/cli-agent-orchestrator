@@ -76,6 +76,21 @@ class SharedReservation:
 
 
 @dataclass(frozen=True)
+class SharedResourceCost:
+    """Trusted operation footprint; never a client-selected domain or owner."""
+
+    memory_bytes: int = 0
+    cpu_millicores: int = 0
+    storage_slots: int = 0
+
+    def __post_init__(self) -> None:
+        for value in (self.memory_bytes, self.cpu_millicores, self.storage_slots):
+            envelope_integer(value, minimum=0)
+        if not any((self.memory_bytes, self.cpu_millicores, self.storage_slots)):
+            raise ValueError("Shared resource cost must consume a resource")
+
+
+@dataclass(frozen=True)
 class UsageMismatch:
     domain_id: str
     committed: int | None
