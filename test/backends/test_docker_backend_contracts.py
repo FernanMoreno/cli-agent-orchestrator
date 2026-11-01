@@ -3,8 +3,10 @@
 import hashlib
 import io
 import json
+import select
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -516,6 +518,10 @@ def test_cleanup_cannot_claim_absence_during_daemon_outage(native):
         (False, "closed"),
         (False, "unknown"),
         (False, "attach_failed"),
+        (False, "attach_lost_ack"),
+        (False, "attach_lost_ack_memory"),
+        (False, "build_lost_ack"),
+        (False, "inspect_lost_ack"),
     ],
 )
 async def test_durable_dispatch_real_authority_and_content_with_native_transport(
@@ -530,6 +536,30 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
     _, seam = native
     worker = _minimal_static_worker()
     release_reader, reader_entered = threading.Event(), threading.Event()
+    real_popen = subprocess.Popen
+    unobserved_processes = []
+    observed_ready = []
+
+    def lose_start_ack(error_type=OSError):
+        child = real_popen(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys;sys.stdout.buffer.write(b'R');sys.stdout.buffer.flush();sys.stdin.buffer.read()",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            env={"LC_ALL": "C"},
+        )
+        unobserved_processes.append(child)
+        assert select.select([child.stdout], [], [], 5)[0]
+        observed_ready.append(child.stdout.read(1))
+        assert observed_ready[-1] == b"R" and child.poll() is None
+        raise error_type("controlled lost start acknowledgement after owned child handshake")
+
     owner = None
     if late_cleanup != "none":
         from test.services.test_delivery_admission import create, observe
@@ -593,6 +623,8 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
                 return result(IMAGE)
             return result(code=1, stderr="No such image")
         if args[:2] == ["image", "build"]:
+            if late_cleanup == "build_lost_ack":
+                lose_start_ack()
             import tarfile
 
             with tarfile.open(fileobj=io.BytesIO(options["input"])) as archive:
@@ -606,6 +638,8 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
             created.append("container")
             return result(CONTAINER)
         if args[:2] == ["container", "inspect"]:
+            if late_cleanup == "inspect_lost_ack" and not created:
+                lose_start_ack()
             if "--format" not in args or args[-1] != CONTAINER:
                 return result(code=1, stderr="No such container")
             metadata = container_metadata(running=not inspected)
@@ -638,6 +672,10 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
             assert options["close_fds"] is True
             if late_cleanup == "attach_failed":
                 raise OSError("controlled attach start failure after container creation")
+            if late_cleanup == "attach_lost_ack":
+                lose_start_ack()
+            if late_cleanup == "attach_lost_ack_memory":
+                lose_start_ack(MemoryError)
             self.stdin = Input()
             ready = {
                 "protocol": 1,
@@ -694,16 +732,43 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
             assert processes[0].stdin.saved.endswith(b"CAO-GO/1\n")
             assert b"frozen task context\n\npayload for exact worker" in processes[0].stdin.saved
             assert len(inspected) == 3 and inspected[0]["State"]["Running"] is True
-        if late_cleanup != "unknown":
+        if late_cleanup in {
+            "attach_lost_ack",
+            "attach_lost_ack_memory",
+            "build_lost_ack",
+            "inspect_lost_ack",
+        }:
+            assert observed_ready == [b"R"] and len(unobserved_processes) == 1
+            assert unobserved_processes[0].poll() is None
+            assert owner.snapshot(now=10).inflight == 1  # Live unobserved child still owns cost.
+            assert not owner._physical_closes
+            assert owner.retry_physical_closes().clean
+            assert owner.snapshot(now=10).inflight == 1
+        if late_cleanup not in {"unknown", "build_lost_ack", "inspect_lost_ack"}:
             assert ["container", "rm", "--force", CONTAINER] in [call[0][3:] for call in seam.calls]
-        assert ["image", "rm", "--force", backend._attempt_image_tag(attempt_id, generation)] in [
-            call[0][3:] for call in seam.calls
-        ]
+        if late_cleanup not in {"build_lost_ack", "inspect_lost_ack"}:
+            assert [
+                "image",
+                "rm",
+                "--force",
+                backend._attempt_image_tag(attempt_id, generation),
+            ] in [call[0][3:] for call in seam.calls]
         if owner is not None and late_cleanup == "attach_failed":
             assert processes == [] and not owner._physical_closes
-            assert owner.snapshot(now=10).inflight == 0
+            assert owner.snapshot(now=10).inflight == 1  # An exception supplies no no-start proof.
             persisted = repository.get_work(receipt.work_item_id)
             assert persisted["state"] == "reconcile" and persisted["accepted_result_id"] is None
+        elif owner is not None and late_cleanup in {
+            "attach_lost_ack",
+            "attach_lost_ack_memory",
+            "build_lost_ack",
+            "inspect_lost_ack",
+        }:
+            child = unobserved_processes[0]
+            child.stdin.close()
+            assert child.wait(timeout=5) == 0
+            assert owner.retry_physical_closes().clean
+            assert owner.snapshot(now=10).inflight == 1  # No later original-owner close proof.
         elif owner is not None:
             assert reader_entered.is_set()
             assert owner.snapshot(now=10).inflight == 1
@@ -733,6 +798,16 @@ async def test_durable_dispatch_real_authority_and_content_with_native_transport
                 assert not tokens[0].finish()
     finally:
         release_reader.set()
+        for child in unobserved_processes:
+            if child.stdin is not None and not child.stdin.closed:
+                child.stdin.close()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()  # Only this fixture's exact owned child, never other processes.
+                child.wait(timeout=5)
+            if child.stdout is not None:
+                child.stdout.close()
         if owner is not None:
             for lease in tuple(owner._leases.values()):
                 for token in tuple(lease._physical_effects):

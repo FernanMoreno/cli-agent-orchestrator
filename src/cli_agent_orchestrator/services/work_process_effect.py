@@ -33,6 +33,7 @@ class _NativeEffect:
     gated: bool = False
     attempted: bool = False
     closed: bool = False
+    unobserved_start: bool = False
 
     def current(self) -> None:
         if self.pid != os.getpid() or self.thread != threading.get_ident():
@@ -42,10 +43,53 @@ class _NativeEffect:
         self.current()
         self.gated = True
 
+    def mark_unobserved_start(self) -> None:
+        # A captured marker may add an obligation from a retained helper thread.
+        # It can never release resources, authorize work or move to another PID.
+        if self.pid != os.getpid():
+            raise StorageAdmissionUnavailable()
+        if self.token is not None and not self.token._mark_unobserved_start():
+            return
+        self.unobserved_start = True
+        self.attempted = True
+        self.closed = False
+
 
 _EFFECT: contextvars.ContextVar[_NativeEffect | None] = contextvars.ContextVar(
     "cao_work_native_effect", default=None
 )
+_START_MARKER: contextvars.ContextVar[Callable[[], None] | None] = contextvars.ContextVar(
+    "cao_native_start_marker", default=None
+)
+
+
+def capture_native_start_marker() -> Callable[[], None]:
+    effect = _EFFECT.get()
+    if effect is None:
+        return lambda: None
+    effect.current()
+    return effect.mark_unobserved_start
+
+
+@contextmanager
+def native_start_marker_scope(marker: Callable[[], None]) -> Iterator[None]:
+    captured = _START_MARKER.set(marker)
+    try:
+        yield
+    finally:
+        _START_MARKER.reset(captured)
+
+
+def mark_native_start_unobserved() -> None:
+    marker = _START_MARKER.get()
+    if marker is not None:
+        marker()
+        return
+    effect = _EFFECT.get()
+    if effect is not None:
+        # A copied context carries no positive thread authority. Adding a
+        # constraint still targets only its exact live token and original PID.
+        effect.mark_unobserved_start()
 
 
 @contextmanager
@@ -58,10 +102,14 @@ def physical_effect_scope(lease: DeliveryReservation | None) -> Iterator[_Native
     finally:
         _EFFECT.reset(marker)
         effect.current()
-        if token is not None and (
-            effect.closed
-            or (effect.observed and not effect.attempted)
-            or (not effect.gated and not effect.attempted)
+        if (
+            token is not None
+            and not effect.unobserved_start
+            and (
+                effect.closed
+                or (effect.observed and not effect.attempted)
+                or (not effect.gated and not effect.attempted)
+            )
         ):
             if not token.finish() and effect.closed:
                 try:
@@ -99,7 +147,16 @@ def confirm_native_effect_closed() -> None:
     effect = _EFFECT.get()
     if effect is not None:
         effect.current()
-        effect.closed = True
+        if effect.token is None:
+            if not effect.unobserved_start:
+                effect.closed = True
+            return
+        owner = effect.token._owner()
+        with owner._guard:
+            # A helper may have installed the token obligation before updating
+            # the origin scope's flags. Never overwrite that concurrent marker.
+            if not effect.unobserved_start and not effect.token._unobserved_starts:
+                effect.closed = True
 
 
 def observe_process_close(process: subprocess.Popen[bytes]) -> Callable[[], bool]:

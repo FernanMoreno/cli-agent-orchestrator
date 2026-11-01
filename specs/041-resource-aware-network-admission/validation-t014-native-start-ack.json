@@ -1,0 +1,262 @@
+{
+  "schema": "caos.spec041.t014-native-start-ack.v1",
+  "date": "2026-11-01",
+  "base_head": "17564340c318e638e67b4e6ea3bccc4a4f27cdc6",
+  "scope": "T014.B1 sticky exact-owner uncertainty after an unobserved native process start acknowledgement",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-native-start-ack-final",
+    "cases": 628,
+    "passed": 628,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 668.318,
+    "available_mib": 7693,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "126e1374f012a27bbb431691eef6c9c97dc897c124fe6382166f29708a59aca7",
+    "production_archive_match": 4,
+    "owned_python_archive_match": 6,
+    "foreign_graphify_preserved": 12,
+    "history": [
+      {
+        "phase": "t014-native-start-ack-red",
+        "cases": {
+          "total": 2,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-ack-green",
+        "cases": {
+          "total": 49,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-ack-race-green",
+        "cases": {
+          "total": 11,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-context-red",
+        "cases": {
+          "total": 2,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-context-green",
+        "cases": {
+          "total": 2,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-bubblewrap-red",
+        "cases": {
+          "total": 2,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-bubblewrap-green",
+        "cases": {
+          "total": 14,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-snapshot-red",
+        "cases": {
+          "total": 2,
+          "failure": 1,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-native-start-snapshot-green",
+        "cases": {
+          "total": 2,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      }
+    ],
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/backends/docker_backend.py",
+        "sha256": "385a180dd2ef9250085f23dd8e3a9a0978dd19978911206c5d8ce2da9f8b62ce"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "1d96a979636d4906c4f505e2c90012321664c87b939ed678941ce33a0e57e3d5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/work_bubblewrap_composition.py",
+        "sha256": "f411083ece3819489496c30575b486ba29c1817a3430fd66d49940abbfbb6094"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/work_process_effect.py",
+        "sha256": "7c1a12237c21600c15ef8d013cf7bd1bfdc15b6ee08404db42d303bff47a8d36"
+      },
+      {
+        "path": "test/backends/test_docker_backend_contracts.py",
+        "sha256": "4e8c14cf1d994a5be237707d6906af46b1cbf7942ca7f2c3f54d9d1370084ec1"
+      },
+      {
+        "path": "test/services/test_native_start_ack.py",
+        "sha256": "a89bed943c39cfb99cdcb76721eefc0e425128bc31a230562ef6285dbcdb090e"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 6
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 6
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 4
+    }
+  ],
+  "architecture": {
+    "files": 447,
+    "dependencies": 2006,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 10,
+    "nodes": 620,
+    "edges": 1464,
+    "dangling": 194,
+    "partial": true,
+    "private": true,
+    "foreign_files_preserved": 12
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-unobserved-native-start",
+    "paths": 3,
+    "strict_lint_issues": 0,
+    "corrects_prior_attach_no_handle_inference": true
+  },
+  "review": {
+    "claude_read_jobs": [
+      "b04c8355ed4c47cdb89935a483809dd8",
+      "ff2bffb83f2b4779b1b8242f5ffa64dc",
+      "5706a7758d9e467985ff51d72095dab7",
+      "028b69df7bf7478da5d901773ae10661"
+    ],
+    "luna_read": true,
+    "root_diff_review": true,
+    "actionable_findings_resolved": true
+  },
+  "implemented": [
+    "Sticky negative obligation in the exact physical-effect reservation blocks finish, late registration and later native positive assertions.",
+    "PID-bound captured marker adds uncertainty from exact retained helper threads and copied contexts without positive authority across threads.",
+    "Confirmation and token unknown markers share the admission guard; an update between token mutation and scope flag update cannot free resources.",
+    "Docker unexpected run errors and all attach constructor failures mark uncertainty, including pre-Work inspection; known stdlib run timeout/completed result remain distinct.",
+    "Bubblewrap raw Popen failures mark uncertainty and no-handle typed cleanup is false; snapshots are retained for both typed OSError and original MemoryError."
+  ],
+  "evidence_boundaries": [
+    "628 distinct PASS in one final execution; intermediate history is not summed.",
+    "Actual isolated owned Python children stay alive while the replacement native constructor/run raises before returning its handle. Tests clean up only those exact children.",
+    "Docker production backend flow uses controlled daemon transport; Bubblewrap composition uses controlled pinned-descriptor/snapshot transport and a real owned Python child, not native bwrap acceptance.",
+    "A real stdlib run timeout child is reaped before TimeoutExpired; original non-OSError exception types and causes remain intact.",
+    "Copied-context helper can mark original uncertainty but cannot positively confirm closure; foreign PID and retired token constraints remain.",
+    "Existing PostgreSQL/JWT/CAS/recovery composition runs on the pinned existing service; no new storage migration or HTTP/MCP schema."
+  ],
+  "supersedes": [
+    "Earlier T014.A attach constructor exception without a returned handle was incorrectly treated as proof of no child. The archived historical validation is retained, current assertions are strengthened and the canonical knowledge sentence is corrected."
+  ],
+  "remaining": [
+    "Unknown starts deliberately retain debt even if the library may have internally reaped a child; no timer, artifact absence or retry clears them. A stronger original-owner protocol is still required.",
+    "Automatic cleanup of actually uncertain native artifacts and original-token integration are not implemented here; no historical RECONCILE_REQUIRED job replay or closure.",
+    "Generation metadata, provider quotas, elastic placement, physical M1/M2/M3, SDK/UI and global acceptance remain open."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

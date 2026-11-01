@@ -213,3 +213,11 @@ Un propietario original puede registrar durablemente el cierre de una operación
 Si el backend confiable confirmó el cierre nativo completo, pero un helper exacto sobrevivió al join existente, la reserva debe conservarse y observarse de nuevo sin intervención manual. Solo se registran tokens con prueba positiva original; ni owners vacíos ni salida del Popen prueban cierre de contenedor/árbol. El observador trabaja únicamente sobre reservas realmente admitidas de su dueño local, no agentes anunciados, y no crea un pool o techo global. Callbacks y observaciones quedan fuera de locks de admisión. Errores conservan cargo, identidad y registro; las cadencias solo pautan, nunca expiran autoridad.
 
 La observación usa los workers de control existentes y sigue disponible durante el drenaje antes de retirar metadatos. Un helper que termine permite exactamente un retiro y el posterior handoff durable ya implementado. No ejecuta SQL de reparación de negocio, replays ni cierres históricos. Un contenedor/arranque cuyo cierre completo siga sin probarse queda cargado: su limpieza activa/reconciliación es otro protocolo, no una inferencia del observador.
+
+
+## Precisión T014 — arranque nativo sin acuse observable
+
+Antes de ampliar cleanup automático, contrastar que una excepción de arranque sin handle no se convierte en prueba de no-arranque. Si un helper de CLI/attach pudo iniciarse pero su acuse/handle no llegó al propietario, la ausencia posterior de contenedor/imagen no demuestra su terminación. Ese desconocido conserva el cargo y no entra al registro de cierres tardíos confirmado; tampoco un futuro cleanup de artifacts ni el paso de tiempo puede sustituir la prueba del helper exacto. Distinguir fallo previo al intento, resultado de proceso observado y arranque cuyo acuse se perdió. No ampliar permisos ni resolver Work/replay para obtener verde.
+
+
+El mismo contrato de arranque sin acuse aplica a Bubblewrap: ninguna excepción de Popen sin handle devuelto acredita no-arranque ni limpieza física; se conserva el cargo y la excepción tipada declara limpieza incierta.

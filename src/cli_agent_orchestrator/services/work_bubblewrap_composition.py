@@ -711,6 +711,7 @@ def _launch_owned_stage(
     control_socket: socket.socket | None = None
     child_control_socket: socket.socket | None = None
     snapshot_cleanup_confirmed = True
+    start_unobserved = False
     supervised_attempt: WorkProcessAttempt | None = None
     if not isinstance(worker_input, bytes) or len(worker_input) > 32768:
         raise ValueError("worker input must be bytes within the 32 KiB bound")
@@ -805,25 +806,32 @@ def _launch_owned_stage(
                     child_stdin = child_control_socket.fileno()
                 from cli_agent_orchestrator.services.work_process_effect import (
                     begin_native_effect,
+                    mark_native_start_unobserved,
                     retain_native_effect_owner,
                 )
 
                 begin_native_effect()
-                process = subprocess.Popen(
-                    argv,
-                    executable=accepted_bwrap.proc_path,
-                    stdin=child_stdin,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    close_fds=True,
-                    pass_fds=(
-                        staged.memfd_fd,
-                        accepted_bwrap.execution_descriptor,
-                        info_write_fd,
-                    ),
-                    start_new_session=True,
-                    env={"LC_ALL": "C"},
-                )
+                try:
+                    process = subprocess.Popen(
+                        argv,
+                        executable=accepted_bwrap.proc_path,
+                        stdin=child_stdin,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        close_fds=True,
+                        pass_fds=(
+                            staged.memfd_fd,
+                            accepted_bwrap.execution_descriptor,
+                            info_write_fd,
+                        ),
+                        start_new_session=True,
+                        env={"LC_ALL": "C"},
+                    )
+                except BaseException:
+                    # Without a returned handle, absence of a child is unproven.
+                    start_unobserved = True
+                    mark_native_start_unobserved()
+                    raise
                 retain_native_effect_owner(process, observe_process_close(process))
                 if child_control_socket is not None:
                     child_control_socket.close()
@@ -846,7 +854,7 @@ def _launch_owned_stage(
                     ) from exc
                 raise WorkBubblewrapSetupFailed(
                     f"could not start accepted Bubblewrap: {exc}",
-                    cleanup_confirmed=True,
+                    cleanup_confirmed=not start_unobserved,
                 ) from exc
         finally:
             try:
@@ -1142,7 +1150,7 @@ def _launch_owned_stage(
                 stderr=stderr,
                 cleanup_confirmed=confirmed,
             ) from exc
-        snapshot_cleanup_confirmed = True
+        snapshot_cleanup_confirmed = not start_unobserved
         raise
     finally:
         for descriptor in (init_pidfd, monitor_pidfd, info_read_fd, info_write_fd):

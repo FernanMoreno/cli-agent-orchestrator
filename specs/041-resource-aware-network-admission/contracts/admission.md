@@ -134,3 +134,9 @@ T014.A (componente validado): el registro privado de cierres tardíos solo acept
 
 
 PhysicalCloseResult.clean acredita solo el registro de cierres ya elegibles del dueño, no todos los recursos físicos: los nativos sin prueba ni registro siguen en el ledger y snapshot.inflight impide retirar runtime. Observers deben ser no bloqueantes y no ejecutar SQL ni Work. Un error de reader previo al cleanup puede dejar el negocio reconcile aunque el recurso se retire más tarde; este acuse local no cambia ese estado. [Validación T014.A](../validation-t014-native-late-retirement.json).
+
+
+T014.B1 (en diagnóstico): no equiparar process=None o falta de CompletedProcess a no-arranque probado. Un acuse perdido de helper requiere mantener su obligación física aunque Docker confirme contenedor/imagen ausentes. El registro tardío positivo no autoriza clearing de esa incertidumbre ni una reejecución de Work. Reproducción real propia antes de cambiar comportamiento.
+
+
+B1 validado por componente: el marcador de arranque no observado solo añade deuda al token exacto/PID; no autoriza efectos ni confirma cierre desde otro hilo. La comprobación bajo el guard común impide adelantar confirmación a la actualización del marcador. No hay clear por TTL/ausencia de artifacts; Bubblewrap preserva snapshot y cleanup_confirmed=False sin handle. Fallos opacos de exec pueden retener deuda aun si stdlib reaped internamente: falta prueba positiva original. [Validación](../validation-t014-native-start-ack.json).

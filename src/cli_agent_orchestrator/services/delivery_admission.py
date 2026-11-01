@@ -153,6 +153,7 @@ class PhysicalEffectReservation:
     _owners: list[tuple[object, Callable[[], bool]]] = field(
         default_factory=list, init=False, repr=False
     )
+    _unobserved_starts: set[object] = field(default_factory=set, init=False, repr=False)
 
     def __copy__(self):
         raise TypeError("physical effect ownership is not transferable")
@@ -180,12 +181,30 @@ class PhysicalEffectReservation:
             if not any(value[0] is native_owner for value in self._owners):
                 self._owners.append((native_owner, closed))
 
+    def _mark_unobserved_start(self) -> bool:
+        """Add a sticky obligation; artifact cleanup cannot prove this helper closed."""
+        owner = self._owner()
+        with owner._guard:
+            lease = self._lease
+            if owner._leases.get(lease._key) is not lease or self not in lease._physical_effects:
+                return False
+            if not self._unobserved_starts:
+                marker = object()
+                self._unobserved_starts.add(marker)
+                self._owners.append((marker, lambda: False))
+            owner._physical_closes.discard(self)
+            return True
+
     def _register_late(self) -> None:
         """Trusted scope only, after its positive full native closure proof."""
         owner = self._owner()
         with owner._guard:
             lease = self._lease
-            if owner._leases.get(lease._key) is lease and self in lease._physical_effects:
+            if (
+                owner._leases.get(lease._key) is lease
+                and self in lease._physical_effects
+                and not self._unobserved_starts
+            ):
                 owner._physical_closes.add(self)
 
     def finish(self) -> bool:
@@ -193,6 +212,8 @@ class PhysicalEffectReservation:
         lease = self._lease
         with owner._guard:
             if owner._leases.get(lease._key) is not lease or self not in lease._physical_effects:
+                return False
+            if self._unobserved_starts:
                 return False
             owners = tuple(self._owners)
         # Kernel/native observations run outside the admission guard.

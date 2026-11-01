@@ -17,3 +17,8 @@ isort/Black11filesPASS; mypy6production modulesPASS; composition447files/2006dep
 Private source-verified Graphify refresh:9files/537nodes/1196rawedges/159dangling endpoints, a partial impact graph. Twelve foreign tracked graph files remain unchanged. Obsidian operation markdown-20261101-positive-native-late-helpers updates concept/index/log through the inspected transaction, strict lint0, without generated graph facts. Same pinned PostgreSQL18.6/reuse owner retained with0other clients/0test databases/0test roles.
 
 Remaining: an actually unknown native cleanup requires a different original-owner capability and real bounded cleanup/absence proof. Existing Docker reconcile is native I/O, but its later Work recovery path has no production admission-token bridge; no historical RECONCILE_REQUIRED jobs were closed or rerun. Generation metadata retirement, provider quotas, elastic placement, physical M1/M2/M3 and SDK/UI/global gates remain open. [Validation](validation-t014-native-late-retirement.json).
+
+
+## Supersession — T014.B1 (2026-11-01)
+
+The earlier statement that failed attach plus artifact cleanup proves a nonexistent child safe is superseded. A constructor exception without its returned handle can lose an acknowledgement after child creation. Current Docker and Bubblewrap retain a sticky unknown-start obligation; artifact cleanup is insufficient. The archived A JSON/610-case execution remains historical; B1 strengthens the attach assertion and records actual live-child fault injection, copied-context constraints and snapshot retention. [Current validation](validation-t014-native-start-ack.json).

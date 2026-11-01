@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from cli_agent_orchestrator.services.work_process_effect import (
+    capture_native_start_marker,
+    mark_native_start_unobserved,
+    native_start_marker_scope,
     observe_process_close,
     observe_thread_close,
 )
@@ -207,8 +210,14 @@ class DockerWorkBackend(TmuxBackend):
                 command,
                 **options,
             )
-        except (OSError, subprocess.SubprocessError) as error:
-            raise DockerWorkBackendUnavailable("Docker CLI could not be queried") from error
+        except BaseException as error:
+            # run() reaps its child before these observed terminal outcomes.
+            # Constructor/other interrupted starts provide no such handle or proof.
+            if not isinstance(error, (subprocess.TimeoutExpired, subprocess.CalledProcessError)):
+                mark_native_start_unobserved()
+            if isinstance(error, (OSError, subprocess.SubprocessError)):
+                raise DockerWorkBackendUnavailable("Docker CLI could not be queried") from error
+            raise
         if check and result.returncode != 0:
             raise DockerWorkBackendUnavailable("Docker daemon rejected a required operation")
         return result
@@ -770,6 +779,7 @@ class DockerWorkBackend(TmuxBackend):
         )
 
         observe_native_effect()
+        native_start_marker = capture_native_start_marker()
         self._supported_contract(restriction)
         if self.repository is None or not isinstance(binding.contract, EffectiveWorkContractV2):
             raise _unsupported("bound V2 contract and server Work repository are required")
@@ -1116,10 +1126,13 @@ class DockerWorkBackend(TmuxBackend):
                     close_fds=True,
                     env=self._docker_environment,
                 )
-            except OSError as error:
-                raise DockerWorkBackendUnavailable(
-                    "Docker container start could not be observed"
-                ) from error
+            except BaseException as error:
+                mark_native_start_unobserved()
+                if isinstance(error, OSError):
+                    raise DockerWorkBackendUnavailable(
+                        "Docker container start could not be observed"
+                    ) from error
+                raise
             retain_native_effect_owner(process, observe_process_close(process))
             readers = (
                 threading.Thread(target=read_stdout, daemon=True),
@@ -1162,14 +1175,17 @@ class DockerWorkBackend(TmuxBackend):
             def inspect_current() -> dict[str, str]:
                 if container_id is None or attempt_image_id is None:
                     raise DockerWorkExecutionUncertain("Docker runtime identity is unavailable")
-                return self._validate_running_container(
-                    container_id,
-                    attempt_id=attempt_id,
-                    generation=generation,
-                    image_id=attempt_image_id,
-                    command=supervisor_command,
-                    mcp_enabled=mcp_enabled,
-                )
+                # This callback also runs on the exact retained MCP helper thread.
+                # Carry only the original owner's ability to add uncertainty.
+                with native_start_marker_scope(native_start_marker):
+                    return self._validate_running_container(
+                        container_id,
+                        attempt_id=attempt_id,
+                        generation=generation,
+                        image_id=attempt_image_id,
+                        command=supervisor_command,
+                        mcp_enabled=mcp_enabled,
+                    )
 
             runtime_identity = inspect_current()
             authorize(authorize_setup)
