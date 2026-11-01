@@ -95,3 +95,10 @@ No se añade lectura completa de cgroup.procs en cada muestra: su coste crece co
 
 
 [proc_pid_fdinfo(5)](https://man7.org/linux/man-pages/man5/proc_pid_fdinfo.5.html) documenta mnt_id del montaje que contiene el descriptor. Esto permite comprobar resolución efectiva incluso con overlays en prefijos sin reconstruir un árbol ambiguo ni recorrer cgroup.procs. Las lecturas relativas de controladores y fstat usan los directorios comprobados; montajes de archivo individuales también se rechazan por mnt_id. Se cierran candidatos rechazados, cuerpo fallido y pruebas interrumpidas. La vista membership/mountinfo se compara al salir; cambios descartan muestra/historia. Namespace host/ancestros invisibles siguen requiriendo prueba externa.
+
+
+## T014 — alcance del descubrimiento de deuda
+
+La revisión confirma keyset/índice live, PK de créditos y necesidad de una sola sentencia para snapshot por página. No equivale a enumeración completa bajo inserciones UUID concurrentes: comenzar un nuevo barrido descubre IDs inferiores al cursor; ending no concede liberación. Se conservan estado/revisión persistidos y cabeceras descriptivas, sin sumar cantidades de unidades incompatibles. Header y allocations de una reserva preparing se confirman atómicamente en _reserve; la mera fase no prueba ausencia de cargo.
+
+Se mantiene el fence de binding privado antes/después y se rechaza lectura cuya vista cambió, en vez de presentar current_owner incierto o permitir fallback de un dueño inválido. Un custodio independiente correctamente financiado tendrá su propia vista válida; no se implementa aquí. El lector no exige auditoría limpia ni repara divergencias: inspección no es nueva admisión. Nueva interfaz SPI no expone HTTP/SDK ni libera/rehace trabajos.

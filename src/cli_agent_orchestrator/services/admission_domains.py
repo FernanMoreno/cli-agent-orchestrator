@@ -8,6 +8,8 @@ from cli_agent_orchestrator.models.admission_domains import (
     DomainRecord,
     DomainSpec,
     MetadataCredit,
+    SharedDebtCursor,
+    SharedDebtPage,
     UsageMismatch,
 )
 from cli_agent_orchestrator.services.admission_bootstrap import ResourceBootstrap
@@ -77,3 +79,9 @@ class ResourceDomainAuthority:
     def audit_usage(self, *, principal: object) -> tuple[UsageMismatch, ...]:
         ResourceBootstrap._administrator(principal)
         return self._repository.audit_usage()
+
+    def outstanding_resources(
+        self, *, principal: object, after: SharedDebtCursor | None = None, limit: int = 100
+    ) -> SharedDebtPage:
+        ResourceBootstrap._administrator(principal)
+        return self._repository.outstanding_resources(after=after, limit=limit)

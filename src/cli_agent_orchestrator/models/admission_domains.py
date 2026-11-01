@@ -131,6 +131,69 @@ class UsageMismatch:
     allocated: int
 
 
+DebtKind = Literal["metadata_credit", "operation"]
+DebtState = Literal["charged", "preparing", "active", "releasing", "uncertain"]
+
+
+@dataclass(frozen=True)
+class SharedDebtCursor:
+    """Keyset position in a discovery pass, never a completeness witness."""
+
+    kind: DebtKind
+    entry_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not str or self.kind not in {"metadata_credit", "operation"}:
+            raise ValueError("Invalid shared debt cursor kind")
+        object.__setattr__(self, "entry_id", canonical_id(self.entry_id))
+
+
+@dataclass(frozen=True)
+class SharedDebtEntry:
+    """Persisted header only; neither death inference nor authority to adopt it."""
+
+    kind: DebtKind
+    entry_id: str
+    instance_id: str
+    process_generation: str
+    revision: int
+    state: DebtState
+    current_owner: bool
+
+    def __post_init__(self) -> None:
+        SharedDebtCursor(self.kind, self.entry_id)
+        for name in ("entry_id", "instance_id", "process_generation"):
+            object.__setattr__(self, name, canonical_id(getattr(self, name)))
+        envelope_integer(self.revision)
+        states = (
+            {"charged"}
+            if self.kind == "metadata_credit"
+            else {"preparing", "active", "releasing", "uncertain"}
+        )
+        if (
+            type(self.state) is not str
+            or self.state not in states
+            or type(self.current_owner) is not bool
+        ):
+            raise ValueError("Invalid shared debt entry")
+
+
+@dataclass(frozen=True)
+class SharedDebtPage:
+    """One coherent page, not a snapshot across requests or absence evidence."""
+
+    entries: tuple[SharedDebtEntry, ...]
+    next_cursor: SharedDebtCursor | None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.entries) is not tuple
+            or any(type(entry) is not SharedDebtEntry for entry in self.entries)
+            or (self.next_cursor is not None and type(self.next_cursor) is not SharedDebtCursor)
+        ):
+            raise ValueError("Invalid shared debt page")
+
+
 @dataclass(frozen=True)
 class MetadataCoverage:
     """Private reader result; constructing this value does not grant authority."""

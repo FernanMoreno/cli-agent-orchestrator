@@ -66,3 +66,8 @@ SharedResourceCost es un valor inmutable de bytes, millicores y sesiones, entero
 ## Estado posterior del corte T013 (2026-11-01)
 
 Los párrafos anteriores que dicen cableado/ticket pendientes describen checkpoints anteriores. Actualmente hay MetadataCredit persistente por dominio storage e instancia/generación/binding exactos, MetadataCoverage completo, modo metadata_required persistido y DeliveryRetirementHold/SharedDeliveryCoordinator integrados. El runtime de producción puede seleccionarlos explícitamente y activarlos por JWT admin; no se retiran créditos al cerrar un lifetime. Aún faltan cuotas de proveedor, reconstrucción T014 y aceptaciones/configuración durable/SDK/UI. [Validación de integración](validation-t013-shared-retirement.json), [activación productiva](validation-t013-production-activation.json).
+
+
+## T014 — catálogo de deuda (backend/SPI implementado)
+
+SharedDebtCursor guarda clase metadata_credit/operation y UUID. SharedDebtEntry guarda clase/UUID, instancia/generación, revisión, estado charged o preparing/active/releasing/uncertain y coincidencia exacta de dueño actual. SharedDebtPage conserva tuple de entries y cursor opcional. Son resultados de lectura, nunca capacidades de adopción/liberación; se omiten credenciales/rutas/PID/birth del transporte. La paginación no representa un snapshot durable de toda la red.

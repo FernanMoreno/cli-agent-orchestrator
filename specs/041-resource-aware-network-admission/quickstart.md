@@ -30,3 +30,8 @@ Esta ruta no sustituye configuración versionada PostgreSQL/SDK/UI T022/T023 ni 
 ## Prerrequisito de muestreo T019
 
 El sampler contrasta mnt_id real de los descriptores con mountinfo, conserva los directorios para leer controladores y descarta cambios de vista. La sonda readonly vigente comprobó resolución/cierre pero mantiene cobertura parcial; no permite reclamar ancestros invisibles, autoridad de almacenamiento o aceptación de carga. Para T019 aún se necesitan lecturas independientes desde el host del árbol de ancestros y el negativo de un límite real más estrecho en carga propia controlada. No cambiar límites de trabajos ajenos ni sustituir ese gate por fixtures. [Validación](validation-t019-cgroup-visibility.json).
+
+
+## Descubrimiento T014 de backend/SPI
+
+ResourceDomainAuthority.outstanding_resources exige Principal JWT admin verificado y devuelve SharedDebtPage inmutable; el caller de composición debe poseer su propia sesión de control financiada. Pasar after=page.next_cursor continúa por keyset; None solo acaba ese barrido, nunca demuestra ausencia global, muerte o cierre físico. Reiniciar desde after=None descubre inserciones UUID anteriores al cursor. El resultado conserva cabeceras y no autoriza liberar/adoptar cargos. No hay endpoint HTTP/SDK/UI de este inventario en este corte. [Validación](validation-t014-debt-discovery.json).

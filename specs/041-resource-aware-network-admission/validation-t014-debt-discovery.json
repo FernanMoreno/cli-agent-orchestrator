@@ -1,0 +1,113 @@
+{
+  "schema": "caos.spec041.t014-debt-discovery.v1",
+  "date": "2026-11-01",
+  "base_head": "b7c3ac059afcb08b96f095cac79bb356100bc246",
+  "scope": "Read-only administrative backend/SPI discovery; not recovery or release",
+  "task_complete": false,
+  "global_acceptance": false,
+  "phases": [
+    {
+      "phase": "t014-debt-inventory-regression",
+      "passed": 124,
+      "seconds": 116.577,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "source_archive_sha256": "4aaaea00d4c3f9eacb287d23530baf05fb5d06889efe2e0dbe5564c02c2ebbf9",
+      "available_mib": 8504
+    },
+    {
+      "phase": "t014-debt-inventory-cursor-final",
+      "passed": 1,
+      "seconds": 40.614,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "source_archive_sha256": "fb766e75f12bcf942ddbc19fde543950a02b77aeb4c464b2b45905f158df60f4",
+      "available_mib": 8291
+    }
+  ],
+  "unique_cases": 125,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "production_sources_match_every_archive": 3,
+  "regression_test_bodies_unchanged_when_native_case_appended": true,
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+      "sha256": "6d4ccc722cfd496fb88c68ede12c7764c21deeca0a2a6919902c41b27b41109b"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_domains.py",
+      "sha256": "e05185b5e026a4b0dda043e3bd176f184f71c79018d420c215c7e755b75fcab4"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_domains.py",
+      "sha256": "b2cf6048c392fed230dca3dbd6e96c320e24a377cef22713dfb397041ab37f74"
+    },
+    {
+      "path": "test/postgres/test_admission_debt_inventory.py",
+      "sha256": "badd186261232c4fa9f54a4a82aa68f364455928d05af6dc8f1be7ec2b5b997c"
+    },
+    {
+      "path": "test/services/test_admission_debt_authority.py",
+      "sha256": "86017b229f194a52460ada8f7a5fe64bf0b9f29b24dd6f3e455c9fdbd1bd5acc"
+    }
+  ],
+  "format_files": 5,
+  "mypy_production_files": 3,
+  "architecture": {
+    "files": 446,
+    "dependencies": 1995,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 5,
+    "nodes": 173,
+    "edges": 565,
+    "dangling": 37,
+    "scope": "partial AST final read-only recovery inventory; call paths checked against source"
+  },
+  "foreign_graphify_preserved": 12,
+  "knowledge": {
+    "operation": "markdown-20261101-debt-discovery-boundaries",
+    "pages": 3,
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "job": "e81991abde4b41c58990a40f19d2bc7d",
+    "status": "completed",
+    "verdict": "No blocking bugs in source SQL/types/page/binding review; reviewer did not execute or read tests"
+  },
+  "history": [
+    {
+      "phase": "t014-debt-inventory-red",
+      "failed": 14,
+      "seconds": 52.76,
+      "reason": "API absent"
+    },
+    {
+      "phase": "t014-debt-inventory-green",
+      "passed": 19,
+      "seconds": 49.22,
+      "scope": "Subset of final regression"
+    }
+  ],
+  "exclusions": [
+    "No HTTP/SDK/UI catalog exposure or funded-custodian composition in this slice",
+    "No cross-generation adoption or reconstruction",
+    "No reservation/metadata release, TTL/PID-death inference or historical job changes",
+    "Not a whole-network snapshot or absence proof",
+    "Physical M1/M2/M3 and remaining Spec041 tasks stay open"
+  ]
+}

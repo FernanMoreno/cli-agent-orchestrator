@@ -98,3 +98,8 @@ Selección fría CAO_ADMISSION_MODE=local|shared; ausente equivale a local, otro
 
 
 Si una activación ya creó coordinador y falla su bind, se conserva para drain y queda detenido; el operador debe retirar ese lifetime y reconstruirlo. No se abandona la referencia ni se reabre modo local.
+
+
+## T014 — descubrimiento administrativo de deuda (backend/SPI implementado)
+
+El catálogo lista cargos existentes de todas las encarnaciones del mismo coordinador bajo Principal admin. Incluye créditos tras revocación y operaciones distintas de released; estado conserva lo persistido. Cada página usa keyset tipado y límite de transporte, no un límite de agentes. current_owner compara identidad privada completa y se revalida tras lectura; un cursor nunca concede autoridad. No modifica counters, estados ni crédito y no declara ausencia/muerte por acabar una página. Interfaz inicial de backend/SPI; la ruta HTTP y ejecución de reconciliación siguen pendientes y deben conservar financiación propia.

@@ -39,6 +39,9 @@ from cli_agent_orchestrator.models.admission_domains import (
     MetadataCoverage,
     MetadataCredit,
     ReservationState,
+    SharedDebtCursor,
+    SharedDebtEntry,
+    SharedDebtPage,
     SharedReservation,
     SharedResourceCost,
     UsageMismatch,
@@ -683,6 +686,80 @@ class ResourceAdmissionRepository:
                 return None
             self._check_owner(row, binding)
             return _receipt(row)
+
+    def outstanding_resources(
+        self, *, after: SharedDebtCursor | None = None, limit: int = 100
+    ) -> SharedDebtPage:
+        """Discover durable headers without adopting, locking or freeing them.
+
+        One SELECT gives a coherent page. Random UUID inserts below a cursor
+        need a fresh pass; exhausting this pass proves neither absence nor death.
+        The trusted administrative caller owns this read's physical SQL credit.
+        """
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("Shared debt page requires a bounded integer limit")
+        if after is not None and type(after) is not SharedDebtCursor:
+            raise ValueError("Shared debt page requires a typed keyset cursor")
+        binding = self.current_binding()
+        rank = -1 if after is None else (0 if after.kind == "metadata_credit" else 1)
+        after_id = after.entry_id if after is not None else "00000000-0000-0000-0000-000000000000"
+        with connect(self.target, readonly=True) as connection, connection.transaction():
+            self._verify(connection)
+            rows = self._query(
+                connection,
+                """WITH credit_page AS (
+                    SELECT 0 AS kind_order,'metadata_credit'::text AS kind,
+                        credit_id AS entry_id,instance_id,process_generation,process_pid,
+                        process_started_at,binding_sha256,revision,'charged'::text AS state
+                    FROM {metadata_credits}
+                    WHERE (%s<0 OR (%s=0 AND credit_id>%s::uuid))
+                    ORDER BY credit_id LIMIT %s
+                ), operation_page AS (
+                    SELECT 1 AS kind_order,'operation'::text AS kind,
+                        operation_id AS entry_id,instance_id,process_generation,process_pid,
+                        process_started_at,binding_sha256,revision,state
+                    FROM {operations}
+                    WHERE state<>'released' AND (%s<1 OR (%s=1 AND operation_id>%s::uuid))
+                    ORDER BY operation_id LIMIT %s
+                ), debt_page AS (
+                    SELECT * FROM credit_page UNION ALL SELECT * FROM operation_page
+                ) SELECT * FROM debt_page ORDER BY kind_order,entry_id LIMIT %s""",
+                (rank, rank, after_id, limit + 1, rank, rank, after_id, limit + 1, limit + 1),
+            ).fetchall()
+        if self.current_binding() != binding:
+            raise SharedAdmissionDenied("Resource process binding changed during discovery")
+        entries = []
+        for row in rows[:limit]:
+            try:
+                entry = SharedDebtEntry(
+                    row["kind"],
+                    str(row["entry_id"]),
+                    str(row["instance_id"]),
+                    str(row["process_generation"]),
+                    row["revision"],
+                    row["state"],
+                    (
+                        str(row["instance_id"]),
+                        str(row["process_generation"]),
+                        row["process_pid"],
+                        row["process_started_at"],
+                        row["binding_sha256"],
+                    )
+                    == (
+                        binding.instance_id,
+                        binding.process_generation,
+                        binding.process_pid,
+                        binding.process_started_at,
+                        binding_digest(binding),
+                    ),
+                )
+            except ValueError:
+                raise SchemaMismatch("Invalid shared resource debt record") from None
+            entries.append(entry)
+        cursor = (
+            SharedDebtCursor(entries[-1].kind, entries[-1].entry_id) if len(rows) > limit else None
+        )
+        return SharedDebtPage(tuple(entries), cursor)
 
     @staticmethod
     def _check_owner(row: Record, binding: ResourceBinding) -> None:
