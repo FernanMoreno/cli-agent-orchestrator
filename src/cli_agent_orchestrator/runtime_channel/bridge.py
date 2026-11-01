@@ -980,6 +980,14 @@ async def _amain() -> None:
     ready = os.environ.get("CAO_BRIDGE_READY_FILE", "").strip()
     ready_file = Path(ready) if ready else CAO_HOME_DIR / "bridge-ready"
 
+    from cli_agent_orchestrator.services.resource_process_supervisor import BINDING_FD_ENV
+
+    # The inherited supervisor must verify this process before startup SQL.
+    # Publication consumes the FD; retain this exact bootstrap for admission.
+    supervised_bootstrap = (
+        _resource_process_bootstrap(runtime_id) if BINDING_FD_ENV in os.environ else None
+    )
+
     from cli_agent_orchestrator.clients.database import init_runtime_db
     from cli_agent_orchestrator.services.log_writer import log_writer
     from cli_agent_orchestrator.services.status_monitor import status_monitor
@@ -1020,7 +1028,11 @@ async def _amain() -> None:
     try:
         runtime = runtime_from_environment(
             BridgeAdmissionParticipant(bridge),
-            bootstrap_factory=lambda: _resource_process_bootstrap(runtime_id),
+            bootstrap_factory=lambda: (
+                supervised_bootstrap
+                if supervised_bootstrap is not None
+                else _resource_process_bootstrap(runtime_id)
+            ),
         )
         if runtime is not None:
             from cli_agent_orchestrator.api.admission_server import AdmissionControlServer

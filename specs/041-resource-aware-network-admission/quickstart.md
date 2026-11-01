@@ -90,3 +90,8 @@ No hay flag nuevo ni límite de agentes: el Bridge supervisado aplica automátic
 ## T014.C2b.P2b — registro financiado previo a TCP
 
 No hay activación global ni nuevo flag público. El componente trusted usa un Connection original de control dentro del scope activo y SqlIntentRepository.record_openings alrededor del worker físico; el recorder no se propaga automáticamente a workers/pools. La quota se provisiona por dueño explícito antes, con crédito/binding comprobados; el primer TCP de control no queda cubierto. No usar counters/label/lectura como prueba de ausencia o devolución de créditos. [Validación](validation-t014-sql-intents.json).
+
+
+## T014.C2b.P2c.A — orden del bootstrap supervisado
+
+El lanzador supervisado existente conserva comando/protocolo/configuración. Ahora su handshake ocurre antes del SQL inicial y el bootstrap original se reutiliza más tarde. Sin supervisor, el factory conserva el orden perezoso. No hay activación nueva de intents globales, permiso de bootstrap ni devolución de créditos. [Validación](validation-t014-pre-sql-bootstrap.json).

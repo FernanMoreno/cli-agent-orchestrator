@@ -168,3 +168,8 @@ En procesos supervisados, admisión de apertura física y sellado local se seria
 ## T014.C2b.P2b — registro financiado previo a TCP
 
 SqlIntentRepository recibe canal financiado original, no crea conexión. provision separa actor actual de participant_binding/credit original; record confirma commit antes de permitir driver. Identidad duplicada no concede segundo TCP; pérdida de acuse conserva UUID y bloquea efecto. Canal writer queda fijado al primer backend confirmado. read/fence de otro canal ya financiado admiten solo binding actual idéntico y nunca conceden TCP. C1 permite completion financiada; fence de journal y fence físico son separados. Bootstrap/broker/global/custodio siguen pendientes. [Validación](../validation-t014-sql-intents.json).
+
+
+## T014.C2b.P2c.A — orden del bootstrap supervisado
+
+Bridge supervisado exige publicación/ACK antes de init_runtime_db, limpieza/restauración y backend. Error de publicación bloquea esa frontera. El ACK acredita identidad; no promete admisión activa, presupuesto, genesis o ausencia. La validación de políticas compartidas sigue posterior y fuera del componente; no usar esta corrección como autorización para abrir sin financiación completa. [Validación](../validation-t014-pre-sql-bootstrap.json).

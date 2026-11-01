@@ -266,3 +266,10 @@ Un componente aditivo sql_opening_intents conserva cuotas owner-written en unida
 El fence durable de inscripciones serializa con nuevos intents, sin confundirse con C1: el SQL financiado de finalización sigue necesitando registrar sus aperturas. Un sello C1 no cancela el registro de esos intentos. La instalación es scoped al worker; todas las3rutas usan el mismo callback previo al driver. Reentrada del callback rechaza, jamás omite el registro para evitar recursión.
 
 No se activa aún el registrador globalmente en Bridge: faltan canal persistente/broker concurrente y bootstrap explícitamente financiado anterior a las primeras conexiones. Un intent/contador/fence/etiqueta no prueba ausencia ni devuelve crédito. Jobs históricos y credenciales del operador no se alteran.
+
+
+## T014.C2b.P2c.A — identidad autenticada antes del primer SQL (orden validado; financiación pendiente)
+
+Un Bridge lanzado con el canal interno del supervisor publica su binding original y espera el acuse autenticado antes de ejecutar init_runtime_db, restaurar estado, crear backends o realizar SQL de arranque. Un rechazo o fallo de publicación impide cruzar ese primer límite, incluidas excepciones BaseException. La configuración básica del canal (servidor, runtime y token) se valida antes de publicar. La misma instancia bootstrap se conserva para la admisión posterior; consumir el FD no crea una segunda generación. El recorrido sin supervisor mantiene su inicialización perezosa.
+
+Esto solo corrige el orden del entrypoint: el ACK actual no acredita intención durable, presupuesto ni ausencia de sesiones. Parent genesis, financiación del primer TCP, broker, inventario y retirada auditada siguen pendientes. No introducir una excepción implícita de bootstrap para declarar cobertura completa.

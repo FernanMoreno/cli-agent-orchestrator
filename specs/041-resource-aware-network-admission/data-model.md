@@ -116,3 +116,8 @@ El estado efímero por PID conserva enabled/name/sealed/opening/unconfirmed y lo
 ## T014.C2b.P2b — registro financiado previo a TCP
 
 sql_opening_intents1 añade4tablas independientes: quotas(journal/credit/instance/generation/binding/max_records/actor), channels(journal/binding/backendPID/backend_start), intents(UUID/journal/ordinal/binding/sourcePID/birth/appName/path/destinationhash), fences(journal/binding). Quotas runtimeSELECT, resto append-only. max_records es crecimiento lógico, no bytes/sesiones. Estado local incorpora registration_unconfirmed separado de unconfirmed TCP; ninguno es inventario completo ni autoridad de liberación. [Validación](validation-t014-sql-intents.json).
+
+
+## T014.C2b.P2c.A — orden del bootstrap supervisado
+
+El bootstrap supervisado se retiene como la misma instancia efímera entre publicación/ACK y runtime_from_environment. No hay nueva fila, token de financiación, migración o autoridad durable. El binding y su generación no se recrean al desaparecer el FD del entorno. [Validación](validation-t014-pre-sql-bootstrap.json).

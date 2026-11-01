@@ -1,0 +1,159 @@
+{
+  "schema": "caos.spec041.t014-pre-sql-bootstrap.v1",
+  "date": "2026-11-02",
+  "base_head": "2e5d3a0bbdd04d016b32dd3360a773a2d4f26641",
+  "scope": "T014.C2b.P2c.A authenticated supervised Bridge binding before first startup SQL",
+  "global_acceptance": false,
+  "funded_genesis_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-pre-sql-bootstrap-reviewed",
+    "selected_test_files": 18,
+    "passed": 256,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous_selected_cases_preserved": 247,
+    "previous_full1188_not_rerun": true,
+    "seconds": 243.305,
+    "available_mib": 12125,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 1,
+    "owned_python_archive_match": 2,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "404b41f5f1fd385f3e6168ed3526c4d0c70c5de573161f29d630563236257829"
+      },
+      {
+        "path": "test/runtime_channel/test_bridge_pre_sql_bootstrap.py",
+        "sha256": "75bbdcc2f1130bc0bc0792efa6c29a4f7511c09d605bb0f70c840f1e7e65b35f"
+      }
+    ],
+    "archive_sha256": "4e40d2204bbe20af42f5afde52140618432c2028092f1fbbc2a55dbd253e2b51",
+    "foreign_graphify_files_preserved": 12
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 2
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 2
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 1
+    }
+  ],
+  "architecture": {
+    "files": 455,
+    "dependencies": 2040,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 5,
+    "nodes": 200,
+    "edges": 507,
+    "dangling": 107,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261102-pre-sql-bootstrap",
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "dba5ab15e54a466f8e4b0e7af4b438c1",
+      "60ca224d3270461d81a03135d094e5be",
+      "404932e0fd83484897d8987076200c0c"
+    ],
+    "root_final_diff_review": true
+  },
+  "implemented": [
+    "Supervised bootstrap publication/ACK precedes init_runtime_db, stale row cleanup, incarnation restore and backend construction.",
+    "Required server/runtime/token configuration remains before publication; unsupervised bootstrap stays lazy.",
+    "Retain exact bootstrap object after publisher consumes FD; reuse it for subsequent admission without another publication or generation.",
+    "Publication failure propagates before SQL, tasks, runtime and signal handler construction; outer main terminal SQL fence stays intact."
+  ],
+  "evidence_boundaries": [
+    "One current256case execution only; all247 selected earlier identities preserved. Previous full1188 not rerun for this one-production-file ordering change.",
+    "Actual owned children exercise _amain and kernel authenticated publication. First SQL is a sentinel: proves entrypoint ordering, not actual funded PostgreSQL TCP or model acceptance.",
+    "Test parent manually consumes packet and sends explicit NACK; child prevents SQL and produces exact CLD_EXITED24 with rejection marker. Positive ACK uses production receive_binding validation and permits first-SQL sentinel/CLD_EXITED23. Supervisor rejection validation is covered separately by retained supervisor tests.",
+    "RuntimeError, MemoryError and BaseException itself covered before first SQL; exact bootstrap reuse, consumed FD, legacy lazy path and invalid basic config checked.",
+    "The initial254PASS/1FAIL run is failed fixture evidence, not acceptance: unread seqpacket close caused ECONNRESET and no rejection marker, while SQL stayed blocked. Corrected fixture reads packet and sends explicit NACK; original no-SQL/cleanup assertions retained, exact negative exit strengthened.",
+    "ACK attests identity only; it does not prove active admission, hierarchy, budget, durable genesis or closed sessions. Shared-policy errors still validate later, outside this slice.",
+    "No protocol, schema, new flag, permission, connection pool, credit return or global recorder activation change. Historical reconciliation and operator/Claude credentials untouched.",
+    "Final1production/2Python match executed archive and checkout, foreign12Graphify retained; PostgreSQL same container0/0/0 and custodian retained."
+  ],
+  "history": [
+    {
+      "phase": "t014-pre-sql-bootstrap-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 8,
+        "failure": 5,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 59.061,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-pre-sql-bootstrap-final",
+      "exit_code": 1,
+      "cases": {
+        "total": 255,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 247.691,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "remaining": [
+    "Parent-funded durable genesis before ACK and explicit root funding without implicit bootstrap exception.",
+    "Persistent worker/broker and complete original attempt/session/native inventory before metadata custody/retirement.",
+    "Original10tasks, quotas/distribution, M1/M2/M3, SDK/UI/global gates."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

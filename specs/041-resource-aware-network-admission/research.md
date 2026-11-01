@@ -124,3 +124,8 @@ C1 y el drenaje abren SQL financiado; el finally exterior de Bridge.main posteri
 ## T014.C2b.P2b — registro financiado previo a TCP
 
 La financiación del registro no puede obtener otro TCP sin recursión: usa el raw de control original y un préstamo/scope todavía activo del mismo worker. psycopg suprime Rollback en su context manager: exigir final de cuerpo/estado INTRANS evita convertir rollback en acuse. Registrar antes del driver separa fallos de preparación e incertidumbre TCP; un commit sin ACK conserva UUID, no autoriza efecto. El primer backend de control se fija positivamente, sin inferir ausencia de destinos. Lectura/fence alternativos son de la misma identidad viva, no recuperación postcrash. [Validación](validation-t014-sql-intents.json).
+
+
+## T014.C2b.P2c.A — orden del bootstrap supervisado
+
+Probar que el helper de publicación no usa SQL no prueba el orden del entrypoint: _amain ejecutaba init_runtime_db antes de invocarlo. La corrección adelanta solo el bootstrap supervisado y reutiliza la misma instancia tras consumir FD. En la prueba negativa, cerrar un seqpacket con datos sin leer puede causar reset; consumir el paquete y enviar NACK explícito hace determinista el rechazo sin relajar la ausencia de SQL ni el join. [Validación](validation-t014-pre-sql-bootstrap.json).
