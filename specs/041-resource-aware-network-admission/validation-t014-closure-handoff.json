@@ -1,0 +1,259 @@
+{
+  "schema": "caos.spec041.t014-closure-handoff.v1",
+  "date": "2026-11-01",
+  "base_head": "02bf97aa7c8b7996f2baf298e6dcfe876d7b984a",
+  "scope": "Implemented component: original coordinator physical fence, separately funded witnessed release, common administrative CAS/audit and accounting invalidation",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-witness-handoff-final",
+    "cases": 569,
+    "passed": 569,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 605.536,
+    "available_mib": 8019,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "ce43258575f8c7f0a47a5ff320bd73a8f76ba3f17794ac1ff8a254a613ec6fdb",
+    "production_archive_match": 9,
+    "owned_python_archive_match": 19,
+    "foreign_graphify_preserved": 12,
+    "history": [
+      {
+        "phase": "t014-closure-handoff-red",
+        "cases": {
+          "total": 9,
+          "failure": 9,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-closure-handoff-core-green",
+        "cases": {
+          "total": 71,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-witness-http-red",
+        "cases": {
+          "total": 2,
+          "failure": 2,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-witness-control-green",
+        "cases": {
+          "total": 122,
+          "failure": 3,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 1,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      },
+      {
+        "phase": "t014-witness-handoff-recovery-green",
+        "cases": {
+          "total": 53,
+          "failure": 0,
+          "error": 0,
+          "skipped": 0
+        },
+        "exit_code": 0,
+        "source_preserved": true,
+        "support_preserved": true,
+        "descriptor_closed": true
+      }
+    ],
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+        "sha256": "e3adf3b945c958fbb4c1086168aa0ef53b3a8c3ea2e46584aa0e70a32c0075fb"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "f4b489c9baa0f3ca86b14c82dea8ca18c58aac18679c5a9d2ed5de5d0a104ebf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+        "sha256": "17469c38c0d9f71b30cc802f21a304fc50d9c99dd377a8f66b56fc96dd66ef09"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "1a6a8bf05df90492cb55f81869cd7f86b1c26fe51dbc42c9d0e619c386e344e2"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/admission_control.py",
+        "sha256": "49c85429fce06da5eb1799b6e9098eb7782af1cd5e015a5b5656131842e07bba"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/admission_domains.py",
+        "sha256": "07c56ccce19ab30b159727972a8f29d4696dfe148a3fb72c3d8d91376c309ddc"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_domains.py",
+        "sha256": "b9dca1d7143d5c202a7c2ba4c8a4f7354cf7e26c30f377d2ca1f8da073a1ce2e"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "c8898fa43fdcb7903655cd930e41dd6ae536e88a8318576292f5bc96a59237c0"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "aefdcfde086f969ca6429dfc56c668ffccdc1e92f8cedc75d12ab48509742539"
+      },
+      {
+        "path": "test/api/test_admission_witness_release.py",
+        "sha256": "5e36d446ebaf1f3a0ea20b0c9bbce45699581df0e8597feba10bca50cd45dce7"
+      },
+      {
+        "path": "test/api/test_scope_coverage.py",
+        "sha256": "bc7ef075023dc44311678e114b0b050416ace6dc17b7f9d3322399cd6e782ced"
+      },
+      {
+        "path": "test/postgres/test_admission_admin_abort.py",
+        "sha256": "72092df21b787ea936530f575742925dcf5bdf5cb84e4d1e8d0a55c5ed1297dc"
+      },
+      {
+        "path": "test/postgres/test_admission_admin_abort_runtime.py",
+        "sha256": "c7f8cb5d582d05719914c6f93418309c56dde5eef666243bd7ff059a13d32cd8"
+      },
+      {
+        "path": "test/postgres/test_admission_closure_handoff.py",
+        "sha256": "b3f40a5f33573ae8020b55574ec8113c36beb495b3bbe074998739989d48d5be"
+      },
+      {
+        "path": "test/postgres/test_admission_closure_handoff_crash.py",
+        "sha256": "5f6112cc19a97ac828acd6bb1b570aba1cc57dfdbc914950745fc55acbbc5189"
+      },
+      {
+        "path": "test/postgres/test_admission_closure_handoff_runtime.py",
+        "sha256": "423717d22e3213a62e0c0677fe7e609e3dbb389f86f6d6d4dd75b48b78d206f6"
+      },
+      {
+        "path": "test/postgres/test_admission_metadata_credits.py",
+        "sha256": "e3441b8223c3dd898950725642cae583f55489894b600158de15b21fe5b2f6ad"
+      },
+      {
+        "path": "test/services/test_admission_witness_release_authority.py",
+        "sha256": "a78c94e9c619ef273c3827c75e9a0a1bdee4b4a5f7dd49abcbaca2b689c2c80a"
+      },
+      {
+        "path": "test/services/test_shared_delivery_admission.py",
+        "sha256": "abcd4c4c70e1731b659bfe080588598913b39d8500f7e364884e768b2b01f8c2"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 19
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 19
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 9
+    }
+  ],
+  "architecture": {
+    "files": 447,
+    "dependencies": 2006,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 11,
+    "nodes": 533,
+    "edges": 1539,
+    "dangling": 108,
+    "partial": true,
+    "private": true,
+    "foreign_files_preserved": 12
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-durable-resource-custody",
+    "paths": 3,
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "26807da6272e45acb11c4660f02ac1e3",
+      "d73637caf2fe42c7adf2ca30f6502119",
+      "c04d7892a4ba4eaeb5130083d07dbe7e"
+    ],
+    "blocking_findings": 0,
+    "luna_read_review": true,
+    "root_diff_and_source_review": true,
+    "assessment": "Original-view concern refuted by immutable metadata credit checks and new native full-membership-rebind case. Claimed owner race conflict refuted by exact revision+state acknowledgement in transition, also exercised by both funded HTTP race orders. Uncertain-response wake hint uses existing periodic AdmissionMonitor notification; preserve stable action ID and retry. Cosmetic copied inner callback names do not alter the tested contract."
+  },
+  "implemented": [
+    "Nullable durable closure marker is written only by the trusted original coordinator protocol after its exact settled physical hold is ready; no marker for historical raw/unmarked states.",
+    "Foreign custodian uses its own activated funded binding, verified JWT admin, strict action/operation/revision DTO and fixed no-store errors.",
+    "One closed-enum administrative transaction engine keeps original preparing1-to-released2 abort and witnessed closing-to-released successor; action UUID namespace is shared across audit tables.",
+    "Original allocated quantities, released CAS and owner-written audit commit once; process metadata credits are never released.",
+    "Observed missing/underflowed usage invalidates the local accounting basis even after rollback; no silent repair or fresh admission while uncertain.",
+    "Additive schema v6 preserves checksums1-5; historical v5 rows remain unmarked; audit runtime SELECT-only survives later generic grants."
+  ],
+  "evidence_boundaries": [
+    "Actual pinned PostgreSQL18.6 and real JWT HTTP composition with two logical nodes; resource observations/transport are controlled.",
+    "Two actually spawned owned Python coordinator processes close real data SQL and exit before/after durable marker; only the marker permits foreign resource release, never PID absence.",
+    "Faults cover original-fence lost acknowledgement, finalizer postcommit transport/interface/storage-close/binding uncertainty, precommit usage/binding rollback, global cross-kind action IDs and unchanged metadata.",
+    "569 distinct cases in one final execution, no FAIL/ERROR/SKIP; earlier intermediate results are history and are not added to the total.",
+    "The 119PASS/3FAIL intermediate run had three new test expectation/mocking errors; strengthened total/control/SQL-loan assertions and corrected exception arity without changing product code for those fixture failures."
+  ],
+  "remaining": [
+    "Unmarked active/uncertain operations and genuinely unknown native starts remain charged.",
+    "Automatic owner-bound late native/helper cleanup producer and whole-generation metadata-credit retirement still pending.",
+    "Provider quotas, ordinary elastic placement, physical M1/M2/M3, configuration SDK/UI and global gates remain open.",
+    "No new real model/provider/Bubblewrap/QEMU acceptance; no historical RECONCILE_REQUIRED or live terminal changes."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

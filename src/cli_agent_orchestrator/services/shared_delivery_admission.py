@@ -66,6 +66,10 @@ class SharedResourceRepository(Protocol):
         self, operation_id: str, *, expected_revision: int, state: ReservationState
     ) -> SharedReservation: ...
 
+    def fence_physically_closed(
+        self, operation_id: str, *, expected_revision: int, original_binding: ResourceBinding
+    ) -> SharedReservation: ...
+
 
 class SharedDeliveryUnavailable(RuntimeError):
     """Fixed, non-secret denial; private causes are never chained."""
@@ -557,11 +561,18 @@ class SharedDeliveryCoordinator:
                     receipt = self._repository.read_operation(attempt.operation_id)
                     while receipt is not None and receipt.state != "released":
                         self._check_read(attempt, receipt)
-                        receipt = self._repository.transition(
-                            attempt.operation_id,
-                            expected_revision=receipt.revision,
-                            state=_RELEASE_NEXT[receipt.state],
-                        )
+                        if receipt.state in {"active", "uncertain"}:
+                            receipt = self._repository.fence_physically_closed(
+                                attempt.operation_id,
+                                expected_revision=receipt.revision,
+                                original_binding=self._coverage.binding,
+                            )
+                        else:
+                            receipt = self._repository.transition(
+                                attempt.operation_id,
+                                expected_revision=receipt.revision,
+                                state=_RELEASE_NEXT[receipt.state],
+                            )
                     if receipt is not None:
                         self._check_read(attempt, receipt)
                     with self._guard:

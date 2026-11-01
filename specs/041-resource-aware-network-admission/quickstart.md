@@ -45,3 +45,10 @@ El estado anterior de catálogo solo SPI corresponde al checkpoint anterior. Aho
 ## Cierre de Work nativo
 
 El puerto productivo registra el token del efecto externo automáticamente. Un backend confiable declara su ciclo completo con observe_native_effect, señala begin_native_effect antes del primer arranque posible, conserva handles con retain_native_effect_owner y emite confirm_native_effect_closed solo tras su prueba nativa completa. Nunca emitir ese acuse desde un finally genérico ni desde el mero retorno/error del callback. SQL, proceso y helpers tienen cierres distintos; un native owner incierto conserva costes y receptor. Esto no introduce un límite de agentes ni sustituye la recuperación durable T014. [Validación](validation-t014-work-physical-ownership.json).
+
+
+## Custodia después de un cierre físico persistido
+
+Con el runtime shared ya activado y el control del custodio financiado, un JWT admin puede consultar POST /admission/shared/debt. Solo una operación cuyo coordinador original haya registrado el cierre puede finalizarse por POST /admission/shared/release-witnessed: version1, UUID de acción persistido antes del envío, UUID de operación y revisión esperada del cierre. La revisión depende del historial; no asumir siempre3. No enviar binding, actor ni un supuesto testigo. Un estado releasing del inventario no demuestra por sí solo elegibilidad.
+
+Ante200, comprobar los mismos UUID, state=released y revisión+1. Ante503/cancelación/confirmación perdida, repetir la misma acción y payload; nunca volver a ejecutar Work como reparación. Ante409 conservar el estado y distinguir resource_closure_unproven de resource_operation_conflict; ni ausencia del PID ni fin de página conceden permiso. Los créditos de metadatos siguen cargados. La aceptación con SQL/HTTP y procesos propios se detalla en [validación](validation-t014-closure-handoff.json); no sustituye los gates físicos M1/M2/M3.

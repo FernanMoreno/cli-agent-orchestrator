@@ -13,6 +13,7 @@ from cli_agent_orchestrator.models.admission_domains import (
     SharedAbortReceipt,
     SharedDebtCursor,
     SharedDebtPage,
+    SharedReleaseReceipt,
     UsageMismatch,
 )
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
@@ -20,6 +21,16 @@ from cli_agent_orchestrator.services.admission_bootstrap import ResourceBootstra
 
 
 class ResourceRecoveryRepository(Protocol):
+    def admin_release_witnessed(
+        self,
+        operation_id: str,
+        *,
+        action_id: str,
+        expected_revision: int,
+        principal_id: str,
+        expected_binding: ResourceBinding | None = None,
+    ) -> SharedReleaseReceipt: ...
+
     def admin_abort_preparing(
         self,
         operation_id: str,
@@ -50,6 +61,25 @@ def abort_preparing_for_admin(
 ) -> SharedAbortReceipt:
     actor = ResourceBootstrap._administrator(principal)
     return repository.admin_abort_preparing(
+        operation_id,
+        action_id=action_id,
+        expected_revision=expected_revision,
+        principal_id=actor,
+        **({"expected_binding": expected_binding} if expected_binding is not None else {}),
+    )
+
+
+def release_witnessed_for_admin(
+    repository: ResourceRecoveryRepository,
+    *,
+    principal: object,
+    action_id: str,
+    operation_id: str,
+    expected_revision: int,
+    expected_binding: ResourceBinding | None = None,
+) -> SharedReleaseReceipt:
+    actor = ResourceBootstrap._administrator(principal)
+    return repository.admin_release_witnessed(
         operation_id,
         action_id=action_id,
         expected_revision=expected_revision,
@@ -133,6 +163,17 @@ class ResourceDomainAuthority:
         self, *, principal: object, action_id: str, operation_id: str, expected_revision: int
     ) -> SharedAbortReceipt:
         return abort_preparing_for_admin(
+            self._repository,
+            principal=principal,
+            action_id=action_id,
+            operation_id=operation_id,
+            expected_revision=expected_revision,
+        )
+
+    def release_witnessed(
+        self, *, principal: object, action_id: str, operation_id: str, expected_revision: int
+    ) -> SharedReleaseReceipt:
+        return release_witnessed_for_admin(
             self._repository,
             principal=principal,
             action_id=action_id,

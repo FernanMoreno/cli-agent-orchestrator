@@ -203,7 +203,7 @@ async def test_abort_and_activation_have_one_cas_winner_and_no_unsafe_effect(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("endpoint", ["debt", "abort-preparing"])
+@pytest.mark.parametrize("endpoint", ["debt", "abort-preparing", "release-witnessed"])
 @pytest.mark.parametrize("mismatch", ["view", "repository"])
 async def test_recovery_rejects_unfunded_binding_before_any_sql(
     pair, auth_enabled_env, rsa_keys, monkeypatch, tmp_path, endpoint, mismatch
@@ -226,9 +226,11 @@ async def test_recovery_rejects_unfunded_binding_before_any_sql(
 
             patch.setattr(pair.module, "connect", forbidden)
             request = {"version": 1}
-            if endpoint == "abort-preparing":
+            if endpoint != "debt":
                 request.update(
-                    action_id=str(uuid4()), operation_id=str(uuid4()), expected_revision=1
+                    action_id=str(uuid4()),
+                    operation_id=str(uuid4()),
+                    expected_revision=3 if endpoint == "release-witnessed" else 1,
                 )
             transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50104))
             async with httpx.AsyncClient(

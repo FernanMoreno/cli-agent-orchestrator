@@ -20,6 +20,7 @@ from cli_agent_orchestrator.models.admission_domains import (
     SharedAbortReceipt,
     SharedDebtCursor,
     SharedDebtPage,
+    SharedReleaseReceipt,
 )
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
@@ -31,6 +32,7 @@ from cli_agent_orchestrator.services.admission_diagnostics import diagnostics_re
 from cli_agent_orchestrator.services.admission_domains import (
     ResourceRecoveryRepository,
     abort_preparing_for_admin,
+    release_witnessed_for_admin,
 )
 from cli_agent_orchestrator.services.admission_monitor import (
     AdmissionMonitor,
@@ -364,6 +366,32 @@ class InboxAdmissionRuntime:
             if self._closing or not owner.shared_ready or not shared.accepting:
                 raise AdmissionRuntimeUnavailable("shared resource recovery is stopped")
             return abort_preparing_for_admin(
+                repository,
+                principal=principal,
+                action_id=action_id,
+                operation_id=operation_id,
+                expected_revision=expected_revision,
+                expected_binding=shared.coverage.binding,
+            )
+
+        receipt = await self._execute(principal, abort, mutating=False)
+        self.inbox.notify_admission_changed()
+        return receipt
+
+    async def release_witnessed(
+        self, *, principal: object, action_id: str, operation_id: str, expected_revision: int
+    ) -> SharedReleaseReceipt:
+        self._check_request(principal)  # Auth before resolving either repository port.
+        repository = self._recovery_repository
+        shared = self._shared
+        owner = self.monitor.owner
+        if repository is None or shared is None or not owner.shared_ready or not shared.accepting:
+            raise AdmissionRuntimeUnavailable("shared resource recovery is unavailable")
+
+        def abort() -> SharedReleaseReceipt:
+            if self._closing or not owner.shared_ready or not shared.accepting:
+                raise AdmissionRuntimeUnavailable("shared resource recovery is stopped")
+            return release_witnessed_for_admin(
                 repository,
                 principal=principal,
                 action_id=action_id,

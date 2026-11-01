@@ -263,6 +263,17 @@ class SharedPreparationAbortResult(SharedActionIdentity):
     state: Literal["released"]
 
 
+class SharedWitnessReleaseRequest(SharedActionIdentity):
+    version: StrictInt = Field(ge=1, le=1)
+    expected_revision: StrictInt = Field(ge=3, le=2**63 - 2)
+
+
+class SharedWitnessReleaseResult(SharedActionIdentity):
+    version: Literal[1] = 1
+    revision: StrictInt = Field(ge=4, le=2**63 - 1)
+    state: Literal["released"]
+
+
 class SharedDebtCursorInput(StrictControlModel):
     kind: Literal["metadata_credit", "operation"]
     entry_id: StrictStr

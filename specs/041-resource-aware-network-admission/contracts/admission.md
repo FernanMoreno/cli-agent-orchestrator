@@ -120,3 +120,11 @@ Frontera Work reproducida antes de la corrección: final de callback/hilo no equ
 
 
 Frontera Work corregida en este corte: la reserva conserva un PhysicalEffectReservation por dueño nativo, con handles/observadores exactos además de préstamos SQL. No-start observado o cierre confirmado permite retirarlo; error, timeout y not-alive de un hilo no arrancado no lo permiten. El token no es serializable ni permiso de replay y no se transmite a clientes. Los cargos durables siguen en PostgreSQL; todavía no existe testigo SQL de cierre para un custodio de otra generación.
+
+
+## T014 — liberación con testigo durable (componente implementado y validado)
+
+Solo el coordinador con hold exacto ya cerrado puede producir el marcador privado de cierre en la transición a releasing. Un custodio diferente debe poseer su propia cobertura/control y JWT admin; expected_binding corresponde al custodio, no al objetivo. POST /admission/shared/release-witnessed usa UUID de acción estable, operación y revisión esperada>=3. CAS libera únicamente cantidades originales de esa operación y registra actor/resultado una vez. Sin testigo válido se conserva toda carga; no retirar metadatos ni convertir el acuse en permiso de ejecución o replay. El aborto previo conserva DTO/error/semántica existentes.
+
+
+El endpoint exige version1 y expected_revision entero estricto3..2^63−2, sin actor/binding/testigo suministrado por el cliente. Devuelve version1/mismosUUID/state=released/revision=esperada+1. Sin marcador409/resource_closure_unproven; conflicto de revisión/estado/acción409/resource_operation_conflict; indisponibilidad o ACK incierto503/resource_control_unavailable, sin eco de errores y no-store. Reutilizar exactamente action_id/operation_id/revisión tras respuesta incierta; una nueva acción no es un reintento idempotente. El catálogo no incorpora un campo de elegibilidad y releasing por sí solo no demuestra testigo. Preparación conserva su contrato previo. [Evidencia del componente](../validation-t014-closure-handoff.json).

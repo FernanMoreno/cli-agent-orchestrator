@@ -201,3 +201,8 @@ La aceptación de esta extensión requiere el mismo recorrido desde HTTP, SDK y 
 - [024 — Mensajes de trabajo](../024-work-agent-messages/spec.md) y [028 — Autoridad de delegación](../028-team-delegation-authority/spec.md): identidad, efectos y facultad de distribuir trabajo; capacidad no sustituye autorización.
 - [035 — Federación observable](../035-graph-instance-federation/spec.md) y [038 — Recursos de agentes](../038-studio-agent-resources/spec.md): representación fiel de capacidad, ubicación y cobertura, sin atribuir efectos a la vista.
 - Código contrastado al redactar: `services/inbox_service.py` limita por separado el consumidor y los barridos; `services/legacy_memory_audit_repository.py` limita el pool auditado; `services/settings_service.py` distingue profundidad de cola y límite opcional de terminales. La asignación elástica existente no acredita una política común de admisión adaptativa ni su aceptación multinodo. Estos son puntos de partida y brechas, no funcionalidades completadas por esta spec.
+
+
+## Precisión T014 — handoff durable de cierre físico confirmado
+
+Un propietario original puede registrar durablemente el cierre de una operación solo después de confirmar su body, préstamos SQL y dueños nativos/helpers. Si cae tras ese registro y antes de devolver cantidades, un custodio admin independiente y ya financiado puede finalizar esas cantidades una vez mediante CAS/audit. No se infiere cierre de un estado releasing histórico, caducidad, PID o runtime.retired. El acuse libera recursos, no reejecuta ni completa Work, y nunca retira créditos de metadatos. Operaciones activas/inciertas sin ese testigo siguen cargadas. Cambios de autoridad/vista no impiden terminar recursos realmente cerrados de la encarnación original.

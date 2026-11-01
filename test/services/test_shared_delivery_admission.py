@@ -128,6 +128,11 @@ class FakeRepo:
             raise RuntimeError("ack lost")
         return row
 
+    def fence_physically_closed(self, operation_id, *, expected_revision, original_binding):
+        assert original_binding == self.bound
+        self.events.append(("physical_fence", operation_id, original_binding))
+        return self.transition(operation_id, expected_revision=expected_revision, state="releasing")
+
     def sql(self):
         return [e for e in self.events if e[0] in ("reserve", "read", "transition", "coverage")]
 

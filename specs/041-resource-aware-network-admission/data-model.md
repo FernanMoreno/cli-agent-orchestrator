@@ -81,3 +81,8 @@ SharedAbortReceipt inmutable contiene action_id/operation_id canónicos, revisio
 ## T013/T014 — propietario físico nativo local
 
 PhysicalEffectReservation es una identidad opaca por lease con referencias fuertes al dueño nativo y observadores de cierre. DeliveryReservation conserva su conjunto hasta confirmación positiva; DeliveryRetirementHold exige que esté vacío además de SQL/stage terminados. El contexto nativo diferencia ciclo observado, gate, intento y cierre, ligado al PID/hilo del worker. Estos objetos locales no son testigos durables ni DTOs de red. El ledger/cargos compartidos permanece en PostgreSQL sin migración nueva en este corte. [Validación](validation-t014-work-physical-ownership.json).
+
+
+## T014 — cierre durable de operación, esquema6
+
+_cao_resource_operations.closure_witness_revision es nullable: filas históricas quedan NULL. Un productor del coordinador original registra marker=revision al pasar a releasing; al liberar queda marker=revision−1. La restricción excluye uncertain tras el testigo. _cao_resource_witness_releases conserva UUIDacción/operación, actor y binding propio del custodio, revisiones original/final y cantidades originales; actor/allocations/audit se insertan con el CAS de devolución. Es autoridad owner-written/runtime SELECT-only. El espacio lógico de action_id es común con _cao_resource_admin_actions mediante lock y verificación cruzada; el motor solo admite dos políticas internas enumeradas. La tabla previa conserva preparing1→released2, sin ampliar sus constraints ni sus checksums. No hay marcador de cierre de generación ni retiro de créditos en este esquema. [Validación](validation-t014-closure-handoff.json).

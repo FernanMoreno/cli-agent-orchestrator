@@ -12,6 +12,7 @@ import re
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict
+from enum import Enum
 from typing import Callable, Iterator, Sequence, cast
 from uuid import NAMESPACE_OID, uuid5
 
@@ -25,6 +26,7 @@ from cli_agent_orchestrator.clients.admission_schema import (
     LEDGER_TABLES,
     METADATA_CREDIT_TABLES,
     RESOURCE_ADMISSION_MIGRATIONS,
+    WITNESS_RELEASE_TABLES,
 )
 from cli_agent_orchestrator.clients.postgres import (
     Connection,
@@ -51,6 +53,7 @@ from cli_agent_orchestrator.models.admission_domains import (
     SharedDebtCursor,
     SharedDebtEntry,
     SharedDebtPage,
+    SharedReleaseReceipt,
     SharedReservation,
     SharedResourceCost,
     UsageMismatch,
@@ -72,6 +75,15 @@ class SharedCommitUncertain(SharedAdmissionDenied):
 
 class SharedRevisionConflict(RuntimeError):
     """The exact request, owner, state or authority revision changed."""
+
+
+class SharedClosureUnproven(SharedRevisionConflict):
+    """No durable original-owner physical witness permits this release."""
+
+
+class _ReleaseAction(Enum):
+    ABORT_PREPARING = "preparing"
+    WITNESSED = "releasing"
 
 
 class SharedActionCommitUncertain(SharedCommitUncertain):
@@ -111,6 +123,7 @@ _TABLES.update(
     zip(("metadata_credits", "metadata_credit_history"), METADATA_CREDIT_TABLES, strict=True)
 )
 _TABLES["admin_actions"] = ADMIN_ACTION_TABLES[0]
+_TABLES["witness_releases"] = WITNESS_RELEASE_TABLES[0]
 _TRANSITIONS = {
     "preparing": {"active", "released"},
     "active": {"releasing", "uncertain"},
@@ -363,12 +376,18 @@ class ResourceAdmissionRepository:
             raise SharedAdmissionDenied("Resource domain is not provisioned")
         return row
 
+    def _counter_error(self, message: str) -> SchemaMismatch:
+        # An observed accounting failure remains known after SQL rollback.
+        with self._usage_guard:
+            self._usage_uncertain = True
+        return SchemaMismatch(message)
+
     def _used(self, connection: Connection, domain_id: str) -> int:
         row = self._query(
             connection, "SELECT committed FROM {usage} WHERE domain_id=%s", (domain_id,)
         ).fetchone()
         if row is None:
-            raise SchemaMismatch("Shared resource counter is missing")
+            raise self._counter_error("Shared resource counter is missing")
         value = row[0]
         envelope_integer(value, minimum=0)
         return cast(int, value)
@@ -707,6 +726,88 @@ class ResourceAdmissionRepository:
             self._check_owner(row, binding)
             return _receipt(row)
 
+    def fence_physically_closed(
+        self,
+        operation_id: str,
+        *,
+        expected_revision: int,
+        original_binding: ResourceBinding,
+    ) -> SharedReservation:
+        """Private coordinator handoff, only after its exact physical hold is ready.
+
+        The caller owns that physical proof. This method cannot infer it from a
+        state, PID, timeout or client assertion. Original view and current process
+        identity are distinct: closing an old view never grants a new effect.
+        """
+        operation_id = canonical_id(operation_id)
+        envelope_integer(expected_revision, minimum=2)
+        if expected_revision > 2**63 - 3:
+            raise ValueError("Physical retirement revisions must leave room for release")
+        binding = self.current_binding()
+        if type(original_binding) is not ResourceBinding:
+            raise ValueError("Physical retirement requires the retained original binding")
+        if (
+            original_binding.instance_id,
+            original_binding.process_generation,
+            original_binding.process_pid,
+            original_binding.process_started_at,
+            original_binding.store_id,
+            original_binding.target_identity_sha256,
+        ) != (
+            binding.instance_id,
+            binding.process_generation,
+            binding.process_pid,
+            binding.process_started_at,
+            binding.store_id,
+            binding.target_identity_sha256,
+        ):
+            raise SharedAdmissionDenied("Physical retirement belongs to another process")
+        with self._runtime() as connection:
+            self._lock(connection, _OPERATION_FAMILY, (operation_id,))
+            row = self._query(
+                connection, "SELECT * FROM {operations} WHERE operation_id=%s", (operation_id,)
+            ).fetchone()
+            if row is None:
+                raise SharedAdmissionDenied("Resource operation is unavailable")
+            self._check_owner(row, binding)
+            if row["binding_sha256"] != binding_digest(original_binding):
+                raise SharedAdmissionDenied("Physical retirement has a different original view")
+            if (
+                not row["metadata_required"]
+                or row["cost_sha256"] is None
+                or row["membership_sha256"] is None
+            ):
+                raise SharedAdmissionDenied("Physical retirement requires a managed operation")
+            marker = row["closure_witness_revision"]
+            if marker is not None:
+                if marker != expected_revision + 1 or row["state"] not in {"releasing", "released"}:
+                    raise SharedRevisionConflict("Physical retirement revision changed")
+                receipt = _receipt(row)
+            else:
+                if row["revision"] != expected_revision or row["state"] not in {
+                    "active",
+                    "uncertain",
+                }:
+                    raise SharedRevisionConflict("Physical retirement state or revision changed")
+                updated = self._query(
+                    connection,
+                    """UPDATE {operations} SET state='releasing',revision=revision+1,
+                        closure_witness_revision=revision+1
+                        WHERE operation_id=%s AND revision=%s RETURNING *""",
+                    (operation_id, expected_revision),
+                ).fetchone()
+                if updated is None:
+                    raise SharedRevisionConflict("Physical retirement revision changed")
+                receipt = _receipt(updated)
+            self._check_owner(row, self.current_binding())
+        try:
+            self._check_owner(row, self.current_binding())
+        except SharedAdmissionDenied:
+            raise SharedCommitUncertain(
+                "Physical retirement commit requires reconciliation"
+            ) from None
+        return receipt
+
     def admin_abort_preparing(
         self,
         operation_id: str,
@@ -716,16 +817,56 @@ class ResourceAdmissionRepository:
         principal_id: str,
         expected_binding: ResourceBinding | None = None,
     ) -> SharedAbortReceipt:
-        """CAS-fence an unstarted mapped effect, with immutable owner-written audit.
+        receipt = self._release_for_admin(
+            operation_id,
+            action_id=action_id,
+            expected_revision=expected_revision,
+            principal_id=principal_id,
+            expected_binding=expected_binding,
+            action=_ReleaseAction.ABORT_PREPARING,
+        )
+        if receipt.revision != 2:
+            raise SchemaMismatch("Administrative abort outcome is inconsistent")
+        return SharedAbortReceipt(receipt.action_id, receipt.operation_id)
 
-        This never infers process death or releases metadata. The application
-        caller must own its already-enrolled custodian control session; changing
-        SQL role does not change physical storage admission or add a session.
-        """
+    def admin_release_witnessed(
+        self,
+        operation_id: str,
+        *,
+        action_id: str,
+        expected_revision: int,
+        principal_id: str,
+        expected_binding: ResourceBinding | None = None,
+    ) -> SharedReleaseReceipt:
+        return self._release_for_admin(
+            operation_id,
+            action_id=action_id,
+            expected_revision=expected_revision,
+            principal_id=principal_id,
+            expected_binding=expected_binding,
+            action=_ReleaseAction.WITNESSED,
+        )
+
+    def _release_for_admin(
+        self,
+        operation_id: str,
+        *,
+        action_id: str,
+        expected_revision: int,
+        principal_id: str,
+        expected_binding: ResourceBinding | None,
+        action: _ReleaseAction,
+    ) -> SharedReleaseReceipt:
+        """One closed-policy transaction engine; no request-selected SQL/action."""
+        if type(action) is not _ReleaseAction:
+            raise ValueError("Unknown administrative release policy")
         operation_id, action_id = canonical_id(operation_id), canonical_id(action_id)
         envelope_integer(expected_revision)
-        if expected_revision != 1:
+        witnessed = action is _ReleaseAction.WITNESSED
+        if not witnessed and expected_revision != 1:
             raise ValueError("Administrative abort supports preparing revision one")
+        if witnessed and not 3 <= expected_revision <= 2**63 - 2:
+            raise ValueError("Witness release requires a bounded closure revision")
         self._check_provisioner(principal_id)
         binding = self.current_binding()
         if expected_binding is not None and (
@@ -733,13 +874,36 @@ class ResourceAdmissionRepository:
         ):
             raise SharedAdmissionDenied("Custodian binding lacks its funded coverage")
         self._require_usage_basis()
+        table = "witness_releases" if witnessed else "admin_actions"
+        other_table = "admin_actions" if witnessed else "witness_releases"
+        source_state = "releasing" if witnessed else "preparing"
+        next_revision = expected_revision + 1
         write_started = False
-        receipt: SharedAbortReceipt
+        receipt: SharedReleaseReceipt
         try:
             with self._owner(principal_id, require_usage=True) as connection:
+
+                def audit_query(key: str, statement: str, parameters: Sequence[object]):
+                    return connection.execute(
+                        sql.SQL(statement).format(
+                            actions=sql.Identifier(self.target.schema, _TABLES[key])
+                        ),
+                        parameters,
+                    )
+
                 self._lock(connection, _ACTION_FAMILY, (action_id,))
-                existing = self._query(
-                    connection, "SELECT * FROM {admin_actions} WHERE action_id=%s", (action_id,)
+                # Action UUIDs are global across both fixed administrative kinds.
+                if (
+                    audit_query(
+                        other_table,
+                        "SELECT action_id FROM {actions} WHERE action_id=%s",
+                        (action_id,),
+                    ).fetchone()
+                    is not None
+                ):
+                    raise SharedRevisionConflict("Administrative action payload changed")
+                existing = audit_query(
+                    table, "SELECT * FROM {actions} WHERE action_id=%s", (action_id,)
                 ).fetchone()
                 if existing is not None and (
                     str(existing["operation_id"]) != operation_id
@@ -754,29 +918,32 @@ class ResourceAdmissionRepository:
                 if row is None:
                     raise SharedAdmissionDenied("Resource operation is unavailable")
                 if existing is not None:
-                    if row["state"] != "released" or row["revision"] != 2:
+                    if row["state"] != "released" or row["revision"] != next_revision:
                         raise SchemaMismatch("Administrative action outcome is inconsistent")
-                    receipt = SharedAbortReceipt(action_id, operation_id)
+                    receipt = SharedReleaseReceipt(action_id, operation_id, next_revision)
                 else:
-                    if row["state"] != "preparing" or row["revision"] != expected_revision:
-                        raise SharedRevisionConflict(
-                            "Resource preparation state or revision changed"
-                        )
+                    if witnessed and (
+                        row["closure_witness_revision"] is None
+                        or row["state"] not in {"releasing", "released"}
+                    ):
+                        raise SharedClosureUnproven("Resource physical closure is unproven")
+                    if row["state"] != source_state or row["revision"] != expected_revision:
+                        raise SharedRevisionConflict("Resource release state or revision changed")
+                    if witnessed and row["closure_witness_revision"] != expected_revision:
+                        raise SharedClosureUnproven("Resource physical closure revision changed")
                     if (
                         not row["metadata_required"]
                         or row["cost_sha256"] is None
                         or row["membership_sha256"] is None
                     ):
-                        raise SharedAdmissionDenied(
-                            "Resource preparation lacks the managed start contract"
-                        )
+                        raise SharedAdmissionDenied("Resource operation lacks the managed contract")
                     allocations = self._query(
                         connection,
                         "SELECT * FROM {allocations} WHERE operation_id=%s ORDER BY domain_id",
                         (operation_id,),
                     ).fetchall()
                     if not allocations:
-                        raise SchemaMismatch("Resource operation has no allocations")
+                        raise self._counter_error("Resource operation has no allocations")
                     self._lock(
                         connection,
                         _DOMAIN_FAMILY,
@@ -791,7 +958,7 @@ class ResourceAdmissionRepository:
                         envelope_integer(amount)
                         used = self._used(connection, domain_id)
                         if used < amount:
-                            raise SchemaMismatch("Shared resource counter underflow")
+                            raise self._counter_error("Shared resource counter underflow")
                         releases.append((domain_id, used, amount))
                         snapshot.append(
                             dict(
@@ -805,31 +972,38 @@ class ResourceAdmissionRepository:
                             )
                         )
                     if self.current_binding() != binding:
-                        raise SharedAdmissionDenied("Custodian resource view changed before abort")
+                        raise SharedAdmissionDenied(
+                            "Custodian resource view changed before release"
+                        )
                     write_started = True
                     for domain_id, used, amount in releases:
                         self._change_used(connection, domain_id, used, used - amount)
                     updated = self._query(
                         connection,
-                        "UPDATE {operations} SET state='released',revision=2 WHERE operation_id=%s AND state='preparing' AND revision=%s RETURNING *",
-                        (operation_id, expected_revision),
+                        """UPDATE {operations} SET state='released',revision=revision+1
+                            WHERE operation_id=%s AND state=%s AND revision=%s RETURNING *""",
+                        (operation_id, source_state, expected_revision),
                     ).fetchone()
                     if updated is None:
-                        raise SharedRevisionConflict("Resource preparation revision changed")
-                    self._query(
-                        connection,
-                        """INSERT INTO {admin_actions}
-                        (action_id,operation_id,actor_principal_id,custodian_binding_json,from_state,from_revision,to_state,to_revision,allocations_json)
-                        VALUES (%s,%s,%s,%s::jsonb,'preparing',1,'released',2,%s::jsonb)""",
+                        raise SharedRevisionConflict("Resource release revision changed")
+                    audit_query(
+                        table,
+                        """INSERT INTO {actions}
+                            (action_id,operation_id,actor_principal_id,custodian_binding_json,
+                             from_state,from_revision,to_state,to_revision,allocations_json)
+                            VALUES (%s,%s,%s,%s::jsonb,%s,%s,'released',%s,%s::jsonb)""",
                         (
                             action_id,
                             operation_id,
                             principal_id,
                             _json(asdict(binding)),
+                            source_state,
+                            expected_revision,
+                            next_revision,
                             _json(snapshot),
                         ),
                     )
-                    receipt = SharedAbortReceipt(action_id, operation_id)
+                    receipt = SharedReleaseReceipt(action_id, operation_id, next_revision)
                 if self.current_binding() != binding:
                     raise SharedAdmissionDenied("Custodian resource view changed before commit")
         except SharedCommitUncertain:
@@ -1154,6 +1328,8 @@ class ResourceAdmissionRepository:
             if row is None:
                 raise SharedAdmissionDenied("Resource operation is unavailable")
             self._check_owner(row, binding)
+            if row["closure_witness_revision"] is not None and state == "uncertain":
+                raise SharedRevisionConflict("Physically closed resources cannot become uncertain")
             if row["revision"] == expected_revision + 1 and row["state"] == state:
                 return _receipt(row)  # Exact CAS acknowledgement retry, no new transition.
             if row["revision"] != expected_revision or state not in _TRANSITIONS[row["state"]]:
@@ -1211,7 +1387,7 @@ class ResourceAdmissionRepository:
                     domain_id = str(value["domain_id"])
                     used = self._used(connection, domain_id)
                     if used < value["amount"]:
-                        raise SchemaMismatch("Shared resource counter underflow")
+                        raise self._counter_error("Shared resource counter underflow")
                     self._change_used(connection, domain_id, used, used - value["amount"])
             updated = self._query(
                 connection,

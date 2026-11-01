@@ -14,6 +14,7 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
 from cli_agent_orchestrator.clients.admission_repository import (
     SharedAdmissionDenied,
     SharedCapacityUnavailable,
+    SharedClosureUnproven,
     SharedCommitUncertain,
     SharedRevisionConflict,
 )
@@ -34,6 +35,8 @@ from cli_agent_orchestrator.models.admission_control import (
     SharedDebtControlResult,
     SharedPreparationAbortRequest,
     SharedPreparationAbortResult,
+    SharedWitnessReleaseRequest,
+    SharedWitnessReleaseResult,
 )
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
@@ -99,6 +102,7 @@ def control_error(error: Exception) -> HTTPException:
 _EXPECTED = (
     SharedAdmissionDenied,
     SharedCapacityUnavailable,
+    SharedClosureUnproven,
     SharedCommitUncertain,
     SharedRevisionConflict,
     SharedDeliveryUnavailable,
@@ -173,6 +177,31 @@ async def abort_preparing(
         raise control_error(error) from None
     response.headers["Cache-Control"] = "no-store"
     return SharedPreparationAbortResult(**asdict(receipt))
+
+
+@router.post("/shared/release-witnessed", response_model=SharedWitnessReleaseResult)
+async def release_witnessed(
+    body: SharedWitnessReleaseRequest,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+):
+    value = runtime(request)
+    try:
+        receipt = await value.release_witnessed(
+            principal=principal,
+            action_id=body.action_id,
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        )
+    except SharedClosureUnproven:
+        raise failure(409, "resource_closure_unproven") from None
+    except SharedRevisionConflict:
+        raise failure(409, "resource_operation_conflict") from None
+    except _EXPECTED as error:
+        raise control_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return SharedWitnessReleaseResult(**asdict(receipt))
 
 
 @router.get("/resource-envelope", response_model=RegisteredResourceEnvelope)

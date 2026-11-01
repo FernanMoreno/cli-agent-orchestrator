@@ -247,3 +247,20 @@ class SharedAbortReceipt:
         object.__setattr__(self, "operation_id", canonical_id(self.operation_id))
         if type(self.revision) is not int or self.revision != 2 or self.state != "released":
             raise ValueError("Invalid administrative abort receipt")
+
+
+@dataclass(frozen=True)
+class SharedReleaseReceipt:
+    """Audited resource release; never completion or permission to replay Work."""
+
+    action_id: str
+    operation_id: str
+    revision: int
+    state: Literal["released"] = "released"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "action_id", canonical_id(self.action_id))
+        object.__setattr__(self, "operation_id", canonical_id(self.operation_id))
+        envelope_integer(self.revision, minimum=2)
+        if type(self.state) is not str or self.state != "released":
+            raise ValueError("Invalid administrative release receipt")
