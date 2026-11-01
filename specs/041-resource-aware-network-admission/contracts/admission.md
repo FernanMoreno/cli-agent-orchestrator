@@ -146,3 +146,10 @@ T014.C1 (componente validado): generación sellada impide nuevos productores con
 
 
 El sello es un hecho negativo append-only de servidores cooperantes confiables, no una firma criptográfica ni RLS: el permiso SQL INSERT puede escribir la fila y la capacidad opaca se valida en el servidor Python. No concede autoridad de cierre físico ni devolución. Solo Bridge opta hoy por ciclo terminal; pérdida del control o coordinador ausente no producen sello, y los créditos permanecen. El último SQL usa el permiso de control original antes de cerrar owner/participantes. [Validación](../validation-t014-generation-seal.json).
+
+
+## T014.C2a — observación de salida, sin autoridad de devolución
+
+El supervisor común posee su Popen y descriptor kernel; el binding completo llega por canal heredado con SCM_CREDENTIALS comprobado y esquema JSON cerrado. El padre fija realm/config, nacimiento/boot/ticks/pidns/UID/vista antes del ACK. waitid(P_PIDFD) aporta estado real estructurado y el mismo descriptor debe notificar salida; ECHILD, timeout, PID ausente, canal cerrado o sello C1 no bastan. Las señales usan pidfd; los FD inesperados SCM_RIGHTS se cierran incluso en rechazo/truncación y no se heredan por exec. Excepción de arranque con handle retenido y SIGTERM/SIGHUP/SIGINT conservan unión física antes de propagar el primer error.
+
+ProcessExitObservation solo vive en memoria opaca/no transferible; no es un DTO autorizador ni persistencia alternativa a PostgreSQL. Los UUID del hijo son descriptivos hasta contrastar binding original/sello y cierre completo mediante custodio propio financiado y auditado. Un descendiente puede seguir vivo después del testigo del líder. Sin devolución, replay, endpoint, migración ni adopción de despliegues externos. [Validación](../validation-t014-process-exit.json).

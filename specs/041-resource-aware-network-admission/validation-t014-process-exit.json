@@ -1,0 +1,250 @@
+{
+  "schema": "caos.spec041.t014-process-exit.v1",
+  "date": "2026-11-01",
+  "base_head": "f716855d7ca5b9156afc0cca99d4cc26f9d1073e",
+  "scope": "T014.C2a generic owned-child supervisor, kernel-authenticated binding and opt-in Bridge deployment adapter; no metadata credit return",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-process-exit-final",
+    "selected_test_files": 69,
+    "passed": 973,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous818cases_preserved": true,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "seconds": 975.437,
+    "available_mib": 13082,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "965de6dbfe9cc6c5790951590181b8094749e1ae59b00f07507916dea304780d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "ecaf8273fa64bd473ccb2baf731ea2ba30445b30c27fcbc228b942e8770d6113"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "e9d3aa09205f147ffc64835285185674dd11ee373a7edf6a52911c9e27be6d5a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge_supervisor.py",
+        "sha256": "60b4582f5300f068c09c51d5424fd85f45966fe61700c030c4bb07a9eeb6f656"
+      },
+      {
+        "path": "test/services/test_resource_process_supervisor.py",
+        "sha256": "8c9ba78fa52a4a031eb16f9991642e6a5b3b98c30213577b3424868d26abdbb7"
+      },
+      {
+        "path": "test/runtime_channel/test_bridge_supervisor.py",
+        "sha256": "9bc9544b6eae74746a41bea482684a6606aaf7ad05f6fa9328c071f3752a1cd9"
+      }
+    ],
+    "archive_sha256": "a46f914b4d0c962a5f8fe8550d91fd7c48bfe138568c3b82411140fedb4c4f94",
+    "production_archive_match": 4,
+    "owned_python_archive_match": 6,
+    "foreign_graphify_files_preserved": 12
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 6
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 6
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 4
+    }
+  ],
+  "architecture": {
+    "files": 450,
+    "dependencies": 2016,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "postgres_recovery": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "image": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+    "service_recreated": false,
+    "same_container_started": true,
+    "only_lost_disposable_admin_secret_replaced": true,
+    "operator_credentials_changed": false,
+    "claude_login_changed": false,
+    "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "other_clients": 0,
+    "test_databases": 0,
+    "metadata_restored": true
+  },
+  "graphify": {
+    "files": 8,
+    "nodes": 292,
+    "edges": 950,
+    "dangling": 117,
+    "partial": true,
+    "private": true
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-owned-resource-process-exit",
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "9acf3b35c90d4b16b000a2f12ba39c43",
+      "4cad6c9d87654c6bae6d490e2a758274",
+      "d95c422f9d514ebba2515dff9faab9db"
+    ],
+    "scope": "Partial model review; peer final review did not read tests. Root independently reviewed all owned code/tests and executable evidence. Final signal finding fixed after the last peer review and verified by root.",
+    "rejected_finding": "ResourceBootstrap and repository constructors own no SQL connection, allocate no generation credit and expose no close method. Publication failure needs no invented bootstrap.close; source and a connect-forbidden/missing-secret test verify this.",
+    "root_final_diff_review": true
+  },
+  "implemented": [
+    "Generic single PID/Thread-object owner of its own Popen and pinned kernel process, with no arbitrary PID adoption or agent inventory scan.",
+    "Private inherited SOCK_SEQPACKET handshake validates SCM_CREDENTIALS, closed JSON schema, exact configured store/target, boot/start-ticks/pidns/UID/birth/resource view and ACK before resource-runtime admission.",
+    "waitid(P_PIDFD) supplies the actual exited/signaled/core-dumped state; ECHILD never synthesizes success. Signals use the pinned handle, never a reusable numeric PID.",
+    "Received SCM_RIGHTS descriptors close before any rejection, including truncated packets, with MSG_CMSG_CLOEXEC at receive.",
+    "Unexpected post-Popen exceptions preserve the first error and retain an exact joinable owner; the Bridge adapter consumes that exceptional handoff. Copy/pickle/fork/foreign threads do not transfer ownership.",
+    "SIGTERM/SIGHUP/SIGINT enter the adapter cleanup/join path, handlers are restored afterward and further shutdown signals do not interrupt that physical join.",
+    "Bridge publishes from its exact scoped bootstrap before runtime.start; without the inherited FD its existing lifecycle remains. The optional python module launcher has fixed argv and a canonical parent target."
+  ],
+  "evidence_boundaries": [
+    "Final973distinct cases only, all818previous case identities included; previous attempts are history and are not summed.",
+    "Actual own Python children/kernel credentials/pidfds/wait status and actual PostgreSQL, plus all runtime-channel regression modules; no new provider model, sandbox or physical multi-node acceptance.",
+    "An isolated subreaper test positively reaps the leader while its descendant is still alive, then reaps its own descendant in finally; the observation never implies generation closure or credit return.",
+    "Signal unit scenarios invoke the actually registered callback and check joins/restoration; they do not constitute external SIGKILL/crash recovery acceptance.",
+    "The hook precedes resource-runtime admission, not all startup effects: original database initialization/stale-row/backend restoration occurs earlier.",
+    "Child instance/generation fields are descriptive until a future funded custodian matches the complete original binding and terminal seal. Python opaque values are trusted-code boundaries, not cryptographic authorization or SQL RLS.",
+    "Same disposable PostgreSQL container/image verified and reused after lost temporary metadata and secret mount; only the lost test secret was regenerated. Operator/provider credentials and Claude login were not modified. An empty repair-file guard and stale Docker Desktop bind registration were corrected before readiness acceptance; no container-service replacement.",
+    "Private scoped AST has117external/dangling references across8files; it is partial structural guidance, verified against source, not a full graph or acceptance proof."
+  ],
+  "history": [
+    {
+      "phase": "red",
+      "cases": 15,
+      "failed": 15,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "core-green",
+      "cases": 15,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "lifecycle-red",
+      "cases": 21,
+      "failed": 3,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "review-red",
+      "cases": 2,
+      "failed": 2,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "lifecycle-green-adapter-red",
+      "cases": 27,
+      "failed": 4,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "integrated-green",
+      "cases": 60,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 0,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "adapter-handoff-red",
+      "cases": 37,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "scope": "OS-owned-process/offline tests only; no SQL/provider acceptance"
+    },
+    {
+      "phase": "t014-process-exit-signals-red",
+      "exit_code": 2,
+      "cases": {
+        "total": 3,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "note": "Two genuine missing SIGTERM/SIGHUP handler failures; the SIGINT fixture invoked the previous default handler and interrupted pytest. Strengthened the fixture to require a new handler before invocation; the no-SQL bootstrap case was not executed in this interrupted phase. All are included in the final973."
+    }
+  ],
+  "remaining": [
+    "Durable whole-generation physical closure and independently funded audited metadata credit custodian remain required for T014. One process exit is insufficient.",
+    "The launcher is opt-in; existing external pod/operator deployments are not automatically adopted. Lost Popen acknowledgement or supervisor SIGKILL gives no exit witness.",
+    "Startup handshake default30s is conservative; generic receive_binding exposes an explicit timeout. A changed resource view rejects the binding. Cleanup joins without a forced discard deadline.",
+    "Unknown native cleanup, provider quotas, elastic placement, physical M1/M2/M3, SDK/UI and global gates remain open; no historical RECONCILE_REQUIRED jobs were closed/replayed."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

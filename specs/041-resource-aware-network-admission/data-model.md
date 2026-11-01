@@ -96,3 +96,8 @@ DeliveryAdmission conserva _physical_closes con referencias fuertes a tokens exa
 ## T014.C1 — hecho de sello terminal (esquema7)
 
 _cao_resource_generation_seals usa PK(instance_id,process_generation), seal_id único/estable por realm+generación, PID/nacimiento y digest del binding original, reason=terminal y created_at de auditoría. El runtime solo SELECT+INSERT; prohíbe UPDATE/DELETE/privilegios peligrosos y PUBLIC/ACL de columnas, incluso después de grants genéricos. AUTHORITY_TABLES conserva el tuple de versiones históricas; GENERATION_SEAL_TABLES añade el objeto únicamente a v7 y a comprobaciones actuales de dueño/manifest. No cambia créditos, allocations, usage ni estados/revisiones previos. No es testigo de cierre y no se expira por tiempo. La capacidad Python opaca es memoria de autoridad del proceso, no persistencia alternativa a PostgreSQL. [Validación](validation-t014-generation-seal.json).
+
+
+## T014.C2a — ProcessExitObservation transitoria
+
+Binding original, boot_id, start_time_ticks, pid_namespace, exit_kind (exited/signaled/core_dumped) y exit_status derivados del wait kernel propio; returncode es una proyección, nunca el cero sintetizado de Popen. Capacidad opaca con PID emisor/factory privada, no copiable ni serializable y sin validez tras fork. El supervisor mantiene Popen/pidfd/canal y Thread exacto; no son tablas ni autoridad de devolución. Esquema PostgreSQL permanece7 sin cambios. El futuro hecho durable de cierre necesita más que este proceso y su sello. [Validación](validation-t014-process-exit.json).

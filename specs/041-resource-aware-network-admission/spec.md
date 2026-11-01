@@ -6,7 +6,7 @@
 
 **Created**: 2026-10-30
 
-**Status**: Implementation in progress — T001–T011 y T017 local validados. T018 integra ownership PostgreSQL/Inbox/Work/Bridge, separa auditpool4 del techo global y valida cierres propios/PID (418pruebas). Faltan crédito protegido/control/bootstrap/otras entradas SQL y presupuestos físicos combinados. Diagnóstico local no equivale a US6 de red. Aceptación físicaM1/T019 y M2/M3/SDK/UI pendientes.
+**Status**: Implementation in progress — T001–T012 y T017 validados por componentes. T013/T014 parcialmente integrados; C1 sella productores y C2a verifica la salida del hijo propio, sin retirar créditos. Quedan cuotas, recuperación completa, distribución T015/T016, presupuesto físico T018, aceptación M1/M2/M3 T019/T020, gates T021 y configuración SDK/UI T022/T023.
 
 **Input**: Sustituir las cuatro entregas simultáneas fijas por admisión según recursos, presión de PostgreSQL y capacidad de cada nodo, conservando el orden por receptor. Cada máquina necesita límites; la red debe sumar nodos y repartir trabajo sin un número global fijo de agentes.
 
@@ -230,3 +230,10 @@ El retiro futuro de créditos requiere primero impedir productores posteriores d
 Serializar sello contra adquisiciones nuevas y primera activación mediante el lock de membresía/generación. Replays exactos de recibos ya aceptados siguen siendo lecturas del resultado, no permisos para otro efecto. Lecturas y cierre de operaciones, testigo original, aborto, devolución auditada y revocación siguen posibles. Rechazar nueva cobertura/activación, reserva raw o mapeada, crédito o membresía activa de la generación sellada. Otras generaciones quedan intactas.
 
 Persistencia aditiva v7 con tablas/checksums1–6 conservados, sello append-only y ACL efectiva SELECT+INSERT sin UPDATE/DELETE ni privilegios peligrosos/PUBLIC. Capacidad de sello opaca ligada a la composición/binding; no recibirla por HTTP/MCP ni fabricar principal admin para un hecho de proceso. SQL del sello conserva financiamiento normal hasta cierre real; fallo o acuse perdido no puede omitir el drenaje ni liberar créditos. El sello no implementa el testigo final de generación ni su custodio/decremento.
+
+
+## T014.C2a — observación local de salida del proceso (componente validado; generación pendiente)
+
+Un supervisor local de confianza conservará el handle de su propio hijo y verificará su binding por un canal heredado con identidad del emisor comprobada por el kernel. Solo la recogida del hijo propio y notificación positiva de su descriptor fijado producirán una observación de salida para el binding original. Ausencia de PID, error, descriptor cerrado, timeout o datos de otro proceso no constituyen prueba. La referencia no se transfiere por copia, serialización ni fork. No se envían señales ni se recorre el inventario de agentes.
+
+La observación acredita únicamente la salida del proceso fijado: no prueba cierre de descendientes, contenedores, sesiones PostgreSQL del servidor ni toda la generación. No es autorización de devolución de créditos. La integración con el despliegue y el custodio financiado y auditado sigue siendo requisito de T014. El contrato es común a proveedores; Linux sin soporte pidfd conserva desconocido.

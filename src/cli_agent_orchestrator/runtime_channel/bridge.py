@@ -948,6 +948,20 @@ def restore_incarnation(runtime_id, store, backend):
     return uuid.uuid4().hex
 
 
+def _resource_process_bootstrap(runtime_id: str):
+    """Publish only to an explicitly inherited supervisor, before admission."""
+    from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
+    from cli_agent_orchestrator.services.resource_process_supervisor import (
+        BINDING_FD_ENV,
+        publish_resource_binding,
+    )
+
+    bootstrap = scoped_process_bootstrap("bridge-resource/" + runtime_id, terminal_generation=True)
+    if BINDING_FD_ENV in os.environ:
+        publish_resource_binding(bootstrap.shared_repository().current_binding())
+    return bootstrap
+
+
 async def _amain() -> None:
     server_url = os.environ.get("CAO_BRIDGE_SERVER_URL", "").strip()
     runtime_id = os.environ.get("CAO_BRIDGE_RUNTIME_ID", "").strip()
@@ -990,7 +1004,6 @@ async def _amain() -> None:
         incarnation_id=incarnation,
     )
     from cli_agent_orchestrator.runtime_channel.admission import BridgeAdmissionParticipant
-    from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
     from cli_agent_orchestrator.services.inbox_admission_runtime import (
         AdmissionRuntimeUnavailable,
         runtime_from_environment,
@@ -1007,9 +1020,7 @@ async def _amain() -> None:
     try:
         runtime = runtime_from_environment(
             BridgeAdmissionParticipant(bridge),
-            bootstrap_factory=lambda: scoped_process_bootstrap(
-                "bridge-resource/" + runtime_id, terminal_generation=True
-            ),
+            bootstrap_factory=lambda: _resource_process_bootstrap(runtime_id),
         )
         if runtime is not None:
             from cli_agent_orchestrator.api.admission_server import AdmissionControlServer
