@@ -1,0 +1,167 @@
+{
+  "schema": "caos.spec041.t014-preparing-abort.v1",
+  "date": "2026-11-01",
+  "base_head": "f4989714d6c8ed30a464315be042dd0a0850d7cd",
+  "scope": "Preparing-only administrative CAS abort and funded HTTP debt discovery",
+  "task_complete": false,
+  "global_acceptance": false,
+  "phases": [
+    {
+      "phase": "t014-abort-final-regression",
+      "cases": 314,
+      "passed": 313,
+      "failure": 1,
+      "error": 0,
+      "skipped": 0,
+      "seconds": 239.524,
+      "available_mib": 8669,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "source_archive_sha256": "67bbec8b9ec1b50a1bcef0c742af26ccbed9f5557c442fd5ddcd3822f668d1ae"
+    },
+    {
+      "phase": "t014-abort-schema-final",
+      "cases": 18,
+      "passed": 18,
+      "failure": 0,
+      "error": 0,
+      "skipped": 0,
+      "seconds": 44.742,
+      "available_mib": 8634,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true,
+      "source_archive_sha256": "304b1301d5c42273f6a241015a188fdd8102a5a62c7d4dc75d04f0679861050b"
+    }
+  ],
+  "final_unique_passed": 314,
+  "final_failed": 0,
+  "final_errors": 0,
+  "final_skipped": 0,
+  "production_archive_matches": 8,
+  "owned_python": 15,
+  "unchanged_test_ast_except_one_strengthened_migration_assertion": true,
+  "foreign_graphify_preserved": 12,
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+      "sha256": "e2c9bab10ea451bbcac572700b7e4ce283e4be947faba5e85811fa6f7c3daa7f"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+      "sha256": "cdb00902d601b95ba8034973c783d2640f4eb9c13645d9e6bbccc2f52ca0f452"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+      "sha256": "762d3a674964f9595dc1584a36cbceb5c165e983752d13ea6b4abdb723727c77"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+      "sha256": "bddfa5b4a4f1490c70b5326ddf9eb27269ba21496acb56c7bde0fe7220463155"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_control.py",
+      "sha256": "5362ee41bee83561c17be1e4a90b8e435f75f825dbf9fd1210e113900f03fd58"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_domains.py",
+      "sha256": "6f8813cc4bb1c38869b59e11fb9bd77a8e8f53eeadc7ebd837f4e003e1d010e4"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_domains.py",
+      "sha256": "2061bf02b4b1ea553ba7a6038132fe6e2fb3704dc9bcd3e0dc8bbba6f31776f5"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "sha256": "bd12179c6416f7404c4ba33b75021c62fb6d1708fdae17f9f88537d37bd70be9"
+    },
+    {
+      "path": "test/postgres/test_admission_admin_abort.py",
+      "sha256": "17a838d6cd1af74916eb0685ddaabfe05b76dc399bd4156ba927dd7a76c2920c"
+    },
+    {
+      "path": "test/postgres/test_admission_admin_abort_runtime.py",
+      "sha256": "9320dabc07fdb29f6b01cd45d3df16982329d2c55d6c04ef9307f3f57d8cdba2"
+    },
+    {
+      "path": "test/services/test_admission_admin_abort_authority.py",
+      "sha256": "1c427de70001fa413c224d370e113901c5db367028d3774791b9f8681001d21b"
+    },
+    {
+      "path": "test/api/test_admission_admin_abort.py",
+      "sha256": "c3557ebff5adacc8d7195390f31964761c6e7ecdc0e003643f4da68b1ae63846"
+    },
+    {
+      "path": "test/api/test_admission_debt_control.py",
+      "sha256": "be0133a3692f6b6346298ccb19cb3002694864c5335ea1357192b6bdf64aa3bf"
+    },
+    {
+      "path": "test/api/test_scope_coverage.py",
+      "sha256": "8bef61b6ebea3e553cfd16610a79ad19c745cd73efd0d44155cbeec1e29e0efc"
+    },
+    {
+      "path": "test/postgres/test_admission_metadata_credits.py",
+      "sha256": "3e9702cf7881c39b464cdca3bb3e0339f7aab622d5e4df6f0c5c9d7c92efd8e4"
+    }
+  ],
+  "checks": {
+    "format_python_files": 15,
+    "mypy_production_files": 8,
+    "architecture": {
+      "files": 446,
+      "dependencies": 2000,
+      "kept": 5,
+      "broken": 0
+    },
+    "review_job": "d3f7600693e840f08913b722a6924842",
+    "review": "completed source-only, no blockers; role/funding blocker withdrawn; transport residual reproduced and narrow fix tested",
+    "root_composition_review": "PASS WITH RISKS: preparing-only recovery; active/process/metadata witnesses not implemented",
+    "knowledge_decision": "Persist durable CAS pre-effect fence, funded identity and role vs session distinction; no generated graph facts"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 10,
+    "nodes": 404,
+    "edges": 1201,
+    "dangling": 97,
+    "scope": "partial AST after audited preparing abort, exact funded binding and transport classification; call paths checked against source"
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-pre-effect-custody",
+    "pages": 3,
+    "strict_lint_issues": 0
+  },
+  "reproductions": [
+    {
+      "phase": "t014-recovery-binding-red",
+      "failure": 4,
+      "boundary": "Different funded view/repository reached SQL before expected-binding fence"
+    },
+    {
+      "phase": "t014-abort-close-error-red",
+      "failure": 2,
+      "boundary": "Postcommit InterfaceError and storage-close denial lost typed uncertain action identity"
+    }
+  ],
+  "intermediate_evidence": {
+    "t014-abort-runtime-green": "100PASS, prior source",
+    "t014-abort-binding-fault-green": "54PASS, before final transport classification",
+    "fixture_failures": "Initial DomainRecord/DomainSpec and missing shared fixture imports were harness errors, corrected before genuine native runs; not product RED"
+  },
+  "limitations": [
+    "Real PostgreSQL and HTTP, two logical nodes in one process, controlled telemetry; not physical M2 or model acceptance",
+    "Only mapped metadata-required preparing revision1 can be aborted; active/uncertain/releasing/raw refused",
+    "Metadata charges retained, no PID/TTL/runtime-retired process death inference",
+    "No historical RECONCILE job, Work resend, operator credentials or operator data modified",
+    "v5 additive checksums1-4 preserved; coordinated code/schema deployment, mixed versions fail closed",
+    "Quotas, complete funding, cross-generation recovery, physical M1/M2/M3 and config SDK/UI acceptance remain pending"
+  ]
+}

@@ -231,3 +231,19 @@ class MetadataCoverage:
                 self.binding.process_started_at,
             ):
                 raise ValueError("Metadata coverage belongs to another process")
+
+
+@dataclass(frozen=True)
+class SharedAbortReceipt:
+    """Acknowledged administrative abort, never an execution allowance."""
+
+    action_id: str
+    operation_id: str
+    revision: Literal[2] = 2
+    state: Literal["released"] = "released"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "action_id", canonical_id(self.action_id))
+        object.__setattr__(self, "operation_id", canonical_id(self.operation_id))
+        if type(self.revision) is not int or self.revision != 2 or self.state != "released":
+            raise ValueError("Invalid administrative abort receipt")

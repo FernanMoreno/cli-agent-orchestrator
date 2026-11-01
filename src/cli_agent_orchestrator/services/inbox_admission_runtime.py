@@ -16,6 +16,11 @@ from uuid import uuid4
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.storage_admission import storage_process_current
 from cli_agent_orchestrator.models.admission_control import AdmissionDiagnostics
+from cli_agent_orchestrator.models.admission_domains import (
+    SharedAbortReceipt,
+    SharedDebtCursor,
+    SharedDebtPage,
+)
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
     ResourceEnvelopeRecord,
@@ -23,6 +28,10 @@ from cli_agent_orchestrator.models.resource_envelope import (
 )
 from cli_agent_orchestrator.services.admission_bootstrap import AttestationUpdate, ResourceBootstrap
 from cli_agent_orchestrator.services.admission_diagnostics import diagnostics_response
+from cli_agent_orchestrator.services.admission_domains import (
+    ResourceRecoveryRepository,
+    abort_preparing_for_admin,
+)
 from cli_agent_orchestrator.services.admission_monitor import (
     AdmissionMonitor,
     AuthorityMutationState,
@@ -86,7 +95,10 @@ class InboxAdmissionRuntime:
         clock: Callable[[], float] = time.monotonic,
         drain_timeout_s: float | None = None,
         shared_repository: SharedResourceRepository | None = None,
+        recovery_repository: ResourceRecoveryRepository | None = None,
     ):
+        if recovery_repository is not None and shared_repository is None:
+            raise ValueError("resource recovery requires shared admission composition")
         self._pid = os.getpid()
         self.inbox = inbox
         self.monitor = monitor
@@ -103,6 +115,7 @@ class InboxAdmissionRuntime:
         self._call: _ControlCall[Any] | None = None
         # Explicit trusted composition; absent means no shared admission at all.
         self._shared_repository = shared_repository
+        self._recovery_repository = recovery_repository
         self._shared: SharedDeliveryCoordinator | None = None
         if shared_repository is not None:
             monitor.owner.require_shared_admission()
@@ -318,6 +331,51 @@ class InboxAdmissionRuntime:
 
         await self._execute(principal, activate, mutating=False)
 
+    async def outstanding_resources(
+        self, *, principal: object, after: SharedDebtCursor | None = None, limit: int = 100
+    ) -> SharedDebtPage:
+        self._check_request(principal)
+        repository = self._recovery_repository
+        shared = self._shared
+        owner = self.monitor.owner
+        if repository is None or shared is None or not owner.shared_ready or not shared.accepting:
+            raise AdmissionRuntimeUnavailable("shared resource recovery is unavailable")
+
+        def read() -> SharedDebtPage:
+            if self._closing or not owner.shared_ready or not shared.accepting:
+                raise AdmissionRuntimeUnavailable("shared resource recovery is stopped")
+            return repository.outstanding_resources(
+                after=after, limit=limit, expected_binding=shared.coverage.binding
+            )
+
+        return await self._execute(principal, read, mutating=False)
+
+    async def abort_preparing(
+        self, *, principal: object, action_id: str, operation_id: str, expected_revision: int
+    ) -> SharedAbortReceipt:
+        self._check_request(principal)  # Auth before resolving either repository port.
+        repository = self._recovery_repository
+        shared = self._shared
+        owner = self.monitor.owner
+        if repository is None or shared is None or not owner.shared_ready or not shared.accepting:
+            raise AdmissionRuntimeUnavailable("shared resource recovery is unavailable")
+
+        def abort() -> SharedAbortReceipt:
+            if self._closing or not owner.shared_ready or not shared.accepting:
+                raise AdmissionRuntimeUnavailable("shared resource recovery is stopped")
+            return abort_preparing_for_admin(
+                repository,
+                principal=principal,
+                action_id=action_id,
+                operation_id=operation_id,
+                expected_revision=expected_revision,
+                expected_binding=shared.coverage.binding,
+            )
+
+        receipt = await self._execute(principal, abort, mutating=False)
+        self.inbox.notify_admission_changed()
+        return receipt
+
     def _resolve_drain_timeout(self) -> float:
         timeout = self._drain_timeout
         if timeout is None:
@@ -465,5 +523,9 @@ def runtime_from_environment(
     # abort startup; shared mode must never quietly return a local-only owner.
     repository = bootstrap.shared_repository() if mode == "shared" else None
     return InboxAdmissionRuntime(
-        inbox, monitor=monitor, bootstrap=bootstrap, shared_repository=repository
+        inbox,
+        monitor=monitor,
+        bootstrap=bootstrap,
+        shared_repository=repository,
+        recovery_repository=repository,
     )

@@ -2,7 +2,7 @@
 
 from cli_agent_orchestrator.clients.postgres.migrations import ComponentMigration
 
-# Versions 1 and 2 are applied history; their table tuple is part of the checksum.
+# Applied versions keep frozen table tuples as part of their checksums.
 _BASE_AUTHORITY_TABLES = (
     "_cao_resource_domains",
     "_cao_resource_domain_history",
@@ -13,7 +13,9 @@ METADATA_CREDIT_TABLES = (
     "_cao_resource_metadata_credits",
     "_cao_resource_metadata_credit_history",
 )
-AUTHORITY_TABLES = _BASE_AUTHORITY_TABLES + METADATA_CREDIT_TABLES
+_CREDIT_AUTHORITY_TABLES = _BASE_AUTHORITY_TABLES + METADATA_CREDIT_TABLES
+ADMIN_ACTION_TABLES = ("_cao_resource_admin_actions",)
+AUTHORITY_TABLES = _CREDIT_AUTHORITY_TABLES + ADMIN_ACTION_TABLES
 LEDGER_TABLES = ("_cao_resource_usage", "_cao_resource_operations", "_cao_resource_allocations")
 
 RESOURCE_ADMISSION_MIGRATIONS = (
@@ -141,7 +143,7 @@ RESOURCE_ADMISSION_MIGRATIONS = (
             """CREATE INDEX resource_metadata_credits_process ON _cao_resource_metadata_credits
                 (instance_id,process_generation)""",
         ),
-        tables=AUTHORITY_TABLES + LEDGER_TABLES,
+        tables=_CREDIT_AUTHORITY_TABLES + LEDGER_TABLES,
     ),
     ComponentMigration(
         component="resource_admission",
@@ -150,6 +152,27 @@ RESOURCE_ADMISSION_MIGRATIONS = (
         statements=(
             """ALTER TABLE _cao_resource_operations
                 ADD COLUMN metadata_required BOOLEAN NOT NULL DEFAULT FALSE""",
+        ),
+        tables=_CREDIT_AUTHORITY_TABLES + LEDGER_TABLES,
+    ),
+    ComponentMigration(
+        component="resource_admission",
+        scope="main",
+        version=5,
+        statements=(
+            """CREATE TABLE _cao_resource_admin_actions (
+                action_id UUID PRIMARY KEY,
+                operation_id UUID NOT NULL REFERENCES _cao_resource_operations(operation_id),
+                actor_principal_id TEXT NOT NULL CHECK (actor_principal_id ~ '^principal-[0-9a-f]{64}$'),
+                custodian_binding_json JSONB NOT NULL CHECK (jsonb_typeof(custodian_binding_json)='object'),
+                from_state TEXT NOT NULL CHECK (from_state='preparing'),
+                from_revision BIGINT NOT NULL CHECK (from_revision=1),
+                to_state TEXT NOT NULL CHECK (to_state='released'),
+                to_revision BIGINT NOT NULL CHECK (to_revision=2),
+                allocations_json JSONB NOT NULL CHECK (jsonb_typeof(allocations_json)='array'),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (operation_id,from_revision)
+            )""",
         ),
         tables=AUTHORITY_TABLES + LEDGER_TABLES,
     ),

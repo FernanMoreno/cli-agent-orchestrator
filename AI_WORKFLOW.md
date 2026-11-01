@@ -107,6 +107,8 @@ Prefer test-driven development for new behavior and regressions when practical.
 
 Before freezing source hashes or launching a broad regression, run the commit hook's applicable format/import/lint checks on the changed files. Fix those checks first; a later formatter mutation invalidates the frozen source evidence and must not be relabeled as the tested bytes.
 
+Before freezing a new test module that imports fixtures, trace their non-global fixture dependencies and import or register that closure explicitly. Importing one fixture does not register every fixture in its original module. Inspect helper return types before composing native fixtures (for example DomainSpec versus DomainRecord), and assert the normalized shape before SQL. Fixture-resolution/setup failures are not product RED evidence.
+
 When overriding an attribute already patched by another fixture, make the override a dependent fixture with a nested patch scope. Verify restoration after its consumers before broad regression; teardown from an unrelated monkeypatch fixture can resurrect a stale mock and invalidate downstream checks.
 
 Resource fixtures must assert that each injected observation was accepted. A later sample needs a strictly increasing observation timestamp and a consistent consumer clock; calling an update does not prove it changed capacity. Model delivery counts and physical connection/session quantities separately, and retain explicit insufficient-resource cases when correcting a fixture.

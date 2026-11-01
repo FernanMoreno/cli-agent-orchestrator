@@ -49,11 +49,14 @@ def test_applied_v1_v2_checksums_are_unchanged_and_v3_adds_two_tables():
     schema = importlib.import_module("cli_agent_orchestrator.clients.admission_schema")
     migrations = schema.RESOURCE_ADMISSION_MIGRATIONS
     assert tuple(m.checksum for m in migrations[:2]) == BASE_CHECKSUMS
-    assert [m.version for m in migrations] == [1, 2, 3, 4]
+    assert [m.version for m in migrations] == [1, 2, 3, 4, 5]
     assert set(migrations[2].tables) - set(migrations[0].tables) == set(
         schema.METADATA_CREDIT_TABLES
     )
-    assert len(schema.AUTHORITY_TABLES + schema.LEDGER_TABLES) == 9
+    assert len(migrations[2].tables) == 9
+    assert migrations[3].tables == migrations[2].tables
+    assert set(migrations[4].tables) - set(migrations[3].tables) == set(schema.ADMIN_ACTION_TABLES)
+    assert len(schema.AUTHORITY_TABLES + schema.LEDGER_TABLES) == 10
 
 
 def test_credit_charges_capacity_once_and_blocks_new_admission(shared):

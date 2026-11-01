@@ -2,8 +2,22 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
+from cli_agent_orchestrator.models.admission_domains import (
+    SharedDebtCursor,
+    SharedDebtEntry,
+    canonical_id,
+)
 from cli_agent_orchestrator.models.resource_envelope import EnvelopeClaims
 
 
@@ -226,3 +240,51 @@ class AdmissionDiagnostics(StrictControlModel):
     monitor: MonitorDiagnostics
     postgres: PostgresProbeDiagnostics | None
     resource_probe: LocalResourceProbeDiagnostics | None
+
+
+class SharedActionIdentity(StrictControlModel):
+    action_id: StrictStr
+    operation_id: StrictStr
+
+    @field_validator("action_id", "operation_id")
+    @classmethod
+    def canonical_identifier(cls, value: str) -> str:
+        return canonical_id(value)
+
+
+class SharedPreparationAbortRequest(SharedActionIdentity):
+    version: StrictInt = Field(ge=1, le=1)
+    expected_revision: StrictInt = Field(ge=1, le=1)
+
+
+class SharedPreparationAbortResult(SharedActionIdentity):
+    version: Literal[1] = 1
+    revision: StrictInt = Field(ge=2, le=2)
+    state: Literal["released"]
+
+
+class SharedDebtCursorInput(StrictControlModel):
+    kind: Literal["metadata_credit", "operation"]
+    entry_id: StrictStr
+
+    @field_validator("entry_id")
+    @classmethod
+    def canonical_identifier(cls, value: str) -> str:
+        return canonical_id(value)
+
+    def to_cursor(self) -> SharedDebtCursor:
+        return SharedDebtCursor(self.kind, self.entry_id)
+
+
+class SharedDebtControlRequest(StrictControlModel):
+    version: StrictInt = Field(ge=1, le=1)
+    limit: StrictInt = Field(default=100, ge=1, le=1000)
+    after: SharedDebtCursorInput | None = None
+
+
+class SharedDebtControlResult(StrictControlModel):
+    """One discovery page, never a network snapshot or release permission."""
+
+    version: Literal[1] = 1
+    entries: tuple[SharedDebtEntry, ...]
+    next_cursor: SharedDebtCursor | None

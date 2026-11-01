@@ -1,4 +1,6 @@
-"""Verified administrative enrollment, separate from delivery authorization."""
+"""Verified administrative operations, separate from delivery authorization."""
+
+from typing import Protocol
 
 from cli_agent_orchestrator.clients.admission_repository import (
     ResourceAdmissionRepository,
@@ -8,11 +10,52 @@ from cli_agent_orchestrator.models.admission_domains import (
     DomainRecord,
     DomainSpec,
     MetadataCredit,
+    SharedAbortReceipt,
     SharedDebtCursor,
     SharedDebtPage,
     UsageMismatch,
 )
+from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
 from cli_agent_orchestrator.services.admission_bootstrap import ResourceBootstrap
+
+
+class ResourceRecoveryRepository(Protocol):
+    def admin_abort_preparing(
+        self,
+        operation_id: str,
+        *,
+        action_id: str,
+        expected_revision: int,
+        principal_id: str,
+        expected_binding: ResourceBinding | None = None,
+    ) -> SharedAbortReceipt: ...
+
+    def outstanding_resources(
+        self,
+        *,
+        after: SharedDebtCursor | None = None,
+        limit: int = 100,
+        expected_binding: ResourceBinding | None = None,
+    ) -> SharedDebtPage: ...
+
+
+def abort_preparing_for_admin(
+    repository: ResourceRecoveryRepository,
+    *,
+    principal: object,
+    action_id: str,
+    operation_id: str,
+    expected_revision: int,
+    expected_binding: ResourceBinding | None = None,
+) -> SharedAbortReceipt:
+    actor = ResourceBootstrap._administrator(principal)
+    return repository.admin_abort_preparing(
+        operation_id,
+        action_id=action_id,
+        expected_revision=expected_revision,
+        principal_id=actor,
+        **({"expected_binding": expected_binding} if expected_binding is not None else {}),
+    )
 
 
 class ResourceDomainAuthority:
@@ -85,3 +128,14 @@ class ResourceDomainAuthority:
     ) -> SharedDebtPage:
         ResourceBootstrap._administrator(principal)
         return self._repository.outstanding_resources(after=after, limit=limit)
+
+    def abort_preparing(
+        self, *, principal: object, action_id: str, operation_id: str, expected_revision: int
+    ) -> SharedAbortReceipt:
+        return abort_preparing_for_admin(
+            self._repository,
+            principal=principal,
+            action_id=action_id,
+            operation_id=operation_id,
+            expected_revision=expected_revision,
+        )

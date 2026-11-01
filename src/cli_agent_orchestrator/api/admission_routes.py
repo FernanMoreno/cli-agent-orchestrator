@@ -30,6 +30,10 @@ from cli_agent_orchestrator.models.admission_control import (
     ResourceUpdate,
     SharedAdmissionActivationRequest,
     SharedAdmissionActivationResult,
+    SharedDebtControlRequest,
+    SharedDebtControlResult,
+    SharedPreparationAbortRequest,
+    SharedPreparationAbortResult,
 )
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
@@ -126,6 +130,49 @@ async def activate_shared(
         raise control_error(error) from None
     response.headers["Cache-Control"] = "no-store"
     return SharedAdmissionActivationResult()
+
+
+@router.post("/shared/debt", response_model=SharedDebtControlResult)
+async def shared_debt(
+    body: SharedDebtControlRequest,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+):
+    value = runtime(request)
+    try:
+        page = await value.outstanding_resources(
+            principal=principal,
+            limit=body.limit,
+            after=body.after.to_cursor() if body.after is not None else None,
+        )
+    except _EXPECTED as error:
+        raise control_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return SharedDebtControlResult(entries=page.entries, next_cursor=page.next_cursor)
+
+
+@router.post("/shared/abort-preparing", response_model=SharedPreparationAbortResult)
+async def abort_preparing(
+    body: SharedPreparationAbortRequest,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+):
+    value = runtime(request)
+    try:
+        receipt = await value.abort_preparing(
+            principal=principal,
+            action_id=body.action_id,
+            operation_id=body.operation_id,
+            expected_revision=body.expected_revision,
+        )
+    except SharedRevisionConflict:
+        raise failure(409, "resource_operation_conflict") from None
+    except _EXPECTED as error:
+        raise control_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return SharedPreparationAbortResult(**asdict(receipt))
 
 
 @router.get("/resource-envelope", response_model=RegisteredResourceEnvelope)

@@ -35,3 +35,8 @@ El sampler contrasta mnt_id real de los descriptores con mountinfo, conserva los
 ## Descubrimiento T014 de backend/SPI
 
 ResourceDomainAuthority.outstanding_resources exige Principal JWT admin verificado y devuelve SharedDebtPage inmutable; el caller de composición debe poseer su propia sesión de control financiada. Pasar after=page.next_cursor continúa por keyset; None solo acaba ese barrido, nunca demuestra ausencia global, muerte o cierre físico. Reiniciar desde after=None descubre inserciones UUID anteriores al cursor. El resultado conserva cabeceras y no autoriza liberar/adoptar cargos. No hay endpoint HTTP/SDK/UI de este inventario en este corte. [Validación](validation-t014-debt-discovery.json).
+
+
+## T014 — catálogo HTTP y aborto previo al efecto
+
+El estado anterior de catálogo solo SPI corresponde al checkpoint anterior. Ahora POST /admission/shared/debt requiere JWT admin y runtime shared activado con su propio crédito; usa version1/limit1..1000/after opcional. El cursor es descriptivo. Para abortar un preparing1 mapeado, conservar primero un action_id UUID y enviar version1/action_id/operation_id/expected_revision1 a POST /admission/shared/abort-preparing. Respuesta confirmada conserva ambos UUID y released/revision2; ante503 o cancelación, repetir exactamente el mismo action_id/payload para reconciliar el acuse. Nunca interpretar el error o una página vacía como rollback/liberación.409 exige refrescar el contexto; no reejecutar trabajo. No usar este endpoint para active/uncertain/metadatos ni jobs históricos. Código/esquema de participantes deben coordinar migración5; no rolling upgrade transparente. [Validación](validation-t014-preparing-abort.json).

@@ -103,3 +103,14 @@ Si una activación ya creó coordinador y falla su bind, se conserva para drain 
 ## T014 — descubrimiento administrativo de deuda (backend/SPI implementado)
 
 El catálogo lista cargos existentes de todas las encarnaciones del mismo coordinador bajo Principal admin. Incluye créditos tras revocación y operaciones distintas de released; estado conserva lo persistido. Cada página usa keyset tipado y límite de transporte, no un límite de agentes. current_owner compara identidad privada completa y se revalida tras lectura; un cursor nunca concede autoridad. No modifica counters, estados ni crédito y no declara ausencia/muerte por acabar una página. Interfaz inicial de backend/SPI; la ruta HTTP y ejecución de reconciliación siguen pendientes y deben conservar financiación propia.
+
+
+## T014 — cancelación administrativa de preparación (implementada en este corte)
+
+POST /admission/shared/abort-preparing requiere JWT admin, runtime shared ya activado y sesión propia financiada. DTO estricto {version:1,action_id:UUID,operation_id:UUID,expected_revision:1}; acuse tipado contiene version1/mismosIDs/revision2/state=released. No es cancelación de Work ni prueba de muerte. Solo preparing1 mapeado con metadatos puede abortarse: CAS atómico frente a active, cantidades originales y audit durables; otro estado/raw se rechaza. Reintentar mismo actionID recupera el acuse sin nueva devolución. Conflicto409 fijo; indisponibilidad/cierre incierto503 sin eco de excepciones. No liberar metadatos, adoptar efectos activos o reejecutar jobs históricos.
+
+
+Descubrimiento del objetivo: POST /admission/shared/debt bajo JWT admin y control propio activado recibe version1, limit opcional1..1000, after opcional {kind,entry_id}. Devuelve version1, tuple de cabeceras sin PID/birth/digest y next_cursor; ending solo termina un barrido. No usa sesión gratuita antes de shared_ready ni concede autorización desde un cursor.
+
+
+El runtime deriva expected_binding de su concesión opaca y lo contrasta antes del primer SQL, durante la transacción y después. Nunca es input HTTP. El cliente persiste action_id antes del intento y lo reutiliza ante503/cancelación o confirmación perdida; ausencia del objetivo en una página no demuestra rollback. Conflicto409 no autoriza otro efecto.

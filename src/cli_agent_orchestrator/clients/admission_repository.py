@@ -16,22 +16,30 @@ from typing import Callable, Iterator, Sequence, cast
 from uuid import NAMESPACE_OID, uuid5
 
 import psutil
-from psycopg import sql
+from psycopg import InterfaceError, sql
 
 from cli_agent_orchestrator.clients.admission_schema import (
     _BASE_AUTHORITY_TABLES,
+    ADMIN_ACTION_TABLES,
     AUTHORITY_TABLES,
     LEDGER_TABLES,
     METADATA_CREDIT_TABLES,
     RESOURCE_ADMISSION_MIGRATIONS,
 )
-from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, Record, connect
+from cli_agent_orchestrator.clients.postgres import (
+    Connection,
+    DatabaseError,
+    DatabaseTarget,
+    Record,
+    connect,
+)
 from cli_agent_orchestrator.clients.postgres.connection import ConnectionCursor
 from cli_agent_orchestrator.clients.postgres.migrations import (
     SchemaMismatch,
     verify_component,
     verify_runtime_role,
 )
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.models.admission_domains import (
     DomainRecord,
     DomainRequest,
@@ -39,6 +47,7 @@ from cli_agent_orchestrator.models.admission_domains import (
     MetadataCoverage,
     MetadataCredit,
     ReservationState,
+    SharedAbortReceipt,
     SharedDebtCursor,
     SharedDebtEntry,
     SharedDebtPage,
@@ -65,6 +74,15 @@ class SharedRevisionConflict(RuntimeError):
     """The exact request, owner, state or authority revision changed."""
 
 
+class SharedActionCommitUncertain(SharedCommitUncertain):
+    """The caller retains these exact identities through uncertain completion."""
+
+    def __init__(self, action_id: str, operation_id: str) -> None:
+        super().__init__("Administrative resource action requires reconciliation")
+        self.action_id = canonical_id(action_id)
+        self.operation_id = canonical_id(operation_id)
+
+
 class SharedCapacityUnavailable(RuntimeError):
     """At least one known domain cannot cover the whole operation."""
 
@@ -73,6 +91,7 @@ _DOMAIN_FAMILY = 0x43414F44
 _OPERATION_FAMILY = 0x43414F4F
 _MEMBERSHIP_FAMILY = 0x43414F4D
 _CREDIT_FAMILY = 0x43414F43
+_ACTION_FAMILY = 0x43414F41
 _TABLES = dict(
     zip(
         (
@@ -91,6 +110,7 @@ _TABLES = dict(
 _TABLES.update(
     zip(("metadata_credits", "metadata_credit_history"), METADATA_CREDIT_TABLES, strict=True)
 )
+_TABLES["admin_actions"] = ADMIN_ACTION_TABLES[0]
 _TRANSITIONS = {
     "preparing": {"active", "released"},
     "active": {"releasing", "uncertain"},
@@ -687,8 +707,151 @@ class ResourceAdmissionRepository:
             self._check_owner(row, binding)
             return _receipt(row)
 
+    def admin_abort_preparing(
+        self,
+        operation_id: str,
+        *,
+        action_id: str,
+        expected_revision: int,
+        principal_id: str,
+        expected_binding: ResourceBinding | None = None,
+    ) -> SharedAbortReceipt:
+        """CAS-fence an unstarted mapped effect, with immutable owner-written audit.
+
+        This never infers process death or releases metadata. The application
+        caller must own its already-enrolled custodian control session; changing
+        SQL role does not change physical storage admission or add a session.
+        """
+        operation_id, action_id = canonical_id(operation_id), canonical_id(action_id)
+        envelope_integer(expected_revision)
+        if expected_revision != 1:
+            raise ValueError("Administrative abort supports preparing revision one")
+        self._check_provisioner(principal_id)
+        binding = self.current_binding()
+        if expected_binding is not None and (
+            type(expected_binding) is not ResourceBinding or binding != expected_binding
+        ):
+            raise SharedAdmissionDenied("Custodian binding lacks its funded coverage")
+        self._require_usage_basis()
+        write_started = False
+        receipt: SharedAbortReceipt
+        try:
+            with self._owner(principal_id, require_usage=True) as connection:
+                self._lock(connection, _ACTION_FAMILY, (action_id,))
+                existing = self._query(
+                    connection, "SELECT * FROM {admin_actions} WHERE action_id=%s", (action_id,)
+                ).fetchone()
+                if existing is not None and (
+                    str(existing["operation_id"]) != operation_id
+                    or existing["actor_principal_id"] != principal_id
+                    or existing["from_revision"] != expected_revision
+                ):
+                    raise SharedRevisionConflict("Administrative action payload changed")
+                self._lock(connection, _OPERATION_FAMILY, (operation_id,))
+                row = self._query(
+                    connection, "SELECT * FROM {operations} WHERE operation_id=%s", (operation_id,)
+                ).fetchone()
+                if row is None:
+                    raise SharedAdmissionDenied("Resource operation is unavailable")
+                if existing is not None:
+                    if row["state"] != "released" or row["revision"] != 2:
+                        raise SchemaMismatch("Administrative action outcome is inconsistent")
+                    receipt = SharedAbortReceipt(action_id, operation_id)
+                else:
+                    if row["state"] != "preparing" or row["revision"] != expected_revision:
+                        raise SharedRevisionConflict(
+                            "Resource preparation state or revision changed"
+                        )
+                    if (
+                        not row["metadata_required"]
+                        or row["cost_sha256"] is None
+                        or row["membership_sha256"] is None
+                    ):
+                        raise SharedAdmissionDenied(
+                            "Resource preparation lacks the managed start contract"
+                        )
+                    allocations = self._query(
+                        connection,
+                        "SELECT * FROM {allocations} WHERE operation_id=%s ORDER BY domain_id",
+                        (operation_id,),
+                    ).fetchall()
+                    if not allocations:
+                        raise SchemaMismatch("Resource operation has no allocations")
+                    self._lock(
+                        connection,
+                        _DOMAIN_FAMILY,
+                        tuple(str(value["domain_id"]) for value in allocations),
+                    )
+                    releases = []
+                    snapshot = []
+                    for value in allocations:
+                        domain_id = str(value["domain_id"])
+                        domain = self._domain(connection, domain_id)
+                        amount = value["amount"]
+                        envelope_integer(amount)
+                        used = self._used(connection, domain_id)
+                        if used < amount:
+                            raise SchemaMismatch("Shared resource counter underflow")
+                        releases.append((domain_id, used, amount))
+                        snapshot.append(
+                            dict(
+                                domain_id=domain_id,
+                                incarnation=str(value["incarnation"]),
+                                domain_revision=value["domain_revision"],
+                                member_revision=value["member_revision"],
+                                amount=amount,
+                                unit=domain["unit"],
+                                kind=domain["kind"],
+                            )
+                        )
+                    if self.current_binding() != binding:
+                        raise SharedAdmissionDenied("Custodian resource view changed before abort")
+                    write_started = True
+                    for domain_id, used, amount in releases:
+                        self._change_used(connection, domain_id, used, used - amount)
+                    updated = self._query(
+                        connection,
+                        "UPDATE {operations} SET state='released',revision=2 WHERE operation_id=%s AND state='preparing' AND revision=%s RETURNING *",
+                        (operation_id, expected_revision),
+                    ).fetchone()
+                    if updated is None:
+                        raise SharedRevisionConflict("Resource preparation revision changed")
+                    self._query(
+                        connection,
+                        """INSERT INTO {admin_actions}
+                        (action_id,operation_id,actor_principal_id,custodian_binding_json,from_state,from_revision,to_state,to_revision,allocations_json)
+                        VALUES (%s,%s,%s,%s::jsonb,'preparing',1,'released',2,%s::jsonb)""",
+                        (
+                            action_id,
+                            operation_id,
+                            principal_id,
+                            _json(asdict(binding)),
+                            _json(snapshot),
+                        ),
+                    )
+                    receipt = SharedAbortReceipt(action_id, operation_id)
+                if self.current_binding() != binding:
+                    raise SharedAdmissionDenied("Custodian resource view changed before commit")
+        except SharedCommitUncertain:
+            raise SharedActionCommitUncertain(action_id, operation_id) from None
+        except (DatabaseError, InterfaceError, OSError, StorageAdmissionUnavailable):
+            if write_started:
+                raise SharedActionCommitUncertain(action_id, operation_id) from None
+            raise
+        try:
+            current = self.current_binding() == binding
+        except Exception:
+            current = False
+        if not current:
+            raise SharedActionCommitUncertain(action_id, operation_id)
+        return receipt
+
     def outstanding_resources(
-        self, *, after: SharedDebtCursor | None = None, limit: int = 100
+        self,
+        *,
+        after: SharedDebtCursor | None = None,
+        limit: int = 100,
+        expected_binding: ResourceBinding | None = None,
     ) -> SharedDebtPage:
         """Discover durable headers without adopting, locking or freeing them.
 
@@ -701,6 +864,10 @@ class ResourceAdmissionRepository:
         if after is not None and type(after) is not SharedDebtCursor:
             raise ValueError("Shared debt page requires a typed keyset cursor")
         binding = self.current_binding()
+        if expected_binding is not None and (
+            type(expected_binding) is not ResourceBinding or binding != expected_binding
+        ):
+            raise SharedAdmissionDenied("Custodian binding lacks its funded coverage")
         rank = -1 if after is None else (0 if after.kind == "metadata_credit" else 1)
         after_id = after.entry_id if after is not None else "00000000-0000-0000-0000-000000000000"
         with connect(self.target, readonly=True) as connection, connection.transaction():

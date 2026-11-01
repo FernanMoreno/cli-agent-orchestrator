@@ -71,3 +71,8 @@ Los párrafos anteriores que dicen cableado/ticket pendientes describen checkpoi
 ## T014 — catálogo de deuda (backend/SPI implementado)
 
 SharedDebtCursor guarda clase metadata_credit/operation y UUID. SharedDebtEntry guarda clase/UUID, instancia/generación, revisión, estado charged o preparing/active/releasing/uncertain y coincidencia exacta de dueño actual. SharedDebtPage conserva tuple de entries y cursor opcional. Son resultados de lectura, nunca capacidades de adopción/liberación; se omiten credenciales/rutas/PID/birth del transporte. La paginación no representa un snapshot durable de toda la red.
+
+
+## T014 — acción administrativa de preparación implementada
+
+SharedAbortReceipt inmutable contiene action_id/operation_id canónicos, revision2 y state=released; no es capacidad de ejecución. Migración5 añade _cao_resource_admin_actions con actor derivado del Principal, binding privado del custodio, estado/revisión de origen y destino, snapshot por dominio/cantidad/unidad/kind y fecha. Action UUID es PK y (operation_id,from_revision) único; owner escribe, runtime solo lee. Se preservan los checksums1–4 y el conjunto histórico de tablas v3/v4. No hay retiro de MetadataCredit ni prueba de proceso muerto en este modelo. [Validación](validation-t014-preparing-abort.json).
