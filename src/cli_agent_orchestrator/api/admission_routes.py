@@ -11,6 +11,12 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeNotFound,
     EnvelopeRevisionConflict,
 )
+from cli_agent_orchestrator.clients.admission_repository import (
+    SharedAdmissionDenied,
+    SharedCapacityUnavailable,
+    SharedCommitUncertain,
+    SharedRevisionConflict,
+)
 from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.clients.postgres.connection import DatabaseError
 from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
@@ -22,6 +28,8 @@ from cli_agent_orchestrator.models.admission_control import (
     ResourceClaims,
     ResourceRevisionRequest,
     ResourceUpdate,
+    SharedAdmissionActivationRequest,
+    SharedAdmissionActivationResult,
 )
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
@@ -34,6 +42,7 @@ from cli_agent_orchestrator.services.inbox_admission_runtime import (
     AdmissionRuntimeUnavailable,
     InboxAdmissionRuntime,
 )
+from cli_agent_orchestrator.services.shared_delivery_admission import SharedDeliveryUnavailable
 
 
 def failure(status: int, code: str) -> HTTPException:
@@ -84,6 +93,11 @@ def control_error(error: Exception) -> HTTPException:
 
 
 _EXPECTED = (
+    SharedAdmissionDenied,
+    SharedCapacityUnavailable,
+    SharedCommitUncertain,
+    SharedRevisionConflict,
+    SharedDeliveryUnavailable,
     StorageAdmissionUnavailable,
     EnvelopeRevisionConflict,
     EnvelopeNotFound,
@@ -96,6 +110,22 @@ _EXPECTED = (
     SchemaMismatch,
     OSError,
 )
+
+
+@router.post("/shared/activate", response_model=SharedAdmissionActivationResult)
+async def activate_shared(
+    body: SharedAdmissionActivationRequest,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+):
+    value = runtime(request)
+    try:
+        await value.activate_shared(principal=principal)
+    except _EXPECTED as error:
+        raise control_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return SharedAdmissionActivationResult()
 
 
 @router.get("/resource-envelope", response_model=RegisteredResourceEnvelope)

@@ -61,3 +61,8 @@ Este modelo está validado como backend T012; no representa wiring T013, recuper
 ## T013 — huella y modo de reserva
 
 SharedResourceCost es un valor inmutable de bytes, millicores y sesiones, enteros no negativos dentro de BIGINT y al menos una dimensión positiva; no contiene IDs de dominio, propietario o permisos. El cableado pendiente deberá convertir la huella local del servidor al valor, sin aceptar la decisión de un modelo. Operations añade membership_sha256 y cost_sha256: ambos null para raw anterior, ambos digests canónicos para mapeado. Se conserva el conjunto completo de miembros del proceso, incluidas unidades de coste0. El índice por instance/generation evita recorrer otras encarnaciones. No existe aún ticket compartido de retiro, cuota de proveedor ni conexión del consumidor.
+
+
+## Estado posterior del corte T013 (2026-11-01)
+
+Los párrafos anteriores que dicen cableado/ticket pendientes describen checkpoints anteriores. Actualmente hay MetadataCredit persistente por dominio storage e instancia/generación/binding exactos, MetadataCoverage completo, modo metadata_required persistido y DeliveryRetirementHold/SharedDeliveryCoordinator integrados. El runtime de producción puede seleccionarlos explícitamente y activarlos por JWT admin; no se retiran créditos al cerrar un lifetime. Aún faltan cuotas de proveedor, reconstrucción T014 y aceptaciones/configuración durable/SDK/UI. [Validación de integración](validation-t013-shared-retirement.json), [activación productiva](validation-t013-production-activation.json).

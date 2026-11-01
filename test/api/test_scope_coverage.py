@@ -114,6 +114,7 @@ def _has_admission_authority(route) -> bool:
         ("GET", "/admission/resource-envelope"): admission_routes.registered,
         ("POST", "/admission/resource-envelope"): admission_routes.attest,
         ("POST", "/admission/resource-envelope/revoke"): admission_routes.revoke,
+        ("POST", "/admission/shared/activate"): admission_routes.activate_shared,
         ("GET", "/admission/diagnostics"): admission_routes.diagnostics,
     }
     keys = [(method, route.path) for method in getattr(route, "methods", ())]
@@ -1923,6 +1924,7 @@ def test_admission_authority_audit_covers_exact_live_routes():
         ("GET", "/admission/resource-envelope"),
         ("POST", "/admission/resource-envelope"),
         ("POST", "/admission/resource-envelope/revoke"),
+        ("POST", "/admission/shared/activate"),
         ("GET", "/admission/diagnostics"),
     }
     assert all(_has_admission_authority(route) for route in routes)

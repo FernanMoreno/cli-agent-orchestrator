@@ -90,3 +90,11 @@ La cobertura de metadatos se confirma bajo los mismos locks que la reserva mapea
 El hold conserva receptor/cargos hasta confirmar released y cierre físico del préstamo de limpieza. Solo entonces se notifica el receptor exacto fuera de guards. La identidad async lógica no autoriza SQL ni promoción física en el mismo hilo; el handoff propio crea el scope físico en otro worker y se une incluso al cancelar. El fallo de entrada difiere antes de efectos, los errores de cuerpo conservan su semántica.
 
 Créditos de metadatos no se retiran al cerrar un runtime. Este checkpoint no define autorización de tasa de proveedor, recuperación entre generaciones ni contratos HTTP/SDK/UI de configuración; siguen pendientes.
+
+
+## Activación compartida de despliegue T013 (implementada en este corte)
+
+Selección fría CAO_ADMISSION_MODE=local|shared; ausente equivale a local, otro valor es error. Shared requiere política privada configurada y auth, sin inferencia desde perfiles o direcciones. No autoriza dominios/creditos. POST /admission/shared/activate usa DTO estricto {"version":1}, JWT admin y respuesta {"version":1,"activated":true}; sin datos de binding/credenciales. Rechazos de autoridad/capacidad/configuración se expresan con503/resource_control_unavailable/no-store, input inválido422/invalid_resource_envelope. El mismo router sirve API/Bridge. No es aún API de configuración persistida ni SDK/UI T022/T023.
+
+
+Si una activación ya creó coordinador y falla su bind, se conserva para drain y queda detenido; el operador debe retirar ese lifetime y reconstruirlo. No se abandona la referencia ni se reabre modo local.

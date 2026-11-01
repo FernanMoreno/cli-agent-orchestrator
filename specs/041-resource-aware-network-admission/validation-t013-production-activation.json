@@ -1,0 +1,105 @@
+{
+  "schema": "caos.spec041.t013-production-activation.v1",
+  "date": "2026-11-01",
+  "base_head": "320be6b05d1148775353c47b5b72c0af8acf006b",
+  "task_complete": false,
+  "global_acceptance": false,
+  "scope": "Production factory/admin HTTP activation with real PostgreSQL; telemetry and transport controlled",
+  "phase": "t013-production-activation-final",
+  "passed": 137,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "warnings": 8,
+  "seconds": 133.262,
+  "source_preserved": true,
+  "support_preserved": true,
+  "descriptor_closed": true,
+  "source_archive_sha256": "fce2d4dd8670620143fe1275647a2e2d9dd8f79e7d815bbe3ae411d0e672aa9c",
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+      "sha256": "f2f1f6336b30bc8efd1dd2da4d924af93fdbe4cd30a660b9f2d517923b1e3b81"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_control.py",
+      "sha256": "6b8ea2cdfe4a7336699e956cb8c74e23c7c387707e4b012a990d7d5f9a8825ff"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "sha256": "e42abba5510713c5edb5a2f3e49af20dec4a63bc92e3e326808290b5dd0695f3"
+    },
+    {
+      "path": "test/api/test_scope_coverage.py",
+      "sha256": "431ccebb8bc280e56d054649c670de7201e530f61a0cbbb529f16ab1a85736c8"
+    },
+    {
+      "path": "test/services/test_shared_admission_environment.py",
+      "sha256": "a4efe16cc56d3305e3962ed608e6602b91efb490522752ce7a8b1114b6d8d52e"
+    },
+    {
+      "path": "test/api/test_shared_admission_activation.py",
+      "sha256": "7450b6465ae03bb4f7354e0366334c5170c5a6e7be9602e3c6823f14f93e74c2"
+    },
+    {
+      "path": "test/postgres/test_shared_production_activation.py",
+      "sha256": "a8e5a2e0f45d15fd0f97449bb8d194ef8d1121fed4b98320238ce0df1f969fcd"
+    }
+  ],
+  "format_files": 7,
+  "mypy_production_files": 3,
+  "architecture_kept": 5,
+  "architecture_broken": 0,
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "foreign_graphify_preserved": 12,
+  "peer_review": {
+    "job": "6ea6d50534db404a85e91f309f68675d",
+    "status": "completed",
+    "verdict": "No blocking flaw within Slice A; review source only"
+  },
+  "history": [
+    {
+      "phase": "t013-production-activation-red",
+      "failed": 21,
+      "passed": 2,
+      "seconds": 53.8,
+      "scope": "Missing mode/route reproduced"
+    },
+    {
+      "phase": "t013-production-activation-green",
+      "failed": 1,
+      "passed": 129,
+      "seconds": 105.46,
+      "scope": "Own exact security route inventory omitted new route; preserved and corrected"
+    }
+  ],
+  "knowledge": {
+    "decision": "No additional vault write: current authority/enrollment and lifetime notes already cover the durable rules; routine route wiring remains in repository artifacts",
+    "consulted": [
+      "wiki/concepts/Multiagent capacity evidence.md"
+    ]
+  },
+  "exclusions": [
+    "Provider quota/rate semantics",
+    "Cross-generation recovery/metadata retirement T014",
+    "All prebind/control/Bridge non-INPUT SQL funding",
+    "Physical M1/M2/M3/native-provider acceptance",
+    "Persistent config API/SDK/UI T022/T023"
+  ],
+  "graphify": {
+    "files": 8,
+    "nodes": 396,
+    "edges": 904,
+    "dangling": 143,
+    "scope": "partial final AST; source-verified production activation"
+  },
+  "architecture_files": 446,
+  "architecture_dependencies": 1995
+}

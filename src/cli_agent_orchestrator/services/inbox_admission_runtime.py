@@ -433,7 +433,12 @@ def runtime_from_environment(
     *,
     bootstrap_factory: Callable[[], ResourceBootstrap] | None = None,
 ) -> InboxAdmissionRuntime | None:
+    mode = os.environ.get("CAO_ADMISSION_MODE", "local")
+    if mode not in {"local", "shared"}:
+        raise ValueError("admission mode must be local or shared")
     if "CAO_ADMISSION_POLICY_FILE" not in os.environ:
+        if mode == "shared":
+            raise ValueError("shared admission requires a private operator policy")
         return None
     value = os.environ["CAO_ADMISSION_POLICY_FILE"]
     path = Path(value)
@@ -456,4 +461,9 @@ def runtime_from_environment(
         scope_id=f"{uuid4()}:{path}",
         authority_state=_PROCESS_AUTHORITY,
     )
-    return InboxAdmissionRuntime(inbox, monitor=monitor, bootstrap=bootstrap)
+    # Deployment selection is not enrollment or authority. Construction errors
+    # abort startup; shared mode must never quietly return a local-only owner.
+    repository = bootstrap.shared_repository() if mode == "shared" else None
+    return InboxAdmissionRuntime(
+        inbox, monitor=monitor, bootstrap=bootstrap, shared_repository=repository
+    )

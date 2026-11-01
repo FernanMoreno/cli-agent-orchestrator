@@ -40,6 +40,17 @@ class ResourceUpdate(StrictControlModel):
     active: StrictBool
 
 
+class SharedAdmissionActivationRequest(StrictControlModel):
+    version: StrictInt = Field(ge=1, le=1)
+
+
+class SharedAdmissionActivationResult(StrictControlModel):
+    """Acknowledges activation in this lifetime, not physical network capacity."""
+
+    version: Literal[1] = 1
+    activated: Literal[True] = True
+
+
 class RegisteredResourceEnvelope(ResourceUpdate):
     """The latest registered record, including stale/revoked claims; not live capacity."""
 
