@@ -77,3 +77,16 @@ Auditoría inicial/explícita compara en una única snapshot; divergencia/error 
 Solo el servidor convierte la huella local en cantidades tipadas. El repositorio obtiene la vinculación de su proveedor privado y resuelve la totalidad de membresías de esa encarnación bajo un lock común con el provisionador. La reserva mapeada conserva un digest de ese conjunto y del coste original. Añadir, retirar, revocar o revisar una membresía antes de active invalida la preparación: se conserva el cargo hasta cancelación CAS exacta. Un ACK repetido no es una autorización adicional de efecto. Las operaciones raw anteriores no se promueven al contrato completo por tener metadatos null.
 
 Para memoria y CPU positivas se exige, por unidad, presencia tanto de host como de nodo; para sesiones positivas, storage. Una dimensión cero no necesita presupuesto propio, pero sus membresías declaradas siguen formando parte de la huella y pueden invalidar active. Estos tipos mínimos no prueban ancestros invisibles. SQL de metadatos, control y escáneres conserva su gate de contabilidad física; el mapeo aislado no cubre todas las conexiones de la red.
+
+## T013 — hold local (contrato en implementación)
+
+La confirmación compartida no puede quitar el receptor local antes del testigo físico. Un hold exacto mantiene la lease hasta finish explícito del dueño confiable, después de resolver la reserva compartida. Ready requiere testigo del ledger, no solo Event.set. Solo ese hold vivo habilita la operación de control de retiro después de stop; no concede operación de datos ni crédito SQL adicional. Su propio préstamo SQL debe cerrar antes de que el hold permita retirar la lease. Incertidumbre conserva ambas propiedades.
+
+
+## T013 — contrato integrado del checkpoint
+
+La cobertura de metadatos se confirma bajo los mismos locks que la reserva mapeada y se vuelve a comprobar antes de active. El modo metadata_required persiste y no cambia por retry. Un crédito completo es requisito de activación del servidor, sin convertirse en permiso por un DTO. Una nueva membresía storage de una generación ya acreditada necesita enrollment conjunto atómico.
+
+El hold conserva receptor/cargos hasta confirmar released y cierre físico del préstamo de limpieza. Solo entonces se notifica el receptor exacto fuera de guards. La identidad async lógica no autoriza SQL ni promoción física en el mismo hilo; el handoff propio crea el scope físico en otro worker y se une incluso al cancelar. El fallo de entrada difiere antes de efectos, los errores de cuerpo conservan su semántica.
+
+Créditos de metadatos no se retiran al cerrar un runtime. Este checkpoint no define autorización de tasa de proveedor, recuperación entre generaciones ni contratos HTTP/SDK/UI de configuración; siguen pendientes.

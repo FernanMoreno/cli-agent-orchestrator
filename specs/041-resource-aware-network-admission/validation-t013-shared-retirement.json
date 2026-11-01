@@ -1,0 +1,309 @@
+{
+  "schema": "caos.spec041.t013-shared-retirement.v1",
+  "date": "2026-11-01",
+  "base_head": "0c8cb077c69856f27d44120ac7611f26da7fa1e4",
+  "scope": "Bounded T013 integration checkpoint; not global or native-provider acceptance",
+  "global_acceptance": false,
+  "task_complete": false,
+  "phases": [
+    {
+      "phase": "t013-provider-startup-green",
+      "passed": 126,
+      "seconds": 271.708,
+      "receipt_sha256": "d6a55d463875b0b95fd5ec6cadd02cfc30fd85a7975f63d511eadc55b7729da4",
+      "source_archive_sha256": "417cbb0fc99196ab040c9315dd05099327ea8506cc75a643a06e5cb9c522798a",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t013-composed-ledger-final",
+      "passed": 150,
+      "seconds": 129.397,
+      "receipt_sha256": "199c5ccf7a146f4df7ee8d44a93c9f09b45603f952e6812b4bb704b1db9e1da6",
+      "source_archive_sha256": "18cd028e8faf52b6b0912dcdafdd4b47d548bf3dc96bf1091982b761c5b95c43",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t013-owner-runtime-final",
+      "passed": 67,
+      "seconds": 50.641,
+      "receipt_sha256": "e0207dc20991ee7db6a042a4bf7542c5b74bfb73a7f7176996b22cff9ac93efa",
+      "source_archive_sha256": "d8b7068e14b353796642cb71f2776a50e9f5f5c2b2ef1f4d43123c3ad20978ad",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t013-interaction-waits-final",
+      "passed": 20,
+      "seconds": 124.654,
+      "receipt_sha256": "5ee18357260455c14d1338e81e1a4d0a0c48f40c121ef10ffb925394b53ef1b5",
+      "source_archive_sha256": "52ed345310425f955c93ebe9b7f342fc78411ec49a46c044ebb65b3afa012b4e",
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "total_executions": 363,
+  "unique_cases": 363,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "production_files_verified_against_every_executed_archive": 28,
+  "python_files_verified_against_at_least_one_executed_archive": 53,
+  "checks": {
+    "isort_files": 53,
+    "black_files": 53,
+    "ast_files": 53,
+    "mypy_production_files": 28,
+    "architecture_files": 446,
+    "architecture_dependencies": 1993,
+    "architecture_kept": 5,
+    "architecture_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 28,
+    "nodes": 1755,
+    "edges": 4323,
+    "dangling_edges": 463,
+    "scope": "Partial AST of changed production files; raw unresolved edges retained; verified against source and architecture check; not full-project graph health or global acceptance",
+    "foreign_files_preserved": 12
+  },
+  "knowledge": {
+    "operation": "markdown-20261101-shared-retirement-async-ownership",
+    "pages_changed": 3,
+    "strict_lint_issues": 0
+  },
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+      "sha256": "34e8a3f547c905b0ddf4ce0cbcbb9d56f008e0a159f5dbe094cafb76016761c3"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+      "sha256": "99cd29ea9da07a0ca7c48e8fbb7cc8ea5a9e16d2e9046c35c0b5976925b69bbb"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+      "sha256": "09c579e688ac62217cc42b12c22384ba1a5b2d72cd9c295e86ca22b1b23aea7d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+      "sha256": "9ad4e92410b8d25a37ce61bbe1d47f6f4163c3f7d7e815349952c96813741bab"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_domains.py",
+      "sha256": "3692d33da6c7f9056e2731c53d8b60735e40a6e2938e210332f816370e4dd33a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/base.py",
+      "sha256": "5caf306beb2fa5ede7f9fa57a3f8d625b93224b510c2f8af53a0bf4772e082cc"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/codex.py",
+      "sha256": "61197eeba8f15d2bf4bbb7de7061e9e6a72cad4472d13125f819dcc1a75f0434"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/cursor_cli.py",
+      "sha256": "dc0ee47f1f563ebdd5ba20b89c77c4a5168d600fcdec99ccc65e336b83728885"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/hermes.py",
+      "sha256": "32efcb47f1b62433e027f0faa35950bbf3a8f18b428a0906275898a6fd03ae63"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/kiro_cli.py",
+      "sha256": "793b343d19f64b24983ab70b211ba41eff34218b3e4b63425b49a019ece64971"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/mock_cli.py",
+      "sha256": "c7630616c28e955596f76f0e75cd65a6170488e53ff10e48bf9961ff79b80cd2"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/omp.py",
+      "sha256": "09a9fc6ea62b6d20d366824662033972a48c5e4fee8dc38f281762dac1788f8c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/providers/opencode_cli.py",
+      "sha256": "ad39f99ad94f69df2cbacdd262239577cbae808f4a477cbfd244ae6f78fce7d5"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+      "sha256": "7bccce092dfb541c5caccfcb785603eeda1e4824b61a773a0909bb57b2a635b0"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_domains.py",
+      "sha256": "d7e17c21bd99cd66badce15191a6eee995e485f23b43154d9282876a17f97da4"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+      "sha256": "e5d0a3a64fea6400febe03303403c3d27456cdb324f3c037e937a7a5f273aa0a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/agent_step.py",
+      "sha256": "4a9c29dd19cb98dbfbab0c66e8a25461c7568b24eb5af9c2768678e9bff26f6a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "sha256": "95121d6df429bff21e0b609aad44d9d27b1a6fd053115ba3c6cbd13055eb6b6b"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "sha256": "8f87996e6b0400731b0ac8be337a42c3c92765bf45c094ee9e3f8096005ccdbb"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_service.py",
+      "sha256": "4f6db4b5d0a3f0cca0a7c06ff42bd1cf01cfcd4d2eff7156c1e892d8334a4cc3"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/interactions/service.py",
+      "sha256": "a9ea8097479de43dd5aa185436acd384d57134054161094d04a013400f78918c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+      "sha256": "27d07510927755afa8d78555587c9c6b33ef0b7d34eaf08963be56fcfcc58147"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/terminal_service.py",
+      "sha256": "615896dd6e0ebabbbd7738a373dd27a0244853cb3ae365fbccaffef2769edadd"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_admission.py",
+      "sha256": "dbfde02c68dab7fe1372774c3295487e8905affc24872ba8d12a8fd703332453"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_inbox.py",
+      "sha256": "d6af9b78030dd4e8e4d9be58dd4193c964e1f22ce0d720f55c16df36946eebb8"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_launch.py",
+      "sha256": "6d330f8be173226c8231c40da86c65c4c0df6ac630aff314cc5ee7c0394198d2"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_service.py",
+      "sha256": "04e0099d2f7cff1a33f6ef18fe2ef2beabbf6f93ddccb29c171d7cde70cc2d06"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/terminal.py",
+      "sha256": "b31d0f5af82b9952fa6ea95943f106d872ee261251a91f4cd8186042838cb3bd"
+    },
+    {
+      "path": "test/clients/test_logical_storage_scope.py",
+      "sha256": "0d1f14dd99a7bceb83aa4f10277b5bf43d973434c3dc0b5fd42069b585760e51"
+    },
+    {
+      "path": "test/clients/test_metadata_credit_usage_basis.py",
+      "sha256": "43bf663b80b74f9daf93585b551111e971da7b76e0651b4433ea1ff812fc925d"
+    },
+    {
+      "path": "test/clients/test_shared_scope_preparation.py",
+      "sha256": "de342ea90f6d4b5ac3f9699c14f6683baf2a2bdd4e90434274e4f5ffb4fb4968"
+    },
+    {
+      "path": "test/integration/test_agent_step_shared_admission.py",
+      "sha256": "733bec16907c7697954c0f044a3e621ec20c4f518d614a36bf130aedbe9830f5"
+    },
+    {
+      "path": "test/integration/test_inbox_shared_admission.py",
+      "sha256": "0ea36e9e04bbf23fa0dbde64656eedf008420e989844bbdfc1ae782fc0b5c3fc"
+    },
+    {
+      "path": "test/integration/test_interaction_native_wait_identity.py",
+      "sha256": "1e4c91ac7f249337abe29fed6bf6c7c9c60516ce8d8948283d8929fa856b6b97"
+    },
+    {
+      "path": "test/integration/test_interaction_poll_workers.py",
+      "sha256": "b383367763ff8918606ee38c4baaa9d55fcf2a2a04a99ca1f4af769ec7eb9f20"
+    },
+    {
+      "path": "test/integration/test_work_shared_admission.py",
+      "sha256": "4bf102381d3e532b64e852dad03c53e08466c81d86ee668cd529694a2122527e"
+    },
+    {
+      "path": "test/postgres/test_admission_metadata_coverage.py",
+      "sha256": "a213bb7e1b96b384d54f81107b6d69a7d56e7f73b923d662392435cb39cae77c"
+    },
+    {
+      "path": "test/postgres/test_admission_metadata_credits.py",
+      "sha256": "7d6193281cfed40944c6e9d088440119114997274053ad0a07641110c775a04a"
+    },
+    {
+      "path": "test/postgres/test_shared_admission_runtime.py",
+      "sha256": "e62c088e37af5535a0631397918bbc17040fedc05a5bddc86d5d683f05adfd99"
+    },
+    {
+      "path": "test/providers/test_async_backend_effect_ownership.py",
+      "sha256": "81849172a33fe6efcfcb73b04bd0ce610c2b535a6f69708048e2482ff024c3b1"
+    },
+    {
+      "path": "test/providers/test_provider_storage_workers.py",
+      "sha256": "fb931586d3bd2822746a9e74236072afc089cbabbaf74ce39e9e429bdf185220"
+    },
+    {
+      "path": "test/services/test_admission_metadata_authority.py",
+      "sha256": "63e952ef3320f3746b5a1b0d344087dddb5f4b140a1e41ea5e7610f2b84970ea"
+    },
+    {
+      "path": "test/services/test_admission_retirement_hold.py",
+      "sha256": "7921fdc6f000d7f8ef36ddfc2c55f96d1eceb03544088848a911f9fea90affd5"
+    },
+    {
+      "path": "test/services/test_inbox_shared_deferral.py",
+      "sha256": "bfa16e3c5d7eb42565e2c151fdebdae7a4c0dac2fed8659e9be3ecee63eaa08a"
+    },
+    {
+      "path": "test/services/test_managed_startup_async_storage.py",
+      "sha256": "f8621283c8234265b329e679ca9475e9e5d1acbb17b14f29f830556749948822"
+    },
+    {
+      "path": "test/services/test_shared_admission_owner.py",
+      "sha256": "72d8458f5ceb67b20c8e0a6f3c1935f13bc383bf58ba9851538428fe367584fe"
+    },
+    {
+      "path": "test/services/test_shared_admission_runtime.py",
+      "sha256": "e9bfa126a9f9a7e1615f0b963ac8b00012eda489a21853a6d4e3416d57fa00a1"
+    },
+    {
+      "path": "test/services/test_shared_delivery_admission.py",
+      "sha256": "eae8f26f200999a67ac96258a184825500086187afcbf777a1e1ea5cdba91032"
+    },
+    {
+      "path": "test/services/test_shared_inbox_status.py",
+      "sha256": "6b73ca9ecdf9365393c4c9a8a3103180d576dc44e35ae8a7dce3928c4cb958b0"
+    },
+    {
+      "path": "test/services/test_work_agent_step.py",
+      "sha256": "cc1f2338bbb2dd0c5b9c832f0fb5109d13dcc7f8e4faca4c9993a525a88712c6"
+    },
+    {
+      "path": "test/services/test_work_async_storage.py",
+      "sha256": "b2f506ce0bd0445816199b5d2f482778424c4558f2ade987209a189d904355ab"
+    },
+    {
+      "path": "test/services/test_work_resource_admission.py",
+      "sha256": "503319e71ad7840d3edd2741640075284c58846cd47d367bb6d69460f931de36"
+    },
+    {
+      "path": "test/services/test_work_shared_deferral.py",
+      "sha256": "ea20795b65e4ccbc21048f24ede4c05b27a27d391adc8cdcf27e6e147d704f61"
+    }
+  ],
+  "exclusions": [
+    "Provider quota/rate semantics",
+    "Cross-generation recovery and metadata credit retirement T014",
+    "Physical M1/M2/M3 and native-provider acceptance",
+    "Persistent activation/configuration API/SDK/UI",
+    "Deferred initialization and complete startup/combined physical budgets"
+  ]
+}

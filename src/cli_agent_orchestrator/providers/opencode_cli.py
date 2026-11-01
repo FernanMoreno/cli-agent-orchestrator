@@ -1427,7 +1427,8 @@ class OpenCodeCliProvider(BaseProvider):
         # never be inferred from a racy foreground-process probe: instruct the
         # transport explicitly to paste the launch command as plain shell text.
         # This remains a single launch delivery and cannot re-send a prompt.
-        get_backend().send_keys(
+        await self._run_blocking(
+            get_backend().send_keys,
             self.session_name,
             self.window_name,
             command,

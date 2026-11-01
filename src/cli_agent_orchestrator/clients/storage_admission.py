@@ -61,6 +61,7 @@ class _StorageDenial:
 class _PhysicalScope:
     owner: StorageConnectionOwner
     clock: Callable[[], float]
+    logical: bool = False
     pid: int = field(default_factory=os.getpid)
     thread: int = field(default_factory=threading.get_ident)
     task: object | None = field(default_factory=_current_task)
@@ -122,12 +123,46 @@ def physical_storage_scope(
     if owner.storage_process_current is not True:
         note_storage_denial()
         raise StorageAdmissionUnavailable()
+    if current is not None and current.logical and current.is_current():
+        current.fail()
+        raise StorageAdmissionUnavailable()
     if current is not None and current.owner is owner and current.is_current():
         yield
         return
     scope = _PhysicalScope(owner, clock)
     if _denial is not None:
         scope._denial = _denial
+    token = _CURRENT.set(scope)
+    try:
+        prepare = getattr(owner, "prepare_storage_scope", None)
+        if prepare is not None:
+            try:
+                if not callable(prepare) or prepare() is not None:
+                    raise StorageAdmissionUnavailable()
+            except Exception:
+                scope.fail()
+                raise StorageAdmissionUnavailable() from None
+        yield
+    finally:
+        scope.deactivate()
+        _CURRENT.reset(token)
+
+
+@contextmanager
+def logical_storage_scope(
+    owner: StorageConnectionOwner | None, *, clock: Callable[[], float]
+) -> Iterator[None]:
+    """Retain async identity for joined handoffs without authorizing local SQL."""
+    if owner is None:
+        yield
+        return
+    if not _PROCESS_STORAGE_CLOSES.process_current or owner.storage_process_current is not True:
+        note_storage_denial()
+        raise StorageAdmissionUnavailable()
+    current = _CURRENT.get()
+    scope = _PhysicalScope(owner, clock, logical=True)
+    if current is not None and current.owner is owner and current.pid == os.getpid():
+        scope._denial = current._denial
     token = _CURRENT.set(scope)
     try:
         yield
@@ -162,7 +197,7 @@ def acquire_storage_connection() -> StorageConnectionLoan | None:
         raise StorageAdmissionUnavailable()
     if scope is None:
         return None
-    if not scope.is_current():
+    if scope.logical or not scope.is_current():
         scope.fail()
         raise StorageAdmissionUnavailable()
     try:

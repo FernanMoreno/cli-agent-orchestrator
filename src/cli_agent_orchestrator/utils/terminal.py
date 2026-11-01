@@ -126,6 +126,7 @@ async def wait_for_shell(
     don't match raw shell output.
     """
     from cli_agent_orchestrator.backends.registry import get_backend
+    from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
     from cli_agent_orchestrator.services.status_monitor import status_monitor
     from cli_agent_orchestrator.services.work_blocking import run_storage_aware_blocking
 
@@ -134,8 +135,12 @@ async def wait_for_shell(
     # utility caller can legitimately have only the monitor record (for
     # example during a recovery test), so retain the historical monitor
     # fallback when no provider/window can be resolved.
+    # Provider lookup can query remote metadata when the local cache misses, so
+    # it runs on the storage-aware worker; a storage denial is never "no window".
     try:
-        window = _resolve_window(terminal_id)
+        window = await run_storage_aware_blocking(_resolve_window, terminal_id)
+    except StorageAdmissionUnavailable:
+        raise
     except Exception:
         window = None
     if backend.supports_event_inbox() and window is None:

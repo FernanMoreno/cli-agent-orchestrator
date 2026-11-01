@@ -1146,6 +1146,7 @@ async def run_managed_agent_step(binding, payload, snapshot, port):
     bookkeeping and prompt recovery.  A managed delivery has no caller context,
     never reuses a terminal, and reports only conservative delivery evidence.
     """
+    from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
     from cli_agent_orchestrator.services.work_service import DeliveryObservation
     from cli_agent_orchestrator.services.work_terminal import managed_terminal_identity
 
@@ -1154,8 +1155,10 @@ async def run_managed_agent_step(binding, payload, snapshot, port):
 
     # Recheck before terminal allocation as well as in the scoped backend's
     # per-effect guard.  A revocation leaves any created terminal available for
-    # WorkAdmission reconciliation and never triggers a resend.
-    port.revalidate()
+    # WorkAdmission reconciliation and never triggers a resend.  Revalidation
+    # and transport input may read authority/metadata storage, so each runs on
+    # an owned worker joined before this admitted delivery continues.
+    await run_owned_blocking(port.revalidate)
     planned_target = port.expected_target
     if planned_target is None:
         raise ValueError("managed agent-step has no reserved terminal target")
@@ -1174,8 +1177,9 @@ async def run_managed_agent_step(binding, payload, snapshot, port):
         # Provider readiness can take long enough for authority, capacity, or
         # reservations to change.  Do not prepare a task receipt or transport
         # input until the exact short-lived capability validates again.
-        port.revalidate()
-        terminal_service.send_input(
+        await run_owned_blocking(port.revalidate)
+        await run_owned_blocking(
+            terminal_service.send_input,
             terminal.id,
             payload.message,
             frozen_memory=frozen_memory,

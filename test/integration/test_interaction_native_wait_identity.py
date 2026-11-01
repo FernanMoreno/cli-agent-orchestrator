@@ -10,6 +10,24 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
+@pytest.fixture
+def first_native_poll(interaction_http_context, monkeypatch):
+    from cli_agent_orchestrator.services.interactions import service as service_module
+
+    completed = asyncio.Event()
+    original = service_module.run_owned_blocking
+
+    async def observed_poll(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        completed.set()
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service_module, "run_owned_blocking", observed_poll)
+        yield completed
+    assert service_module.run_owned_blocking is original
+
+
 def _observe(context, screen_lines):
     from cli_agent_orchestrator.providers.mcp_interactions import NativeInteractionObservation
 
@@ -71,7 +89,7 @@ def _replace_and_close_second_notice(context, first_generation, first_question_i
 @pytest.mark.parametrize("terminal_state", ["cancelled", "expired"])
 @pytest.mark.asyncio
 async def test_live_native_wait_never_switches_to_replacement_same_generation_notice(
-    interaction_http_context, terminal_state
+    interaction_http_context, terminal_state, first_native_poll
 ):
     """A live F1 waiter is terminal even if F2 closes on the same source turn."""
     context = interaction_http_context
@@ -89,8 +107,8 @@ async def test_live_native_wait_never_switches_to_replacement_same_generation_no
             expected_generation=first_generation,
         )
     )
-    # Let the wait take its initial F1 snapshot before changing the ledger.
-    await asyncio.sleep(0.05)
+    # Wait for the actual first transaction to close before changing the ledger.
+    await asyncio.wait_for(first_native_poll.wait(), timeout=1)
 
     if terminal_state == "cancelled":
         context.service.cancel(
@@ -147,12 +165,14 @@ async def test_agent_step_pins_native_identity_across_bounded_wait_calls(
 
     original_wait = context.service.wait_for_native_manual
     wait_calls = []
+    initial_poll = asyncio.Event()
 
     async def record_wait(*args, **kwargs):
         result = await original_wait(*args, **kwargs)
         wait_calls.append(
             (kwargs.get("expected_question_id"), kwargs.get("expected_observation_id"), result)
         )
+        initial_poll.set()
         return result
 
     monkeypatch.setattr(context.service, "wait_for_native_manual", record_wait)
@@ -164,7 +184,8 @@ async def test_agent_step_pins_native_identity_across_bounded_wait_calls(
             cancel_event=None,
         )
     )
-    await asyncio.sleep(0.05)
+    # Observe actual completion of the first worker, not a scheduler sleep.
+    await asyncio.wait_for(initial_poll.wait(), timeout=1)
     assert wait_calls
     initial_call = wait_calls[0]
     assert initial_call[0] is None
@@ -199,7 +220,7 @@ async def test_agent_step_pins_native_identity_across_bounded_wait_calls(
 
 @pytest.mark.asyncio
 async def test_live_waiter_stays_expired_when_exact_notice_closes_after_ttl(
-    interaction_http_context, monkeypatch
+    interaction_http_context, monkeypatch, first_native_poll
 ):
     """Exact post-TTL closure clears the dialog gate without releasing its old wait."""
     from cli_agent_orchestrator.services.interactions import service as service_module
@@ -230,7 +251,7 @@ async def test_live_waiter_stays_expired_when_exact_notice_closes_after_ttl(
         )
     )
     # The live task must have captured F1 before the source turn advances.
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(first_native_poll.wait(), timeout=1)
     assert not waiter.done()
 
     next_generation = context.service.advance_turn(

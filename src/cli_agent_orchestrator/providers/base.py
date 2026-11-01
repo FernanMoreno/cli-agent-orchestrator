@@ -459,7 +459,9 @@ class BaseProvider(ABC):
     # Opt-in for adapters that can replace a rendered receipt result with a
     # stronger native-store result. The service performs an extra active-state
     # recheck and completion witness only when this capability is True.
-    supports_canonical_turn_receipt_result: bool = False
+    @property
+    def supports_canonical_turn_receipt_result(self) -> bool:
+        return False
 
     # Whether an explicit provider quota pause can continue the already
     # delivered turn without any CAO or operator input.  The shared terminal

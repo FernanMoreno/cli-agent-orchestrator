@@ -1,12 +1,14 @@
 """Process-local reservation ownership, independent of delivery or authority."""
 
+import asyncio
 import os
+import queue
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
-from typing import Literal
+from typing import Literal, Protocol
 
 from cli_agent_orchestrator.clients.storage_admission import (
     StorageAdmissionUnavailable,
@@ -26,6 +28,12 @@ from cli_agent_orchestrator.services.admission_policy import (
 
 AdmissionReason = CapacityReason | Literal["receiver_busy", "stopping"]
 ReservationState = Literal["reserved", "started", "released"]
+
+
+class SharedStorageCoordinator(Protocol):
+    _owner: "DeliveryAdmission"
+
+    def prepare(self, lease: "DeliveryReservation") -> None: ...
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,47 @@ class AdmissionLedgerDiagnostic:
     observation: CapacityObservation | None
     ceiling: ResourceAmounts | None
     decision: AdmissionDecision
+
+
+@dataclass(frozen=True, eq=False)
+class DeliveryRetirementHold:
+    """Exact local hold, consumed only after trusted shared retirement.
+
+    A notification is not evidence. Only the lease owner establishes physical
+    readiness; no callback, SQL or wait runs while it holds the ledger guard.
+    The caller must reconcile uncertain shared results before calling finish.
+    """
+
+    _lease: "DeliveryReservation"
+    _signal: threading.Event = field(default_factory=threading.Event, init=False)
+    _cleanup_leases: set["DeliveryReservation"] = field(default_factory=set, init=False)
+
+    def _ready_locked(self, owner: "DeliveryAdmission") -> bool:
+        lease = self._lease
+        return (
+            lease._owner is owner
+            and owner._leases.get(lease._key) is lease
+            and lease._retirement_hold is self
+            and lease._state == "started"
+            and lease._retirement_requested
+            and lease._retirement_ready
+            and lease._storage_stage is None
+            and not lease._storage_connections
+        )
+
+    @property
+    def physical_ready(self) -> bool:
+        owner = self._lease._owner
+        with owner._guard:
+            return self._ready_locked(owner)
+
+    def finish(self) -> bool:
+        owner = self._lease._owner
+        with owner._guard:
+            if not self._ready_locked(owner) or self._cleanup_leases:
+                return False
+            self._lease._retirement_hold = None
+            return owner._release_locked(self._lease)
 
 
 @dataclass(frozen=True, eq=False)
@@ -152,6 +201,8 @@ class DeliveryReservation:
         self._storage_stage: StorageStageReservation | None = None
         self._storage_connections: set[StorageConnectionReservation] = set()
         self._retirement_requested = False
+        self._retirement_hold: DeliveryRetirementHold | None = None
+        self._retirement_ready = False
 
     @property
     def storage_process_current(self) -> bool:
@@ -160,6 +211,31 @@ class DeliveryReservation:
     @property
     def footprint(self) -> ResourceAmounts:
         return self._footprint
+
+    def prepare_storage_scope(self) -> None:
+        """Trusted physical-worker hook; control SQL must not prepare recursively."""
+        owner = self._owner
+        with owner._guard:
+            if owner._control_lease is self:
+                return
+            if (
+                owner._leases.get(self._key) is not self
+                or self._state != "started"
+                or self._retirement_requested
+            ):
+                raise StorageAdmissionUnavailable()
+            coordinator = owner._shared_coordinator
+            if owner._shared_required and (not owner._shared_ready or coordinator is None):
+                raise StorageAdmissionUnavailable()
+        if coordinator is None:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise StorageAdmissionUnavailable()  # SQL belongs in the owned worker.
+        coordinator.prepare(self)
 
     @property
     def state(self) -> ReservationState:
@@ -182,6 +258,24 @@ class DeliveryReservation:
                 owner._storage_only_started += 1
             return True
 
+    def hold_retirement(self) -> DeliveryRetirementHold:
+        """Register before shared preparation; an uncertain commit must stay held."""
+        owner = self._owner
+        with owner._guard:
+            if (
+                self._state != "started"
+                or owner._leases.get(self._key) is not self
+                or self._retirement_requested
+                or self._retirement_hold is not None
+                or self._storage_connections
+                or self._storage_stage is not None
+                or owner._control_lease is self
+            ):
+                raise RuntimeError("retirement hold requires an exact started data lease")
+            hold = DeliveryRetirementHold(self)
+            self._retirement_hold = hold
+            return hold
+
     def cancel_before_start(self) -> bool:
         with self._owner._guard:
             if self._state != "reserved":
@@ -195,6 +289,8 @@ class DeliveryReservation:
                 return False
             if self._state != "started":
                 raise RuntimeError("delivery reservation has not started")
+            if self._retirement_hold is not None:
+                return self.finish_after_storage()
             if self._storage_stage is not None or self._storage_connections:
                 raise RuntimeError("active storage stage must finish physically first")
             return self._owner._release_locked(self)
@@ -241,6 +337,11 @@ class DeliveryReservation:
                 or self._retirement_requested
             ):
                 return None
+            if (
+                self._retirement_hold is not None
+                and len(self._storage_connections) >= self._footprint.storage_slots
+            ):
+                return None  # No unaccounted growth beyond the mapped footprint.
             additional = self._remaining.storage_slots == len(self._storage_connections)
             if additional:
                 if not owner._accepting:
@@ -282,6 +383,8 @@ class DeliveryReservation:
                 return None
             needs_storage = not self._remaining.storage_slots
             if needs_storage:
+                if self._retirement_hold is not None and not self._footprint.storage_slots:
+                    return None
                 if not owner._accepting:
                     return None
                 decision = owner._current_decision(now)
@@ -329,6 +432,16 @@ class StorageReservation(DeliveryReservation):
 class _StorageControlReservation(StorageReservation):
     """Already started infrastructure credit, excluded from normal data costs."""
 
+    def __init__(
+        self,
+        owner: "DeliveryAdmission",
+        key: int,
+        footprint: ResourceAmounts,
+        completion: DeliveryRetirementHold | None = None,
+    ):
+        super().__init__(owner, key, footprint)
+        self._completion_hold = completion
+
     def try_acquire_storage_connection(self, *, now: float) -> StorageConnectionReservation | None:
         validate_clock(now)
         owner = self._owner
@@ -356,38 +469,74 @@ class StorageControlPermit:
 
     def __init__(self, owner: "DeliveryAdmission"):
         self._owner = owner
+        self._lane_gate = threading.Lock()
+        self._lane_owner: int | None = None
 
     def belongs_to(self, owner: "DeliveryAdmission") -> bool:
         return self._owner is owner and owner._control_permit is self
 
     @contextmanager
-    def operation(self, *, clock: Callable[[], float]) -> Iterator[None]:
+    def _serial(self, *, wait: bool) -> Iterator[int]:
+        owner = self._owner
+        with owner._guard:  # Reject a child before touching inherited lane locks.
+            if type(wait) is not bool:
+                raise ValueError("control wait must be boolean")
+            if not self.belongs_to(owner) or self._lane_owner == threading.get_ident():
+                raise StorageAdmissionUnavailable()
+            generation = owner._generation
+        if not self._lane_gate.acquire(blocking=wait):
+            raise StorageAdmissionUnavailable()
+        try:
+            with owner._guard:
+                self._lane_owner = threading.get_ident()
+            yield generation
+        finally:
+            with owner._guard:
+                self._lane_owner = None
+            self._lane_gate.release()
+
+    @contextmanager
+    def operation(
+        self,
+        *,
+        clock: Callable[[], float],
+        retirement: DeliveryRetirementHold | None = None,
+        wait: bool = False,
+    ) -> Iterator[None]:
         owner = self._owner
         validate_clock(clock())
-        with owner._guard:
-            if (
-                not self.belongs_to(owner)
-                or not owner._accepting
-                or owner._control_lease is not None
-                or storage_close_uncertainty()
-            ):
-                raise StorageAdmissionUnavailable()
-            key = next(owner._sequence)
-            lease = _StorageControlReservation(owner, key, ResourceAmounts())
-            lease._state = "started"
-            owner._control_lease = lease
-            owner._leases[key] = lease
-            owner._started += 1
-            owner._storage_only_inflight += 1
-            owner._storage_only_started += 1
-        try:
-            with physical_storage_scope(lease, clock=clock):
-                try:
-                    yield
-                finally:
-                    check_storage_admission()
-        finally:
-            lease.finish_after_storage()
+        with self._serial(wait=wait) as generation:
+            with owner._guard:
+                completion = type(
+                    retirement
+                ) is DeliveryRetirementHold and retirement._ready_locked(owner)
+                if (
+                    not self.belongs_to(owner)
+                    or (not owner._accepting and not completion)
+                    or (owner._generation != generation and not completion)
+                    or (retirement is not None and not completion)
+                    or owner._control_lease is not None
+                    or storage_close_uncertainty()
+                ):
+                    raise StorageAdmissionUnavailable()
+                key = next(owner._sequence)
+                lease = _StorageControlReservation(owner, key, ResourceAmounts(), retirement)
+                if retirement is not None:
+                    retirement._cleanup_leases.add(lease)
+                lease._state = "started"
+                owner._control_lease = lease
+                owner._leases[key] = lease
+                owner._started += 1
+                owner._storage_only_inflight += 1
+                owner._storage_only_started += 1
+            try:
+                with physical_storage_scope(lease, clock=clock):
+                    try:
+                        yield
+                    finally:
+                        check_storage_admission()
+            finally:
+                lease.finish_after_storage()
 
 
 class DeliveryAdmission:
@@ -408,6 +557,12 @@ class DeliveryAdmission:
         self._pid = os.getpid()
         self._process_guard = threading.RLock()
         self._leases: dict[int, DeliveryReservation] = {}
+        self._retirement_queue: queue.SimpleQueue[DeliveryRetirementHold | None] = (
+            queue.SimpleQueue()
+        )
+        self._shared_required = False
+        self._shared_ready = False
+        self._shared_coordinator: SharedStorageCoordinator | None = None
         self._pending: dict[int, DeliveryReservation] = {}
         self._receivers: dict[str, int] = {}
         self._sequence = count()
@@ -443,6 +598,40 @@ class DeliveryAdmission:
         if self._pid != os.getpid():
             raise StorageAdmissionUnavailable()
         return self._process_guard
+
+    @property
+    def shared_required(self) -> bool:
+        with self._guard:
+            return self._shared_required
+
+    @property
+    def shared_ready(self) -> bool:
+        with self._guard:
+            return self._shared_ready and self._accepting
+
+    def require_shared_admission(self) -> None:
+        """Configuration closes data; it never issues resource authority."""
+        with self._guard:
+            if self._shared_required:
+                return
+            if any(lease is not self._control_lease for lease in self._leases.values()):
+                raise RuntimeError("normal operations must retire before shared activation")
+            self._shared_required = True
+            self._shared_ready = False
+
+    def bind_shared_admission(self, coordinator: SharedStorageCoordinator) -> None:
+        if coordinator._owner is not self:
+            raise ValueError("shared coordinator belongs to another owner")
+        with self._guard:
+            if (
+                not self._shared_required
+                or not self._accepting
+                or any(lease is not self._control_lease for lease in self._leases.values())
+                or self._shared_coordinator not in (None, coordinator)
+            ):
+                raise RuntimeError("shared admission cannot replace a live owner")
+            self._shared_coordinator = coordinator
+            self._shared_ready = True
 
     @staticmethod
     def _validate_configuration(policy: AdmissionPolicy, budget: ResourceAmounts | None) -> None:
@@ -545,8 +734,10 @@ class DeliveryAdmission:
         self, now: float, *, charged: bool = True, close_uncertain: bool | None = None
     ) -> AdmissionDecision:
         committed = self._committed if charged else ResourceAmounts()
-        if self._observation is None or (
-            storage_close_uncertainty() if close_uncertain is None else close_uncertain
+        if (
+            (self._shared_required and not self._shared_ready)
+            or self._observation is None
+            or (storage_close_uncertainty() if close_uncertain is None else close_uncertain)
         ):
             return AdmissionDecision(0, "unknown_capacity", resource_debt=committed)
         budget = self._budget
@@ -662,6 +853,19 @@ class DeliveryAdmission:
             return False
         if lease._storage_connections or lease._storage_stage is not None:
             raise RuntimeError("active storage stage must finish physically first")
+        if lease._retirement_hold is not None:
+            if not lease._retirement_requested:
+                raise RuntimeError("held retirement requires physical body completion")
+            if not lease._retirement_ready:
+                self._retirement_queue.put(lease._retirement_hold)
+            lease._retirement_ready = True
+            lease._retirement_hold._signal.set()  # Notification only; no external callback.
+            return False
+        completion = (
+            lease._completion_hold if isinstance(lease, _StorageControlReservation) else None
+        )
+        if completion is not None and lease not in completion._cleanup_leases:
+            raise RuntimeError("control completion ownership is unavailable")
         if lease._retirement_requested:
             self._storage_retirement_pending -= 1
         if lease._state == "started":
@@ -679,7 +883,21 @@ class DeliveryAdmission:
         if lease._receiver is not None and self._receivers.get(lease._receiver) == lease._key:
             self._receivers.pop(lease._receiver)
         lease._state = "released"
+        if completion is not None:
+            completion._cleanup_leases.remove(lease)
         return True
+
+    def wait_retirement_ready(self, *, timeout_s: float) -> DeliveryRetirementHold | None:
+        validate_clock(timeout_s)
+        self._guard  # PID validation before touching inherited queue locks.
+        try:
+            return self._retirement_queue.get(timeout=timeout_s)
+        except queue.Empty:
+            return None
+
+    def wake_retirement_worker(self) -> None:
+        self._guard
+        self._retirement_queue.put(None)
 
     def stop_accepting(self) -> None:
         with self._guard:

@@ -735,7 +735,9 @@ _RUNTIME_ROLE_QUERY = """WITH role_flags AS MATERIALIZED (
                           '_cao_resource_domains',
                           '_cao_resource_domain_history',
                           '_cao_resource_members',
-                          '_cao_resource_member_history'
+                          '_cao_resource_member_history',
+                          '_cao_resource_metadata_credits',
+                          '_cao_resource_metadata_credit_history'
                       )
                       AND CASE WHEN c.relkind NOT IN ('r','p') THEN true ELSE (
                           NOT has_table_privilege(current_user,c.oid,'SELECT')
@@ -905,6 +907,8 @@ def protect_runtime_authority_tables(connection: Connection, target: DatabaseTar
         ("_cao_resource_domain_history", "resource domain history"),
         ("_cao_resource_members", "resource membership"),
         ("_cao_resource_member_history", "resource membership history"),
+        ("_cao_resource_metadata_credits", "resource metadata credit"),
+        ("_cao_resource_metadata_credit_history", "resource metadata credit history"),
     ):
         _protect_runtime_readonly_table(connection, target, protected_name, protected_label)
 

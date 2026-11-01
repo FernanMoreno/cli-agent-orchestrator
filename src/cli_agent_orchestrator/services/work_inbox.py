@@ -15,6 +15,7 @@ from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRep
 from cli_agent_orchestrator.models.work_contract import Identity
 from cli_agent_orchestrator.models.work_delivery import WorkDeliveryEnvelope
 from cli_agent_orchestrator.services.inbox_service import InboxService
+from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
 from cli_agent_orchestrator.services.work_contract import ContractConflict
 from cli_agent_orchestrator.services.work_delivery import DeliveryAdapter
 from cli_agent_orchestrator.services.work_service import DeliveryObservation
@@ -122,6 +123,11 @@ def managed_inbox_delivery_adapters(
         return actual
 
     async def send(binding, payload, snapshot, port, *, target_for):
+        # SQL, target binding and the guarded paste are all blocking; run them
+        # in one owned worker which inherits the caller's storage scope.
+        return await run_owned_blocking(send_sync, binding, payload, port, target_for)
+
+    def send_sync(binding, payload, port, target_for):
         try:
             identity = _managed_inbox_store_identity(expected=store_context)
         except RuntimeError as error:

@@ -17,7 +17,9 @@ from uuid import uuid4
 
 from cli_agent_orchestrator.backends.base import ProcessRestrictionContract, TerminalBackend
 from cli_agent_orchestrator.clients.storage_admission import (
+    StorageAdmissionUnavailable,
     check_storage_admission,
+    logical_storage_scope,
     physical_storage_scope,
 )
 from cli_agent_orchestrator.clients.work_repository import WorkConflict, WorkRepository
@@ -156,6 +158,10 @@ class _WorkEffectPort:
     def _storage_scope(self):
         # Rebind in each real worker/task. A copied Context is not authority.
         return physical_storage_scope(self._resource_reservation, clock=self._resource_clock)
+
+    def _logical_storage_scope(self):
+        # Async identity only: owned workers rebind a physical scope via handoff.
+        return logical_storage_scope(self._resource_reservation, clock=self._resource_clock)
 
     def _before_effect(
         self, effect, terminal_id, session_name=None, window_name=None, file_path=None
@@ -1461,6 +1467,16 @@ class WorkAdmission:
         return reservation
 
     @contextmanager
+    def _physical_dispatch_scope(self, reservation) -> Iterator[None]:
+        """Only a refused scope entry proves selection/intent never began."""
+        with ExitStack() as scope:
+            try:
+                scope.enter_context(physical_storage_scope(reservation, clock=self._resource_clock))
+            except StorageAdmissionUnavailable:
+                raise _ResourcesUnavailable() from None
+            yield
+
+    @contextmanager
     def _dispatch_storage_control(self) -> Iterator[None]:
         """Own selection SQL independently of the later delivery reservation."""
         owner = self._resource_admission
@@ -1474,7 +1490,7 @@ class WorkAdmission:
             reservation.cancel_before_start()
             raise _ResourcesUnavailable()
         try:
-            with physical_storage_scope(reservation, clock=self._resource_clock):
+            with self._physical_dispatch_scope(reservation):
                 yield
                 check_storage_admission()
         finally:
@@ -1517,9 +1533,7 @@ class WorkAdmission:
                             or f"work-attempt/{preview.attempt_id}/{preview.generation}",
                             resources,
                         )
-                        physical.enter_context(
-                            physical_storage_scope(resource_reservation, clock=self._resource_clock)
-                        )
+                        physical.enter_context(self._physical_dispatch_scope(resource_reservation))
                         if preview_terminal_id is None:
                             committed = self._commit_dispatch(
                                 preview,
@@ -1541,9 +1555,7 @@ class WorkAdmission:
                         resource_reservation = self._reserve_delivery_resource(
                             f"work-attempt/{preview.attempt_id}/{preview.generation}", resources
                         )
-                        physical.enter_context(
-                            physical_storage_scope(resource_reservation, clock=self._resource_clock)
-                        )
+                        physical.enter_context(self._physical_dispatch_scope(resource_reservation))
                         committed = self._commit_dispatch(preview, registered_only=False)
                 except _ResourcesUnavailable:
                     return None
@@ -1869,6 +1881,14 @@ class WorkAdmission:
         await asyncio.shield(cleanup)
 
     async def _deliver_registered(self, binding, port):
+        from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
+        adapter, payload, snapshot = await run_owned_blocking(
+            self._load_registered_delivery, binding
+        )
+        return await adapter.send(binding, payload, snapshot, port)
+
+    def _load_registered_delivery(self, binding):
         with self.repository.read_snapshot() as connection:
             self.contracts._revalidate_order(
                 connection,
@@ -1886,7 +1906,7 @@ class WorkAdmission:
                 ).fetchone(),
             )
             adapter, payload = self.deliveries._restore(connection, binding)
-        return await adapter.send(binding, payload, snapshot, port)
+        return adapter, payload, snapshot
 
     async def wait_for_dispatch_cleanup(self, *, propagate_cancellation=False) -> None:
         """Join abandonment owners; shutdown keeps draining through cancellation."""
@@ -1945,7 +1965,7 @@ class WorkAdmission:
 
         async def invoke_send():
             # run_owned_async creates a new task; bind inside that task.
-            with port._storage_scope():
+            with port._logical_storage_scope():
                 result = await send(binding, port)
                 check_storage_admission()
                 return result
@@ -1961,7 +1981,7 @@ class WorkAdmission:
                 port.close()
 
         try:
-            with port._storage_scope():
+            with port._logical_storage_scope():
                 return await WorkService(
                     self.repository, origins=self.origins
                 )._send_committed_async(

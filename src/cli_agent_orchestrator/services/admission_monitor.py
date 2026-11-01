@@ -238,6 +238,11 @@ class AdmissionMonitor:
                 and not self._refresh_guard.locked()
             )
 
+    @property
+    def storage_control(self) -> StorageControlPermit | None:
+        """Trusted runtime composition only; the permit is not a capacity claim."""
+        return self._storage_control
+
     def set_on_change(self, callback: Callable[[], None]) -> None:
         with self._lifecycle_guard:
             if self._runner is not None or self._refresh_guard.locked():

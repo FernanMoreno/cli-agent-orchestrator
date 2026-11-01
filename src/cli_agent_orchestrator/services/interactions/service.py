@@ -84,6 +84,7 @@ from cli_agent_orchestrator.services.interactions.models import (
 )
 from cli_agent_orchestrator.services.interactions.policy import InteractionPolicy
 from cli_agent_orchestrator.services.storage_operation_admission import StorageOperationAdmission
+from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
 
 _AGENT_SEAL = object()
 _MAX_ACTIVE = 100
@@ -1597,22 +1598,24 @@ class InteractionService:
         ):
             raise InteractionInvalid("runtime interaction wait is bounded to 30 seconds")
         deadline = time.monotonic() + float(timeout_seconds)
-        while True:
+
+        def poll_once() -> tuple[bool, WaitStatus]:
+            nonlocal expected_generation
             with self._transaction() as connection:
                 status = self._source_status_in_connection(connection, terminal_id, incarnation_id)
                 if status.state in {"replaced", "inactive", "unregistered", "stale_turn"}:
-                    return WaitStatus(state="stale")
+                    return True, WaitStatus(state="stale")
                 source = connection.execute(
                     "SELECT turn_generation FROM interaction_sources WHERE terminal_id=%s AND incarnation_id=%s FOR UPDATE",
                     (terminal_id, incarnation_id),
                 ).fetchone()
                 if source is None:
-                    return WaitStatus(state="stale")
+                    return True, WaitStatus(state="stale")
                 current_generation = source["turn_generation"]
                 if expected_generation is None:
                     expected_generation = current_generation
                 if current_generation != expected_generation:
-                    return WaitStatus(state="stale")
+                    return True, WaitStatus(state="stale")
                 self._expire_due(connection, _now())
                 groups = connection.execute(
                     "SELECT g.group_id,g.expires_at,g.lifecycle FROM interaction_groups g "
@@ -1636,7 +1639,7 @@ class InteractionService:
                     elif group["lifecycle"] in {"expired", "cancelled", "stale", "cycle_blocked"}:
                         terminal_state = group["lifecycle"]
                 if not waiting:
-                    return WaitStatus(
+                    return True, WaitStatus(
                         state=terminal_state or "released",
                         group_ids=tuple(),
                         deadline=_datetime(earliest),
@@ -1644,6 +1647,12 @@ class InteractionService:
                 state = WaitStatus(
                     state="waiting", group_ids=tuple(waiting), deadline=_datetime(earliest)
                 )
+            return False, state
+
+        while True:
+            finished, state = await run_owned_blocking(poll_once)
+            if finished:
+                return state
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return state
@@ -1690,20 +1699,22 @@ class InteractionService:
         ):
             raise InteractionInvalid("runtime native interaction wait is bounded to 30 seconds")
         deadline = time.monotonic() + float(timeout_seconds)
-        while True:
+
+        def poll_once() -> tuple[bool, NativeWaitStatus]:
+            nonlocal bound_question_id, bound_observation_id
             with self._transaction() as connection:
                 source = connection.execute(
                     "SELECT * FROM interaction_sources WHERE terminal_id=%s AND incarnation_id=%s FOR UPDATE",
                     (terminal_id, incarnation_id),
                 ).fetchone()
                 if source is None:
-                    return NativeWaitStatus(state="unregistered")
+                    return True, NativeWaitStatus(state="unregistered")
                 if source["revoked_at"] is not None:
-                    return NativeWaitStatus(state="stale")
+                    return True, NativeWaitStatus(state="stale")
                 try:
                     self._validate_source_row(connection, source, require_capability=False)
                 except (InteractionStale, InteractionForbidden):
-                    return NativeWaitStatus(state="stale")
+                    return True, NativeWaitStatus(state="stale")
                 current_generation = int(source["turn_generation"])
                 generation_advanced = current_generation != expected_generation
                 direct_manual_advance = self._has_websocket_advance_chain(
@@ -1740,7 +1751,7 @@ class InteractionService:
                         ),
                     ).fetchone()
                     if question is None:
-                        return NativeWaitStatus(
+                        return True, NativeWaitStatus(
                             state="stale",
                             question_id=bound_question_id,
                             observation_id=bound_observation_id,
@@ -1753,7 +1764,7 @@ class InteractionService:
                         "expired",
                         "cancelled",
                     } and self._native_closed_event(connection, question["question_id"]):
-                        return NativeWaitStatus(
+                        return True, NativeWaitStatus(
                             state="stale",
                             lifecycle=question["lifecycle"],
                             question_id=question["question_id"],
@@ -1762,14 +1773,14 @@ class InteractionService:
                         )
                     if question["lifecycle"] == "reconciled_external":
                         if not direct_manual_advance or newer_observation:
-                            return NativeWaitStatus(
+                            return True, NativeWaitStatus(
                                 state="stale",
                                 lifecycle="reconciled_external",
                                 question_id=question["question_id"],
                                 observation_id=question["observation_id"],
                                 deadline=_datetime(question["expires_at"]),
                             )
-                        return NativeWaitStatus(
+                        return True, NativeWaitStatus(
                             state="released",
                             lifecycle="reconciled_external",
                             question_id=question["question_id"],
@@ -1778,7 +1789,7 @@ class InteractionService:
                             deadline=_datetime(question["expires_at"]),
                         )
                     if question["lifecycle"] in {"expired", "cancelled"}:
-                        return NativeWaitStatus(
+                        return True, NativeWaitStatus(
                             state=question["lifecycle"],
                             lifecycle=question["lifecycle"],
                             question_id=question["question_id"],
@@ -1811,7 +1822,7 @@ class InteractionService:
                             or reopened
                             or newer_observation
                         ):
-                            return NativeWaitStatus(
+                            return True, NativeWaitStatus(
                                 state="stale",
                                 lifecycle=question["lifecycle"],
                                 question_id=question["question_id"],
@@ -1827,7 +1838,7 @@ class InteractionService:
                         )
                     elif question["lifecycle"] == "manual_only":
                         if newer_observation:
-                            return NativeWaitStatus(
+                            return True, NativeWaitStatus(
                                 state="stale",
                                 lifecycle=question["lifecycle"],
                                 question_id=question["question_id"],
@@ -1842,7 +1853,7 @@ class InteractionService:
                             deadline=_datetime(question["expires_at"]),
                         )
                     elif question["lifecycle"] == "stale":
-                        return NativeWaitStatus(
+                        return True, NativeWaitStatus(
                             state="stale",
                             lifecycle=question["lifecycle"],
                             question_id=question["question_id"],
@@ -1850,7 +1861,7 @@ class InteractionService:
                             deadline=_datetime(question["expires_at"]),
                         )
                     else:
-                        return NativeWaitStatus(
+                        return True, NativeWaitStatus(
                             state="stale",
                             lifecycle=question["lifecycle"],
                             question_id=question["question_id"],
@@ -1859,11 +1870,17 @@ class InteractionService:
                         )
                 else:
                     if generation_advanced:
-                        return NativeWaitStatus(state="stale")
+                        return True, NativeWaitStatus(state="stale")
                     # The monitor may not have persisted its first exact
                     # observation yet; bounded polling lets that observation
                     # arrive without pausing legacy/unregistered terminals.
                     status = NativeWaitStatus(state="waiting")
+            return False, status
+
+        while True:
+            finished, status = await run_owned_blocking(poll_once)
+            if finished:
+                return status
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return status
@@ -2924,7 +2941,8 @@ class InteractionService:
             raise InteractionInvalid("event cursor must be a non-negative integer")
         group_id = _identifier(group_id, "group id")
         deadline = time.monotonic() + float(timeout_seconds)
-        while True:
+
+        def poll_once() -> tuple[bool, WaitResult]:
             with self._transaction() as connection:
                 source, actor = self._current_source_by_capability(
                     connection, capability, for_update=True
@@ -2941,7 +2959,7 @@ class InteractionService:
                 ):
                     raise InteractionForbidden("group belongs to another interaction source")
                 if group["turn_generation"] != source["turn_generation"]:
-                    return WaitResult(
+                    return True, WaitResult(
                         group_id=group_id,
                         state="stale",
                         next_event_sequence=self._event_sequence(connection),
@@ -2955,7 +2973,7 @@ class InteractionService:
                     blocking_state == "expired"
                     and self._expired_group_has_deliverable_answers(connection, group_id)
                 ):
-                    return WaitResult(
+                    return True, WaitResult(
                         group_id=group_id,
                         state=blocking_state,
                         next_event_sequence=self._event_sequence(connection),
@@ -3030,6 +3048,12 @@ class InteractionService:
                         next_event_sequence=self._event_sequence(connection),
                         next_poll_after_ms=0,
                     )
+            return False, result
+
+        while True:
+            finished, result = await run_owned_blocking(poll_once)
+            if finished:
+                return result
             if result.state != "pending":
                 return result
             remaining = deadline - time.monotonic()

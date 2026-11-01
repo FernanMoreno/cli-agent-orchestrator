@@ -80,7 +80,9 @@ class MockCliProvider(BaseProvider):
             raise TimeoutError("Shell initialization timed out after 10 seconds")
 
         command = shlex.join([self.BINARY_NAME, "--delay-ms", str(self._delay_ms)])
-        get_backend().send_keys(self.session_name, self.window_name, command)
+        await self._run_blocking(
+            get_backend().send_keys, self.session_name, self.window_name, command
+        )
 
         if not await wait_until_status(
             self.terminal_id, {TerminalStatus.IDLE, TerminalStatus.COMPLETED}, timeout=15.0

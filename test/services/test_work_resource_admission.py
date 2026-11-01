@@ -624,7 +624,10 @@ async def test_work_physical_stages_share_resource_owner(paired_context, monkeyp
                 with args[3].backend_scope():
                     await terminal_service._await_provider_operation(physical_probe)
             else:
-                physical_probe()
+                from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
+                # The async callback carries identity; SQL belongs to its joined worker.
+                await run_owned_blocking(physical_probe)
             return await adapter.send(*args)
 
         monkeypatch.setattr(

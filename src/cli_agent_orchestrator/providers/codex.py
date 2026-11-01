@@ -1556,7 +1556,9 @@ class CodexProvider(BaseProvider):
 
                 logger.info("Codex workspace trust prompt (v1) detected, auto-accepting")
                 status_monitor.notify_input_sent(self.terminal_id)
-                get_backend().send_special_key(self.session_name, self.window_name, "Enter")
+                await self._run_blocking(
+                    get_backend().send_special_key, self.session_name, self.window_name, "Enter"
+                )
                 trust_dismissed = True
                 await asyncio.sleep(1.0)
                 continue
@@ -1574,7 +1576,9 @@ class CodexProvider(BaseProvider):
 
                 logger.info("Codex workspace trust prompt (v2) detected, auto-accepting")
                 status_monitor.notify_input_sent(self.terminal_id)
-                get_backend().send_special_key(self.session_name, self.window_name, "Enter")
+                await self._run_blocking(
+                    get_backend().send_special_key, self.session_name, self.window_name, "Enter"
+                )
                 trust_dismissed = True
                 await asyncio.sleep(1.0)
                 continue
@@ -1586,10 +1590,14 @@ class CodexProvider(BaseProvider):
                     "Codex update-available dialog detected, selecting " "'Skip until next version'"
                 )
                 status_monitor.notify_input_sent(self.terminal_id)
-                get_backend().send_keys(self.session_name, self.window_name, "3", enter_count=0)
+                await self._run_blocking(
+                    get_backend().send_keys, self.session_name, self.window_name, "3", enter_count=0
+                )
                 # TUI rendering latency: '3' highlights the menu item, Enter confirms.
                 await asyncio.sleep(0.3)
-                get_backend().send_special_key(self.session_name, self.window_name, "Enter")
+                await self._run_blocking(
+                    get_backend().send_special_key, self.session_name, self.window_name, "Enter"
+                )
                 update_dismissed = True
                 await asyncio.sleep(1.0)
                 continue
@@ -1655,7 +1663,9 @@ class CodexProvider(BaseProvider):
         # external input that must be allowed to drive PROCESSING transitions
         # past any previously-latched ready state.
         status_monitor.notify_input_sent(self.terminal_id)
-        get_backend().send_keys(self.session_name, self.window_name, "echo ready")
+        await self._run_blocking(
+            get_backend().send_keys, self.session_name, self.window_name, "echo ready"
+        )
         await asyncio.sleep(2.0)
 
         # Build command with flags and agent profile (developer_instructions).
@@ -1665,7 +1675,9 @@ class CodexProvider(BaseProvider):
         #   caused by the shell_snapshot subprocess inheriting stdin.
         command = self._build_codex_command()
         status_monitor.notify_input_sent(self.terminal_id)
-        get_backend().send_keys(self.session_name, self.window_name, command)
+        await self._run_blocking(
+            get_backend().send_keys, self.session_name, self.window_name, command
+        )
 
         # Handle workspace trust prompt if it appears (new/untrusted directories)
         await self._handle_trust_prompt(timeout=20.0)

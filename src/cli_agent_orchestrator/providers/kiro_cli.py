@@ -25,6 +25,7 @@ import time
 from typing import Optional
 
 from cli_agent_orchestrator.backends.registry import get_backend
+from cli_agent_orchestrator.models.agent_profile import AgentProfile
 from cli_agent_orchestrator.models.kiro_engine import KiroEngine, resolve_kiro_engine
 from cli_agent_orchestrator.models.terminal import TerminalStatus
 from cli_agent_orchestrator.providers.base import BaseProvider
@@ -227,6 +228,7 @@ class KiroCliProvider(BaseProvider):
         self._agent_profile = agent_profile
         self._engine = resolve_kiro_engine(persisted=engine)
         self._model = model
+        self._kas_profile: AgentProfile
 
         # Build dynamic prompt pattern based on agent profile
         # This pattern matches various Kiro prompt formats after ANSI stripping:
@@ -327,9 +329,12 @@ class KiroCliProvider(BaseProvider):
             from cli_agent_orchestrator.clients.database import get_terminal_metadata
             from cli_agent_orchestrator.services.kiro_profiles import guard_existing_kas_runtime
 
-            self._kas_profile = guard_existing_kas_runtime(
-                self.terminal_id, get_terminal_metadata(self.terminal_id)
-            )
+            def current_kas_runtime() -> AgentProfile:
+                return guard_existing_kas_runtime(
+                    self.terminal_id, get_terminal_metadata(self.terminal_id)
+                )
+
+            self._kas_profile = await self._run_blocking(current_kas_runtime)
             from cli_agent_orchestrator.models.kiro_launch import KiroLaunchRefusedError
 
             if self._model is not None and self._model != self._kas_profile.model:
@@ -397,9 +402,11 @@ class KiroCliProvider(BaseProvider):
         if self._engine == KiroEngine.KAS:
             # Waiting for the shell crossed an async boundary. Re-prove the
             # exact private policy before the first native launch write.
-            guard_existing_kas_runtime(self.terminal_id, get_terminal_metadata(self.terminal_id))
+            await self._run_blocking(current_kas_runtime)
         status_monitor.notify_input_sent(self.terminal_id)
-        get_backend().send_keys(self.session_name, self.window_name, command)
+        await self._run_blocking(
+            get_backend().send_keys, self.session_name, self.window_name, command
+        )
 
         # Step 3: Wait for Kiro CLI to fully initialize and show the agent prompt.
         # Accept both IDLE and COMPLETED — some CLI versions show a startup
@@ -521,8 +528,12 @@ class KiroCliProvider(BaseProvider):
         # send_special_key path, so answering the dialog isn't blocked by the
         # WAITING_USER_ANSWER we just observed.
         status_monitor.notify_input_sent(self.terminal_id)
-        backend.send_special_key(self.session_name, self.window_name, "Down")
-        backend.send_special_key(self.session_name, self.window_name, "Enter")
+        await self._run_blocking(
+            backend.send_special_key, self.session_name, self.window_name, "Down"
+        )
+        await self._run_blocking(
+            backend.send_special_key, self.session_name, self.window_name, "Enter"
+        )
         # Bound the post-accept wait by the time already spent, so total startup
         # stays within provider_init_timeout rather than up to 2x it.
         remaining = max(0.0, init_timeout - (time.monotonic() - start))

@@ -588,7 +588,9 @@ class CursorCliProvider(BaseProvider):
         from cli_agent_orchestrator.services.status_monitor import status_monitor
 
         status_monitor.notify_input_sent(self.terminal_id)
-        get_backend().send_keys(self.session_name, self.window_name, command)
+        await self._run_blocking(
+            get_backend().send_keys, self.session_name, self.window_name, command
+        )
 
         # Wait for Cursor CLI to fully initialize. Accept both IDLE
         # and COMPLETED — some versions render a startup message that

@@ -2,12 +2,18 @@
 
 from cli_agent_orchestrator.clients.postgres.migrations import ComponentMigration
 
-AUTHORITY_TABLES = (
+# Versions 1 and 2 are applied history; their table tuple is part of the checksum.
+_BASE_AUTHORITY_TABLES = (
     "_cao_resource_domains",
     "_cao_resource_domain_history",
     "_cao_resource_members",
     "_cao_resource_member_history",
 )
+METADATA_CREDIT_TABLES = (
+    "_cao_resource_metadata_credits",
+    "_cao_resource_metadata_credit_history",
+)
+AUTHORITY_TABLES = _BASE_AUTHORITY_TABLES + METADATA_CREDIT_TABLES
 LEDGER_TABLES = ("_cao_resource_usage", "_cao_resource_operations", "_cao_resource_allocations")
 
 RESOURCE_ADMISSION_MIGRATIONS = (
@@ -82,7 +88,7 @@ RESOURCE_ADMISSION_MIGRATIONS = (
             "CREATE INDEX resource_allocations_domain ON _cao_resource_allocations(domain_id)",
             "CREATE INDEX resource_operations_live ON _cao_resource_operations(operation_id) WHERE state<>'released'",
         ),
-        tables=AUTHORITY_TABLES + LEDGER_TABLES,
+        tables=_BASE_AUTHORITY_TABLES + LEDGER_TABLES,
     ),
     ComponentMigration(
         component="resource_admission",
@@ -99,6 +105,51 @@ RESOURCE_ADMISSION_MIGRATIONS = (
                      AND cost_sha256 ~ '^[0-9a-f]{64}$'))""",
             """CREATE INDEX resource_members_process ON _cao_resource_members
                 (instance_id,process_generation,domain_id)""",
+        ),
+        tables=_BASE_AUTHORITY_TABLES + LEDGER_TABLES,
+    ),
+    ComponentMigration(
+        component="resource_admission",
+        scope="main",
+        version=3,
+        statements=(
+            # Owner-written authority. A credit is charged into usage once and is
+            # retired only by a later physical witness, never by membership state.
+            """CREATE TABLE _cao_resource_metadata_credits (
+                credit_id UUID PRIMARY KEY,
+                domain_id UUID NOT NULL REFERENCES _cao_resource_domains(domain_id),
+                instance_id UUID NOT NULL, process_generation UUID NOT NULL,
+                process_pid BIGINT NOT NULL CHECK (process_pid>0),
+                process_started_at DOUBLE PRECISION NOT NULL CHECK (
+                    process_started_at>0 AND process_started_at<'Infinity'::double precision),
+                binding_sha256 TEXT NOT NULL CHECK (binding_sha256 ~ '^[0-9a-f]{64}$'),
+                amount BIGINT NOT NULL CHECK (amount=1),
+                revision BIGINT NOT NULL CHECK (revision>0),
+                actor_principal_id TEXT NOT NULL CHECK (
+                    actor_principal_id ~ '^principal-[0-9a-f]{64}$'),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (domain_id,instance_id,process_generation),
+                FOREIGN KEY (domain_id,instance_id,process_generation) REFERENCES
+                    _cao_resource_members(domain_id,instance_id,process_generation)
+            )""",
+            """CREATE TABLE _cao_resource_metadata_credit_history (
+                credit_id UUID NOT NULL REFERENCES _cao_resource_metadata_credits(credit_id),
+                revision BIGINT NOT NULL CHECK (revision>0), payload_json JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (credit_id,revision)
+            )""",
+            """CREATE INDEX resource_metadata_credits_process ON _cao_resource_metadata_credits
+                (instance_id,process_generation)""",
+        ),
+        tables=AUTHORITY_TABLES + LEDGER_TABLES,
+    ),
+    ComponentMigration(
+        component="resource_admission",
+        scope="main",
+        version=4,
+        statements=(
+            """ALTER TABLE _cao_resource_operations
+                ADD COLUMN metadata_required BOOLEAN NOT NULL DEFAULT FALSE""",
         ),
         tables=AUTHORITY_TABLES + LEDGER_TABLES,
     ),

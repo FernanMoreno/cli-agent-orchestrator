@@ -68,9 +68,11 @@ def agent_step_context(context, isolated_memory_db, monkeypatch):
     class Provider(MockCliProvider):
         async def initialize(self):
             scoped_backends.append(get_backend())
-            get_backend().send_keys(self.session_name, self.window_name, "mock_cli startup")
+            await self._run_blocking(
+                get_backend().send_keys, self.session_name, self.window_name, "mock_cli startup"
+            )
             self._initialized = True
-            context.after_startup()
+            await self._run_blocking(context.after_startup)
             return True
 
     def create_provider(provider, terminal_id, session, window, profile, allowed_tools, **kwargs):

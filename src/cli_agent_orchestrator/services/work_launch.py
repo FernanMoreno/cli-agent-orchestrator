@@ -83,7 +83,10 @@ async def _launch(binding, payload, snapshot, port):
                 interaction_work_binding=binding,
             )
             if payload.message:
-                terminal_service.send_input(
+                # Explicit legacy V1 route: transport input may read storage,
+                # so it runs on an owned worker joined before reporting.
+                await run_owned_blocking(
+                    terminal_service.send_input,
                     terminal.id,
                     payload.message,
                     frozen_memory=snapshot.content.decode("utf-8"),

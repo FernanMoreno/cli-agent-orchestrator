@@ -19,8 +19,10 @@ import psutil
 from psycopg import sql
 
 from cli_agent_orchestrator.clients.admission_schema import (
+    _BASE_AUTHORITY_TABLES,
     AUTHORITY_TABLES,
     LEDGER_TABLES,
+    METADATA_CREDIT_TABLES,
     RESOURCE_ADMISSION_MIGRATIONS,
 )
 from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, Record, connect
@@ -34,6 +36,8 @@ from cli_agent_orchestrator.models.admission_domains import (
     DomainRecord,
     DomainRequest,
     DomainSpec,
+    MetadataCoverage,
+    MetadataCredit,
     ReservationState,
     SharedReservation,
     SharedResourceCost,
@@ -65,6 +69,7 @@ class SharedCapacityUnavailable(RuntimeError):
 _DOMAIN_FAMILY = 0x43414F44
 _OPERATION_FAMILY = 0x43414F4F
 _MEMBERSHIP_FAMILY = 0x43414F4D
+_CREDIT_FAMILY = 0x43414F43
 _TABLES = dict(
     zip(
         (
@@ -76,8 +81,12 @@ _TABLES = dict(
             "operations",
             "allocations",
         ),
-        AUTHORITY_TABLES + LEDGER_TABLES,
+        _BASE_AUTHORITY_TABLES + LEDGER_TABLES,
+        strict=True,
     )
+)
+_TABLES.update(
+    zip(("metadata_credits", "metadata_credit_history"), METADATA_CREDIT_TABLES, strict=True)
 )
 _TRANSITIONS = {
     "preparing": {"active", "released"},
@@ -102,6 +111,23 @@ def _receipt(row: Record) -> SharedReservation:
     return SharedReservation(
         str(row["operation_id"]), row["revision"], cast(ReservationState, row["state"])
     )
+
+
+def _credit(row: Record) -> MetadataCredit:
+    try:
+        return MetadataCredit(
+            str(row["credit_id"]),
+            str(row["domain_id"]),
+            str(row["instance_id"]),
+            str(row["process_generation"]),
+            row["process_pid"],
+            row["process_started_at"],
+            row["binding_sha256"],
+            row["amount"],
+            row["revision"],
+        )
+    except ValueError:
+        raise SchemaMismatch("Invalid metadata credit record") from None
 
 
 class ResourceAdmissionRepository:
@@ -182,14 +208,18 @@ class ResourceAdmissionRepository:
                     "Shared admission commit requires reconciliation"
                 ) from None
 
-    @contextmanager
-    def _owner(self, principal_id: str):
-        self._check_pid()
+    @staticmethod
+    def _check_provisioner(principal_id: str) -> None:
         if (
             not isinstance(principal_id, str)
             or re.fullmatch(r"principal-[0-9a-f]{64}", principal_id) is None
         ):
             raise ValueError("Invalid provisioner identity")
+
+    @contextmanager
+    def _owner(self, principal_id: str, *, require_usage: bool = False):
+        self._check_pid()
+        self._check_provisioner(principal_id)
         with connect(self.target, readonly=True) as reader:
             self._verify(reader)
         with connect(self.target.migration_target()) as connection, connection.transaction():
@@ -209,6 +239,15 @@ class ResourceAdmissionRepository:
             if owned is None or owned[0] is not True:
                 raise SchemaMismatch("Shared resource provisioner must own the coordinator schema")
             yield connection
+            if require_usage:
+                self._check_usage_ready()
+        if require_usage:
+            try:
+                self._check_usage_ready()
+            except SharedAdmissionDenied:
+                raise SharedCommitUncertain(
+                    "Shared resource credit commit requires reconciliation"
+                ) from None
 
     def _lock_key(self, identity: str) -> int:
         # Hashes identify locks only, never domains. Collisions serialize safely.
@@ -375,6 +414,7 @@ class ResourceAdmissionRepository:
         expected_revision: int,
         principal_id: str,
         active: bool = True,
+        metadata_credit_id: str | None = None,
     ) -> int:
         domain_id = canonical_id(domain_id)
         envelope_integer(expected_revision, minimum=0)
@@ -384,10 +424,33 @@ class ResourceAdmissionRepository:
             or type(active) is not bool
         ):
             raise ValueError("Invalid resource membership provision")
-        with self._owner(principal_id) as connection:
+        if metadata_credit_id is not None:
+            metadata_credit_id = canonical_id(metadata_credit_id)
+            if not active:
+                raise ValueError("Metadata enrollment requires active membership")
+            self._check_provisioner(principal_id)
+            self._require_usage_basis()
+        with self._owner(principal_id, require_usage=metadata_credit_id is not None) as connection:
             self._lock_membership(connection, binding)
+            if metadata_credit_id is not None:
+                self._lock(connection, _CREDIT_FAMILY, (metadata_credit_id,))
             self._lock(connection, _DOMAIN_FAMILY, (domain_id,))
-            self._domain(connection, domain_id)
+            domain = self._domain(connection, domain_id)
+            if domain["kind"] == "storage" and active and metadata_credit_id is None:
+                credited_node = self._query(
+                    connection,
+                    "SELECT EXISTS(SELECT 1 FROM {metadata_credits} WHERE instance_id=%s AND process_generation=%s)",
+                    (binding.instance_id, binding.process_generation),
+                ).fetchone()
+                present = self._query(
+                    connection,
+                    "SELECT credit_id FROM {metadata_credits} WHERE domain_id=%s AND instance_id=%s AND process_generation=%s",
+                    (domain_id, binding.instance_id, binding.process_generation),
+                ).fetchone()
+                if credited_node is not None and credited_node[0] and present is None:
+                    raise SharedAdmissionDenied(
+                        "Storage membership requires joint metadata enrollment"
+                    )
             key = (domain_id, binding.instance_id, binding.process_generation)
             current = self._query(
                 connection,
@@ -414,7 +477,212 @@ class ResourceAdmissionRepository:
                     _json(dict(binding=asdict(binding), active=active, actor=principal_id)),
                 ),
             )
+            if metadata_credit_id is not None:
+                self._grant_metadata_credit_locked(
+                    connection, metadata_credit_id, domain_id, binding, principal_id
+                )
         return expected_revision + 1
+
+    def grant_metadata_credit(
+        self, credit_id: str, domain_id: str, binding: ResourceBinding, *, principal_id: str
+    ) -> MetadataCredit:
+        """Charge one durable storage slot to an exact process view, once.
+
+        An exact retry acknowledges the existing credit without another charge.
+        Membership revocation never releases it; there is no retirement here.
+        """
+        credit_id = canonical_id(credit_id)
+        domain_id = canonical_id(domain_id)
+        if type(binding) is not ResourceBinding or binding.store_id != self._coordinator_store_id:
+            raise ValueError("Invalid metadata credit binding")
+        self._check_provisioner(principal_id)
+        self._require_usage_basis()
+        with self._owner(principal_id, require_usage=True) as connection:
+            self._lock_membership(connection, binding)
+            self._lock(connection, _CREDIT_FAMILY, (credit_id,))
+            self._lock(connection, _DOMAIN_FAMILY, (domain_id,))
+            return self._grant_metadata_credit_locked(
+                connection, credit_id, domain_id, binding, principal_id
+            )
+
+    def _grant_metadata_credit_locked(
+        self,
+        connection: Connection,
+        credit_id: str,
+        domain_id: str,
+        binding: ResourceBinding,
+        principal_id: str,
+    ) -> MetadataCredit:
+        """Caller owns membership, credit and domain locks in that order."""
+        digest = binding_digest(binding)
+        expected = (
+            credit_id,
+            domain_id,
+            binding.instance_id,
+            binding.process_generation,
+            binding.process_pid,
+            float(binding.process_started_at),
+            digest,
+            1,
+        )
+        existing = self._query(
+            connection,
+            """SELECT * FROM {metadata_credits} WHERE credit_id=%s
+            OR (domain_id=%s AND instance_id=%s AND process_generation=%s)""",
+            (credit_id, domain_id, binding.instance_id, binding.process_generation),
+        ).fetchall()
+        if existing:
+            credit = _credit(existing[0])
+            if (
+                len(existing) != 1
+                or (
+                    credit.credit_id,
+                    credit.domain_id,
+                    credit.instance_id,
+                    credit.process_generation,
+                    credit.process_pid,
+                    credit.process_started_at,
+                    credit.binding_sha256,
+                    credit.amount,
+                )
+                != expected
+            ):
+                raise SharedRevisionConflict("Metadata credit identity or payload changed")
+            return credit
+        domain = self._domain(connection, domain_id)
+        member = self._query(
+            connection,
+            "SELECT * FROM {members} WHERE domain_id=%s AND instance_id=%s AND process_generation=%s",
+            (domain_id, binding.instance_id, binding.process_generation),
+        ).fetchone()
+        if (
+            domain["kind"] != "storage"
+            or domain["unit"] != "postgres_session"
+            or not domain["active"]
+            or member is None
+            or not member["active"]
+            or member["binding_sha256"] != digest
+        ):
+            raise SharedAdmissionDenied("Metadata credit authority is unavailable")
+        used = self._used(connection, domain_id)
+        if used + 1 > domain["capacity"]:
+            raise SharedCapacityUnavailable("Shared resource capacity is exhausted")
+        self._query(
+            connection,
+            """INSERT INTO {metadata_credits}
+            (credit_id,domain_id,instance_id,process_generation,process_pid,process_started_at,binding_sha256,amount,revision,actor_principal_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,1,%s)""",
+            (*expected, principal_id),
+        )
+        self._query(
+            connection,
+            "INSERT INTO {metadata_credit_history} (credit_id,revision,payload_json) VALUES (%s,1,%s::jsonb)",
+            (
+                credit_id,
+                _json(
+                    dict(
+                        domain_id=domain_id,
+                        binding=asdict(binding),
+                        amount=1,
+                        actor=principal_id,
+                    )
+                ),
+            ),
+        )
+        self._change_used(connection, domain_id, used, used + 1)
+        return MetadataCredit(*expected, 1)
+
+    def metadata_credits_current(self) -> tuple[MetadataCredit, ...]:
+        """Credits held by this exact private process view.
+
+        Membership revocation does not hide a credit, so completion can proceed;
+        new admissions validate membership separately. A credit for this
+        incarnation under another PID, birth or view is never adopted.
+        """
+        binding = self.current_binding()
+        digest = binding_digest(binding)
+        with connect(self.target, readonly=True) as connection:
+            self._verify(connection)
+            rows = self._query(
+                connection,
+                """SELECT c.*,d.kind,d.unit FROM {metadata_credits} c
+                JOIN {domains} d USING (domain_id)
+                WHERE c.instance_id=%s AND c.process_generation=%s ORDER BY c.domain_id""",
+                (binding.instance_id, binding.process_generation),
+            ).fetchall()
+        credits = []
+        for row in rows:
+            if row["kind"] != "storage" or row["unit"] != "postgres_session":
+                raise SchemaMismatch("Metadata credit domain is not storage")
+            credit = _credit(row)
+            if (credit.process_pid, credit.process_started_at, credit.binding_sha256) != (
+                binding.process_pid,
+                binding.process_started_at,
+                digest,
+            ):
+                raise SharedAdmissionDenied("Metadata credit belongs to another process view")
+            credits.append(credit)
+        if self.current_binding() != binding:
+            raise SharedAdmissionDenied("Resource process binding changed during credit read")
+        return tuple(credits)
+
+    def _metadata_coverage_locked(
+        self,
+        connection: Connection,
+        binding: ResourceBinding,
+        domains: Sequence[Record],
+        fingerprint: str,
+    ) -> MetadataCoverage:
+        storage = tuple(str(d["domain_id"]) for d in domains if d["kind"] == "storage")
+        if not storage:
+            raise SharedAdmissionDenied("Shared metadata storage coverage is unavailable")
+        rows = self._query(
+            connection,
+            "SELECT * FROM {metadata_credits} WHERE instance_id=%s AND process_generation=%s ORDER BY domain_id",
+            (binding.instance_id, binding.process_generation),
+        ).fetchall()
+        credits = tuple(_credit(row) for row in rows)
+        if {c.domain_id for c in credits} != set(storage) or any(
+            (c.process_pid, c.process_started_at, c.binding_sha256)
+            != (binding.process_pid, binding.process_started_at, binding_digest(binding))
+            for c in credits
+        ):
+            raise SharedAdmissionDenied("Shared metadata coverage is incomplete")
+        for domain in domains:
+            if (
+                domain["kind"] == "storage"
+                and self._used(connection, str(domain["domain_id"])) > domain["capacity"]
+            ):
+                raise SharedCapacityUnavailable("Shared metadata domain has active debt")
+        return MetadataCoverage(binding, fingerprint, storage, credits)
+
+    def metadata_coverage_current(self) -> MetadataCoverage:
+        """Fresh complete-set confirmation; a value is not activation authority."""
+        binding = self.current_binding()
+        self._require_usage_basis()
+        with self._runtime() as connection:
+            self._lock_membership(connection, binding)
+            domains, fingerprint = self._membership_basis(connection, binding)
+            coverage = self._metadata_coverage_locked(connection, binding, domains, fingerprint)
+            if self.current_binding() != binding:
+                raise SharedAdmissionDenied("Metadata process view changed during confirmation")
+            self._check_usage_ready()
+        self._check_usage_ready()
+        return coverage
+
+    def read_operation(self, operation_id: str) -> SharedReservation | None:
+        """Reconcile after the prior transaction's op lock, never infer rollback."""
+        operation_id = canonical_id(operation_id)
+        binding = self.current_binding()
+        with self._runtime() as connection:
+            self._lock(connection, _OPERATION_FAMILY, (operation_id,))
+            row = self._query(
+                connection, "SELECT * FROM {operations} WHERE operation_id=%s", (operation_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            self._check_owner(row, binding)
+            return _receipt(row)
 
     @staticmethod
     def _check_owner(row: Record, binding: ResourceBinding) -> None:
@@ -457,10 +725,16 @@ class ResourceAdmissionRepository:
                     SELECT a.domain_id,sum(a.amount) AS quantity
                     FROM {operations} o JOIN {allocations} a USING (operation_id)
                     WHERE o.state<>'released' GROUP BY a.domain_id
-                ) SELECT d.domain_id,u.committed,COALESCE(a.quantity,0) AS allocated
+                ), credited AS (
+                    SELECT domain_id,sum(amount) AS quantity FROM {metadata_credits}
+                    GROUP BY domain_id
+                ) SELECT d.domain_id,u.committed,
+                    COALESCE(a.quantity,0)+COALESCE(c.quantity,0) AS allocated
                 FROM {domains} d LEFT JOIN {usage} u USING (domain_id)
                 LEFT JOIN allocated a USING (domain_id)
-                WHERE u.domain_id IS NULL OR u.committed<>COALESCE(a.quantity,0)
+                LEFT JOIN credited c USING (domain_id)
+                WHERE u.domain_id IS NULL
+                    OR u.committed<>COALESCE(a.quantity,0)+COALESCE(c.quantity,0)
                 ORDER BY d.domain_id""",
                 ).fetchall()
                 mismatches = tuple(
@@ -492,15 +766,17 @@ class ResourceAdmissionRepository:
         """Low-level exact-domain protocol; does not promise complete mapping."""
         return self._reserve(operation_id, requests, cost=None)
 
-    def reserve_for_cost(self, operation_id: str, cost: SharedResourceCost) -> SharedReservation:
+    def reserve_for_cost(
+        self, operation_id: str, cost: SharedResourceCost, *, require_metadata: bool = False
+    ) -> SharedReservation:
         """Map a trusted server footprint to the private incarnation's entire set.
 
         An idempotent response acknowledges existing state, never another effect.
         Delivery wiring must retain the operation ID through uncertain commits.
         """
-        if type(cost) is not SharedResourceCost:
+        if type(cost) is not SharedResourceCost or type(require_metadata) is not bool:
             raise ValueError("Shared mapping requires a typed server footprint")
-        return self._reserve(operation_id, (), cost=cost)
+        return self._reserve(operation_id, (), cost=cost, require_metadata=require_metadata)
 
     def _reserve(
         self,
@@ -508,6 +784,7 @@ class ResourceAdmissionRepository:
         requests: Sequence[DomainRequest],
         *,
         cost: SharedResourceCost | None,
+        require_metadata: bool = False,
     ) -> SharedReservation:
         operation_id = canonical_id(operation_id)
         binding = self.current_binding()
@@ -538,6 +815,7 @@ class ResourceAdmissionRepository:
                 self._check_owner(existing, binding)
                 if (
                     existing["cost_sha256"] != cost_hash
+                    or existing["metadata_required"] is not require_metadata
                     or (cost is None and existing["request_sha256"] != request_hash)
                     or (cost is not None and existing["membership_sha256"] is None)
                 ):
@@ -545,6 +823,8 @@ class ResourceAdmissionRepository:
                 return _receipt(existing)
             if cost is not None:
                 domains, membership_hash = self._membership_basis(connection, binding)
+                if require_metadata:
+                    self._metadata_coverage_locked(connection, binding, domains, membership_hash)
                 requests = self._cost_requests(domains, cost)
                 request_hash = hashlib.sha256(
                     _json([asdict(value) for value in requests]).encode()
@@ -577,8 +857,8 @@ class ResourceAdmissionRepository:
             self._query(
                 connection,
                 """INSERT INTO {operations}
-                (operation_id,instance_id,process_generation,process_pid,process_started_at,binding_sha256,request_sha256,state,revision,membership_sha256,cost_sha256)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,'preparing',1,%s,%s)""",
+                (operation_id,instance_id,process_generation,process_pid,process_started_at,binding_sha256,request_sha256,state,revision,membership_sha256,cost_sha256,metadata_required)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'preparing',1,%s,%s,%s)""",
                 (
                     operation_id,
                     binding.instance_id,
@@ -589,6 +869,7 @@ class ResourceAdmissionRepository:
                     request_hash,
                     membership_hash,
                     cost_hash,
+                    require_metadata,
                 ),
             )
             for value, member_revision, used in confirmed:
@@ -641,11 +922,13 @@ class ResourceAdmissionRepository:
             if not allocations:
                 raise SchemaMismatch("Resource operation has no allocations")
             if state == "active" and row["membership_sha256"] is not None:
-                _, current_membership = self._membership_basis(connection, binding)
+                domains, current_membership = self._membership_basis(connection, binding)
                 if row["membership_sha256"] != current_membership:
                     raise SharedRevisionConflict(
                         "Complete resource membership changed before start"
                     )
+                if row["metadata_required"]:
+                    self._metadata_coverage_locked(connection, binding, domains, current_membership)
             self._lock(
                 connection, _DOMAIN_FAMILY, tuple(str(value["domain_id"]) for value in allocations)
             )

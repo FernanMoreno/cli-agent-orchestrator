@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 from uuid import UUID, uuid4, uuid5
 
 import psutil
@@ -36,6 +36,9 @@ from cli_agent_orchestrator.services.local_peer_identity import (
     current_process_identity,
     get_persistent_instance_id,
 )
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.clients.admission_repository import ResourceAdmissionRepository
 
 
 @dataclass(frozen=True)
@@ -302,6 +305,22 @@ class ResourceBootstrap:
             active=False,
         )
         return AttestationUpdate(record.revision, record.active)
+
+    def shared_repository(self) -> "ResourceAdmissionRepository":
+        """Trusted composition of the private main coordinator; issues no authority."""
+        from cli_agent_orchestrator.clients.admission_repository import (
+            ResourceAdmissionRepository,
+        )
+
+        target = self._repository.resolve_target()
+
+        def binding() -> ResourceBinding:
+            value = self._capture(target)
+            if value.instance_id != self._server_instance():
+                raise ValueError("Resource bootstrap instance binding mismatch")
+            return value
+
+        return ResourceAdmissionRepository(target, binding_supplier=binding)
 
     def matches_primary_target(self, target: DatabaseTarget) -> bool:
         """Pin a service to the configured application store, not a shared-domain claim."""

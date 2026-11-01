@@ -638,30 +638,45 @@ class WorkService:
         return self._record_delivery(sent, observation, actor_id=actor_id)
 
     async def _send_committed_async(self, sent: dict, send, *, actor_id: str) -> dict:
-        """Async delivery for the same commit winner; cancellation never permits replay."""
+        """Async delivery for the same commit winner; cancellation never permits replay.
+
+        Every SQL segment runs in an owned worker which inherits the caller's
+        storage scope. The loop only awaits; it never opens a connection.
+        """
+        from cli_agent_orchestrator.services.work_blocking import run_owned_blocking
+
         writer_id = sent["attempts"][-1]["id"]
         registered = False
-        try:
+
+        def register() -> None:
+            nonlocal registered
             with self.repository.transaction() as connection:
                 self.repository._verify(connection)
                 self.repository._register_writer_effect(connection, writer_id=writer_id)
-                registered = True
+            # Set inside the worker after commit: a cancelled waiter still releases.
+            registered = True
+
+        def release() -> None:
+            with self.repository.transaction() as connection:
+                self.repository._verify(connection)
+                self.repository._release_writer_effect(connection, writer_id=writer_id)
+
+        try:
             try:
+                await run_owned_blocking(register)
                 observation = await send()
                 if not isinstance(observation, DeliveryObservation):
                     raise TypeError("delivery adapter must return DeliveryObservation")
             finally:
                 if registered:
-                    with self.repository.transaction() as connection:
-                        self.repository._verify(connection)
-                        self.repository._release_writer_effect(connection, writer_id=writer_id)
+                    await run_owned_blocking(release)
         except asyncio.CancelledError:
-            self._reconcile(sent, actor_id=actor_id)
+            await run_owned_blocking(self._reconcile, sent, actor_id=actor_id)
             raise
         except Exception as error:
-            self._reconcile(sent, actor_id=actor_id)
+            await run_owned_blocking(self._reconcile, sent, actor_id=actor_id)
             raise DeliveryUncertain(sent["id"]) from error
-        return self._record_delivery(sent, observation, actor_id=actor_id)
+        return await run_owned_blocking(self._record_delivery, sent, observation, actor_id=actor_id)
 
     def _record_delivery(
         self, sent: dict, observation: DeliveryObservation, *, actor_id: str

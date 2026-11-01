@@ -34,6 +34,12 @@ from cli_agent_orchestrator.services.admission_settings import (
     read_private_operator_policy,
 )
 from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
+from cli_agent_orchestrator.services.shared_delivery_admission import (
+    SharedDeliveryCoordinator,
+    SharedDeliveryDrainIncomplete,
+    SharedResourceRepository,
+    authorize_shared_delivery,
+)
 
 T = TypeVar("T")
 
@@ -79,7 +85,9 @@ class InboxAdmissionRuntime:
         bootstrap: ResourceBootstrap,
         clock: Callable[[], float] = time.monotonic,
         drain_timeout_s: float | None = None,
+        shared_repository: SharedResourceRepository | None = None,
     ):
+        self._pid = os.getpid()
         self.inbox = inbox
         self.monitor = monitor
         self.bootstrap = bootstrap
@@ -93,7 +101,16 @@ class InboxAdmissionRuntime:
         self._bound = False
         self._retired = False
         self._call: _ControlCall[Any] | None = None
+        # Explicit trusted composition; absent means no shared admission at all.
+        self._shared_repository = shared_repository
+        self._shared: SharedDeliveryCoordinator | None = None
+        if shared_repository is not None:
+            monitor.owner.require_shared_admission()
         monitor.set_on_change(inbox.notify_admission_changed)
+
+    def _check_process(self) -> None:
+        if self._pid != os.getpid():
+            raise AdmissionRuntimeUnavailable("admission runtime belongs to another process")
 
     @property
     def clock(self) -> Callable[[], float]:
@@ -111,6 +128,7 @@ class InboxAdmissionRuntime:
         self, participant: AdmissionParticipant, *, target: DatabaseTarget
     ) -> None:
         """Trusted composition only, before binding any process participant."""
+        self._check_process()
         if self._bound or self._started or self._closing or self._retired:
             raise AdmissionRuntimeUnavailable("storage participants must be wired before start")
         if not self.bootstrap.matches_primary_target(target):
@@ -122,9 +140,13 @@ class InboxAdmissionRuntime:
         self._storage_participants.append(participant)
 
     async def start(self) -> None:
+        self._check_process()
         if self._started or self._closing or self._retired:
             raise AdmissionRuntimeUnavailable("admission runtime cannot restart")
         self._loop = asyncio.get_running_loop()
+        if self._shared_repository is not None:
+            # Close normal data before any participant can admit it.
+            self.monitor.owner.require_shared_admission()
         self.inbox.bind_admission(
             self.monitor.owner, clock=self._clock, retirement=lambda: self.retired
         )
@@ -147,6 +169,7 @@ class InboxAdmissionRuntime:
         self._started = True
 
     def close_admission(self) -> None:
+        self._check_process()
         if self._retired:
             return  # Shared participants may already belong to a newer lifetime.
         self._closing = True
@@ -155,8 +178,12 @@ class InboxAdmissionRuntime:
         for participant in self._bound_storage_participants:
             participant.stop_accepting()
         self.monitor.stop_accepting()
+        shared = self._shared
+        if shared is not None:
+            shared.stop_accepting()
 
     def _check_request(self, principal: object) -> None:
+        self._check_process()
         ResourceBootstrap._administrator(principal)
         if not self.available or asyncio.get_running_loop() is not self._loop:
             raise AdmissionRuntimeUnavailable("admission runtime is unavailable")
@@ -242,6 +269,7 @@ class InboxAdmissionRuntime:
         if not self.available or asyncio.get_running_loop() is not self._loop:
             raise AdmissionRuntimeUnavailable("admission runtime is unavailable")
 
+        self._check_process()
         now = self._clock()
         return diagnostics_response(self.monitor.diagnostic(now=now), now=now)
 
@@ -252,7 +280,55 @@ class InboxAdmissionRuntime:
             mutating=False,
         )
 
+    async def activate_shared(self, *, principal: object) -> None:
+        """Authorize this owner's shared delivery inside the existing control scope."""
+        ResourceBootstrap._administrator(principal)  # Before repository, binding or SQL.
+        repository = self._shared_repository
+        control = self.monitor.storage_control
+        if repository is None or control is None:
+            raise AdmissionRuntimeUnavailable("shared admission is not configured")
+        owner = self.monitor.owner
+        self._check_request(principal)
+        if self._shared is not None and owner.shared_ready:
+            return
+
+        def activate() -> None:
+            coordinator = self._shared
+            if coordinator is None:
+                coordinator = authorize_shared_delivery(
+                    principal=principal,
+                    repository=repository,
+                    owner=owner,
+                    control=control,
+                    retirement=lambda: self.retired,
+                    on_retired=self.inbox.notify_admission_changed,
+                    clock=self._clock,
+                )
+                # Retained before binding: a cancelled waiter or stop never loses it.
+                self._shared = coordinator
+            elif not coordinator.accepting:
+                raise AdmissionRuntimeUnavailable("shared admission has stopped")
+            try:
+                if self._closing:
+                    raise AdmissionRuntimeUnavailable("admission runtime is stopped")
+                owner.bind_shared_admission(coordinator)
+            except BaseException:
+                coordinator.stop_accepting()
+                raise
+
+        await self._execute(principal, activate, mutating=False)
+
+    def _resolve_drain_timeout(self) -> float:
+        timeout = self._drain_timeout
+        if timeout is None:
+            from cli_agent_orchestrator.services.settings_service import get_server_settings
+
+            settings = get_server_settings()
+            timeout = float(max(settings["provider_init_timeout"], settings["mcp_request_timeout"]))
+        return timeout
+
     async def stop(self) -> None:
+        self._check_process()
         if self._retired:
             return
         self.close_admission()
@@ -275,16 +351,14 @@ class InboxAdmissionRuntime:
                 pass
         if call is not None and not call.finished.is_set():
             raise AdmissionRuntimeUnavailable("physical resource control has not retired")
-        if self._bound:
-            timeout = self._drain_timeout
-            if timeout is None:
-                from cli_agent_orchestrator.services.settings_service import get_server_settings
+        # Re-read after the join: a late activation may have published it.
+        shared = self._shared
+        if shared is not None:
+            shared.stop_accepting()
+        from cli_agent_orchestrator.services.work_blocking import run_owned_async
 
-                settings = get_server_settings()
-                timeout = float(
-                    max(settings["provider_init_timeout"], settings["mcp_request_timeout"])
-                )
-            from cli_agent_orchestrator.services.work_blocking import run_owned_async
+        timeout = self._resolve_drain_timeout() if self._bound or shared is not None else 0.0
+        if self._bound:
 
             async def drain_participants() -> None:
                 results = await asyncio.gather(
@@ -302,8 +376,16 @@ class InboxAdmissionRuntime:
             # Join every participant even if another one fails or the waiter
             # is cancelled; no lease/binding is erased by a partial drain.
             await run_owned_async(drain_participants())
+        if shared is not None:
+            # After participants joined, before storage retirement. An incomplete
+            # drain keeps the reference and retired=False for a later stop.
+            try:
+                await run_owned_async(asyncio.to_thread(shared.drain, timeout))
+            except SharedDeliveryDrainIncomplete:
+                raise AdmissionRuntimeUnavailable(
+                    "shared delivery cleanup has not retired"
+                ) from failure
         from cli_agent_orchestrator.clients.storage_admission import retry_storage_closes
-        from cli_agent_orchestrator.services.work_blocking import run_owned_async
 
         def retire_storage() -> None:
             # Participants have joined their physical bodies. Retry only the

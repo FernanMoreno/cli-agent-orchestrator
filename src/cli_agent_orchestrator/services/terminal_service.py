@@ -2054,7 +2054,7 @@ async def create_terminal(
             prompt_redelivery,
             worktree_subdirectory=worktree_subdirectory,
         )
-        existing_record = get_idempotency_record(idempotency_key)
+        existing_record = await run_storage_aware_blocking(get_idempotency_record, idempotency_key)
         existing_terminal_id = existing_record.terminal_id if existing_record else None
         if existing_terminal_id is not None:
             # Only the LOOKUP is guarded. `Terminal(**row)` is deliberately
@@ -2069,7 +2069,7 @@ async def create_terminal(
             # `metadata_json`), so a future column rename reaches this arm; it
             # must fail loudly rather than silently duplicate the job.
             try:
-                row = get_terminal(existing_terminal_id)
+                row = await run_storage_aware_blocking(get_terminal, existing_terminal_id)
             except ValueError:
                 # The key's mapping outlived the terminal it pointed to (e.g.
                 # a completed-and-torn-down handoff, retried long after the
@@ -2087,7 +2087,9 @@ async def create_terminal(
                 # if a concurrent caller already replaced the mapping, this
                 # deletes nothing and this attempt's own insert below is the
                 # one that raises IntegrityError instead.
-                delete_idempotency_key(idempotency_key, existing_terminal_id)
+                await run_storage_aware_blocking(
+                    delete_idempotency_key, idempotency_key, existing_terminal_id
+                )
                 logger.info(
                     "idempotency_key %r maps to terminal %r, which no longer exists; "
                     "creating a new terminal",
@@ -2137,9 +2139,9 @@ async def create_terminal(
     # cleanly with nothing to roll back. Best-effort under concurrency: two
     # simultaneous creates can both pass the check (no cross-request lock),
     # which is acceptable for the cap's placement-guard purpose.
-    max_terminals = get_max_terminals()
+    max_terminals = await run_storage_aware_blocking(get_max_terminals)
     if max_terminals is not None:
-        tracked_count = count_runtime_allocated_terminals()
+        tracked_count = await run_storage_aware_blocking(count_runtime_allocated_terminals)
         if tracked_count >= max_terminals:
             raise TerminalLimitError(
                 f"Terminal limit reached: this node already has {tracked_count} tracked "
@@ -2278,7 +2280,8 @@ async def create_terminal(
         # Step 1: Generate unique identifiers
         if (
             managed_terminal_id is not None
-            and get_terminal_metadata(managed_terminal_id) is not None
+            and await run_storage_aware_blocking(get_terminal_metadata, managed_terminal_id)
+            is not None
         ):
             raise ValueError("admitted launch terminal identity is already in use")
         terminal_id = managed_terminal_id or generate_terminal_id()
@@ -2890,7 +2893,9 @@ async def create_terminal(
             )
             if source_registration_eligible:
                 assert session_incarnation_id is not None
-                interaction_service = _interaction_service()
+                # Resolving the ledger-backed service and every source step
+                # below can open storage, so none of it runs on the event loop.
+                interaction_service = await _await_provider_operation(_interaction_service)
                 verified_creator = (
                     creation_principal
                     if creation_principal is not None and is_verified_principal(creation_principal)
@@ -2908,7 +2913,10 @@ async def create_terminal(
                     getattr(profile, "mcpServers", None),
                 )
                 if source_configured:
-                    _install_interaction_source_capability(
+                    # One worker keeps register-unavailable, file/provider install,
+                    # activation and compensation in their original order.
+                    await _await_provider_operation(
+                        _install_interaction_source_capability,
                         provider_instance,
                         interaction_service,
                         terminal_id=terminal_id,
@@ -2930,7 +2938,8 @@ async def create_terminal(
                     # installs a provider path, or expands tool permissions.
                     capabilities = provider_instance.interaction_capabilities
                     if capabilities.get("native_detection") == "manual_only":
-                        interaction_service.register_observer_source(
+                        await _await_provider_operation(
+                            interaction_service.register_observer_source,
                             terminal_id=terminal_id,
                             incarnation_id=session_incarnation_id,
                             session_name=session_name,
@@ -3005,7 +3014,9 @@ async def create_terminal(
             if not isinstance(shell_command, str):
                 shell_command = None
             if shell_command:
-                update_terminal_shell_command(terminal_id, shell_command)
+                await _await_provider_operation(
+                    update_terminal_shell_command, terminal_id, shell_command
+                )
 
         # Build and return the Terminal object. In the deferred-init path the
         # provider is still initializing on a background task, so the terminal

@@ -11,7 +11,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from heapq import heappop, heappush
 from itertools import count, groupby, islice
 from queue import Empty, SimpleQueue
@@ -25,7 +25,10 @@ from cli_agent_orchestrator.clients.database import (
     iter_pending_receiver_ids_older_than,
     update_message_status,
 )
-from cli_agent_orchestrator.clients.storage_admission import physical_storage_scope
+from cli_agent_orchestrator.clients.storage_admission import (
+    StorageAdmissionUnavailable,
+    physical_storage_scope,
+)
 from cli_agent_orchestrator.constants import (
     EAGER_INBOX_DELIVERY,
     INBOX_RECONCILE_GRACE_SECONDS,
@@ -309,7 +312,13 @@ class InboxService:
                 if not acquired or not reservation.start():
                     return
                 try:
-                    with physical_storage_scope(reservation, clock=self._admission_clock):
+                    with ExitStack() as physical:
+                        try:
+                            physical.enter_context(
+                                physical_storage_scope(reservation, clock=self._admission_clock)
+                            )
+                        except StorageAdmissionUnavailable:
+                            return  # No selection, receipt or send began; durable rows stay pending.
                         self._deliver_pending_locked(terminal_id, num_messages, registry)
                 finally:
                     # Includes every send, audit, receipt and status write.
