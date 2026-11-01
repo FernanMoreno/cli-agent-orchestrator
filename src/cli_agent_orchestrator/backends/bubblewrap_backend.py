@@ -387,6 +387,12 @@ class BubblewrapWorkBackend(TmuxBackend):
         authorize_go,
     ):
         """Execute one admitted static ELF under Work guards and the supervisor."""
+        from cli_agent_orchestrator.services.work_process_effect import (
+            confirm_native_effect_closed,
+            observe_native_effect,
+        )
+
+        observe_native_effect()
         if self._work_repository is None or self._bwrap_sha256_digest is None:
             raise _unsupported("server Work repository and accepted Bubblewrap digest are required")
         if not isinstance(binding.contract, EffectiveWorkContractV2):
@@ -470,24 +476,34 @@ class BubblewrapWorkBackend(TmuxBackend):
                     raise _unsupported("MCP proxy factory must return a fresh instance per attempt")
                 self._mcp_proxy_instances.add(mcp_proxy)
         from cli_agent_orchestrator.services.work_bubblewrap_composition import (
+            WorkBubblewrapCompositionError,
+            WorkBubblewrapExecution,
             launch_recorded_bound_work_static_elf,
         )
 
-        return launch_recorded_bound_work_static_elf(
-            self._work_repository,
-            binding.attempt_id,
-            binding.generation,
-            expected_attempt_revision=expected_attempt_revision,
-            command_token=command_token,
-            bwrap_path=self._bwrap_executable,
-            bwrap_sha256_digest=self._bwrap_sha256_digest,
-            worker_input=worker_input,
-            process_supervisor=self._supervisor_factory(),
-            mcp_proxy=mcp_proxy,
-            before_start=before_effect,
-            authorize_setup=authorize_setup,
-            authorize_go=authorize_go,
-        )
+        try:
+            result = launch_recorded_bound_work_static_elf(
+                self._work_repository,
+                binding.attempt_id,
+                binding.generation,
+                expected_attempt_revision=expected_attempt_revision,
+                command_token=command_token,
+                bwrap_path=self._bwrap_executable,
+                bwrap_sha256_digest=self._bwrap_sha256_digest,
+                worker_input=worker_input,
+                process_supervisor=self._supervisor_factory(),
+                mcp_proxy=mcp_proxy,
+                before_start=before_effect,
+                authorize_setup=authorize_setup,
+                authorize_go=authorize_go,
+            )
+        except WorkBubblewrapCompositionError as error:
+            if error.cleanup_confirmed is True:
+                confirm_native_effect_closed()
+            raise
+        if type(result) is WorkBubblewrapExecution:
+            confirm_native_effect_closed()
+        return result
 
     def create_session(self, *args, **kwargs):
         raise _unsupported("direct unguarded session creation is disabled")

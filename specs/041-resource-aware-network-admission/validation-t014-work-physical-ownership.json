@@ -1,0 +1,191 @@
+{
+  "schema": "caos.spec041.t014-work-physical-ownership.v1",
+  "date": "2026-11-01",
+  "base_head": "2c347f715c5cf2c8b0fc20ee323a9d3496dfb38c",
+  "scope": "Native Work physical ownership blocks premature local/shared resource retirement",
+  "task_complete": false,
+  "global_acceptance": false,
+  "phase": "t014-work-thread-witness-final",
+  "cases": 276,
+  "passed": 276,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "seconds": 403.989,
+  "available_mib": 8487,
+  "source_preserved": true,
+  "support_preserved": true,
+  "descriptor_closed": true,
+  "archive_sha256": "57210f0c0f7e7e3bd718db680b84765434de9d58f3533a58a4aad54c80438781",
+  "production_archive_match": 6,
+  "owned_python_archive_match": 12,
+  "foreign_graphify_preserved": 12,
+  "history": [
+    {
+      "phase": "t014-work-process-retirement-red",
+      "cases": {
+        "total": 8,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-work-process-retirement-green",
+      "cases": {
+        "total": 87,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-work-process-composition-green",
+      "cases": {
+        "total": 270,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-work-proxy-join-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-work-native-final",
+      "cases": {
+        "total": 274,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "thread_red_probe": {
+    "probe": "unstarted thread is not a positive terminal witness",
+    "source_sha256": "3516c8a4644dd2f1a38c28ec8aa653083ada20f840d0e44598b3fd070e92ff1e",
+    "thread_started": false,
+    "observer_returned": true,
+    "expected": false,
+    "native_processes_launched": 0
+  },
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "sha256": "5b60ef1d7ab9cbf14e23202c1891a81cf43837f05fc6b83f00d2f1bc33ee47a6"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_process_effect.py",
+      "sha256": "52f0fabd6a53d7b3da8b47a6ce8af095641245ba79c245e194d0a8a932f26a6a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_admission.py",
+      "sha256": "443067644e8906af31f26418f5a559bdea88b6a4da44e617581a62f5b30d492d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_bubblewrap_composition.py",
+      "sha256": "4a0026d93c1680538f4b211c454a1db961a0e1511da43c7f76f956708bb70d19"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/backends/bubblewrap_backend.py",
+      "sha256": "39ea459851334613f1311e36bfe4bdbb9f952b776fca124ff9d72ee21871e4c0"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/backends/docker_backend.py",
+      "sha256": "24a5cc816b4cbe5b15c495e5f58d642418707b38e64d86a9b0928c9ca240f413"
+    },
+    {
+      "path": "test/services/test_work_process_resource_retirement.py",
+      "sha256": "0de33242ff2fd0e732e9362574dd7e6af015a373cc5e5394b213da0b7f1a2671"
+    },
+    {
+      "path": "test/services/test_physical_effect_reservation.py",
+      "sha256": "d29990286c14e63423e6b8919a99d63136fefd9c5ab9191f2dbc6997acf5999a"
+    },
+    {
+      "path": "test/postgres/test_work_process_physical_retirement.py",
+      "sha256": "09c922b5e55cbebd6f03e8f5d16eb22c12ae8e7c78dac28bd0aca3f9fa4ce8bb"
+    },
+    {
+      "path": "test/services/test_work_proxy_resource_retirement.py",
+      "sha256": "b3feba5624aefee66f4af022d402b0a2201a41dee1e7774353fef1f050cbec8f"
+    },
+    {
+      "path": "test/services/test_work_native_resource_retirement.py",
+      "sha256": "55b54737ada552df810247abb6152086d6c76781495ebc863e2a3dfa3500d0af"
+    },
+    {
+      "path": "test/services/test_work_process_adapter_cancellation.py",
+      "sha256": "64489005a4c6d835d4080e4b0c59633a0843205b501e859ad8ce81854084f432"
+    }
+  ],
+  "checks": {
+    "format_python_files": 12,
+    "mypy_production_files": 6,
+    "architecture": {
+      "files": 447,
+      "dependencies": 2006,
+      "kept": 5,
+      "broken": 0
+    },
+    "review_job": "0316cc7841a043fe97e64b8da37a54b6",
+    "review": "completed source-only; safety no blockers; proxy join liveness finding reproduced2FAIL then corrected and tested; root tightened thread positive-start witness after separate source-bound RED",
+    "root_composition_review": "PASS WITH RISKS: no premature local/shared native retirement; late unknown native recovery and durable cross-generation witnesses remain T014",
+    "knowledge_decision": "persist worker-vs-native closure, exact opaque ownership, no-start proof, proxy close/join and late-drain boundaries"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 10,
+    "nodes": 626,
+    "edges": 1523,
+    "dangling": 170,
+    "scope": "partial AST after Work external process physical-retirement correction and proxy join; call paths checked against source"
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-native-effect-retirement",
+    "pages": 3,
+    "strict_lint_issues": 0
+  },
+  "fixture_correction": "Old process-cancellation FakePort lacked production _logical_storage_scope; pure reproduction failed before its native worker. Added actual interface method, retained every original cancellation/count/deadline assertion.",
+  "limits": [
+    "Real PostgreSQL plus controlled external-owner cases and two real isolated Python children; not physical M1/M2/M3 or model-provider acceptance",
+    "Approved scratch Bubblewrap binary at /tmp/caos-exec/T097/bubblewrap-build/bwrap absent; 62cached bwrap candidates had no accepted hash match. No replacement/skip-based acceptance or global installation.",
+    "No new SQL closure marker, cross-generation release or metadata retirement",
+    "A late Docker reader/proxy beyond the existing join window remains charged; generic owner-bound late retry/reconciliation producer is still required",
+    "Private lifecycle hooks trust the cooperating server and mandatory effect gate; not an isolation boundary against arbitrary backend code",
+    "No historical RECONCILE jobs, Work replay, native terminal migration or operator credentials modified"
+  ]
+}

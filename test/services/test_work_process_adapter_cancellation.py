@@ -40,6 +40,11 @@ class _BlockingProcessPort:
             self._resource_reservation.finish_after_storage()
             self._resource_reservation = None
 
+    def _logical_storage_scope(self):
+        from cli_agent_orchestrator.clients.storage_admission import logical_storage_scope
+
+        return logical_storage_scope(self._resource_reservation, clock=lambda: 10.0)
+
     def execute_process(self, *_args):
         self.started.set()
         if not self.release.wait(timeout=10):

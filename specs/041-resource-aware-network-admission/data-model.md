@@ -76,3 +76,8 @@ SharedDebtCursor guarda clase metadata_credit/operation y UUID. SharedDebtEntry 
 ## T014 — acción administrativa de preparación implementada
 
 SharedAbortReceipt inmutable contiene action_id/operation_id canónicos, revision2 y state=released; no es capacidad de ejecución. Migración5 añade _cao_resource_admin_actions con actor derivado del Principal, binding privado del custodio, estado/revisión de origen y destino, snapshot por dominio/cantidad/unidad/kind y fecha. Action UUID es PK y (operation_id,from_revision) único; owner escribe, runtime solo lee. Se preservan los checksums1–4 y el conjunto histórico de tablas v3/v4. No hay retiro de MetadataCredit ni prueba de proceso muerto en este modelo. [Validación](validation-t014-preparing-abort.json).
+
+
+## T013/T014 — propietario físico nativo local
+
+PhysicalEffectReservation es una identidad opaca por lease con referencias fuertes al dueño nativo y observadores de cierre. DeliveryReservation conserva su conjunto hasta confirmación positiva; DeliveryRetirementHold exige que esté vacío además de SQL/stage terminados. El contexto nativo diferencia ciclo observado, gate, intento y cierre, ligado al PID/hilo del worker. Estos objetos locales no son testigos durables ni DTOs de red. El ledger/cargos compartidos permanece en PostgreSQL sin migración nueva en este corte. [Validación](validation-t014-work-physical-ownership.json).

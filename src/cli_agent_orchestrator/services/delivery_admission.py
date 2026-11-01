@@ -117,6 +117,7 @@ class DeliveryRetirementHold:
             and lease._retirement_ready
             and lease._storage_stage is None
             and not lease._storage_connections
+            and not lease._physical_effects
         )
 
     @property
@@ -132,6 +133,72 @@ class DeliveryRetirementHold:
                 return False
             self._lease._retirement_hold = None
             return owner._release_locked(self._lease)
+
+
+@dataclass(frozen=True, eq=False)
+class PhysicalEffectReservation:
+    """Exact native owner; thread completion never confirms this token."""
+
+    _lease: "DeliveryReservation"
+    _owners: list[tuple[object, Callable[[], bool]]] = field(
+        default_factory=list, init=False, repr=False
+    )
+
+    def __copy__(self):
+        raise TypeError("physical effect ownership is not transferable")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("physical effect ownership is not transferable")
+
+    def __reduce__(self):
+        raise TypeError("physical effect ownership is not transferable")
+
+    def _owner(self) -> "DeliveryAdmission":
+        owner = self._lease._owner
+        if owner._pid != os.getpid():
+            raise StorageAdmissionUnavailable()
+        return owner
+
+    def retain(self, native_owner: object, closed: Callable[[], bool]) -> None:
+        owner = self._owner()
+        with owner._guard:
+            if self not in self._lease._physical_effects:
+                raise StorageAdmissionUnavailable()
+            if not callable(closed):
+                raise ValueError("native owner requires a closure observer")
+            if not any(value[0] is native_owner for value in self._owners):
+                self._owners.append((native_owner, closed))
+
+    def finish(self) -> bool:
+        owner = self._owner()
+        lease = self._lease
+        with owner._guard:
+            if owner._leases.get(lease._key) is not lease or self not in lease._physical_effects:
+                return False
+            owners = tuple(self._owners)
+        # Kernel/native observations run outside the admission guard.
+        try:
+            if any(closed() is not True for _, closed in owners):
+                return False
+        except Exception:
+            return False
+        with owner._guard:
+            if owner._leases.get(lease._key) is not lease or self not in lease._physical_effects:
+                return False
+            if len(self._owners) != len(owners) or any(
+                a is not b for a, b in zip(self._owners, owners)
+            ):
+                return False
+            lease._physical_effects.remove(self)
+            self._owners.clear()
+            if (
+                lease._retirement_requested
+                and not lease._physical_effects
+                and not lease._storage_connections
+                and lease._storage_stage is None
+            ):
+                owner._release_locked(lease)
+            return True
 
 
 @dataclass(frozen=True, eq=False)
@@ -200,6 +267,7 @@ class DeliveryReservation:
         self._remaining = footprint
         self._storage_stage: StorageStageReservation | None = None
         self._storage_connections: set[StorageConnectionReservation] = set()
+        self._physical_effects: set[PhysicalEffectReservation] = set()
         self._retirement_requested = False
         self._retirement_hold: DeliveryRetirementHold | None = None
         self._retirement_ready = False
@@ -276,6 +344,23 @@ class DeliveryReservation:
             self._retirement_hold = hold
             return hold
 
+    def hold_physical_effect(self) -> PhysicalEffectReservation:
+        """Private native backend hook, registered before possible external start."""
+        owner = self._owner
+        if owner._pid != os.getpid():
+            raise StorageAdmissionUnavailable()
+        with owner._guard:
+            if (
+                owner._leases.get(self._key) is not self
+                or self._state != "started"
+                or self._retirement_requested
+                or owner._control_lease is self
+            ):
+                raise StorageAdmissionUnavailable()
+            token = PhysicalEffectReservation(self)
+            self._physical_effects.add(token)
+            return token
+
     def cancel_before_start(self) -> bool:
         with self._owner._guard:
             if self._state != "reserved":
@@ -289,7 +374,7 @@ class DeliveryReservation:
                 return False
             if self._state != "started":
                 raise RuntimeError("delivery reservation has not started")
-            if self._retirement_hold is not None:
+            if self._retirement_hold is not None or self._physical_effects:
                 return self.finish_after_storage()
             if self._storage_stage is not None or self._storage_connections:
                 raise RuntimeError("active storage stage must finish physically first")
@@ -315,7 +400,11 @@ class DeliveryReservation:
                 raise RuntimeError("delivery reservation has not started")
             self._retirement_requested = True
             owner._storage_retirement_pending += 1
-            if self._storage_stage is not None or self._storage_connections:
+            if (
+                self._storage_stage is not None
+                or self._storage_connections
+                or self._physical_effects
+            ):
                 return False
             return owner._release_locked(self)
 
@@ -850,6 +939,8 @@ class DeliveryAdmission:
 
     def _release_locked(self, lease: DeliveryReservation) -> bool:
         if self._leases.get(lease._key) is not lease:
+            return False
+        if lease._physical_effects:
             return False
         if lease._storage_connections or lease._storage_stage is not None:
             raise RuntimeError("active storage stage must finish physically first")

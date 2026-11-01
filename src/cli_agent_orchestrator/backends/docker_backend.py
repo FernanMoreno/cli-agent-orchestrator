@@ -19,6 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from cli_agent_orchestrator.services.work_process_effect import (
+    observe_process_close,
+    observe_thread_close,
+)
+
 if TYPE_CHECKING:
     from cli_agent_orchestrator.services.work_origin import WorkOrigins
 
@@ -757,6 +762,14 @@ class DockerWorkBackend(TmuxBackend):
         authorize_setup: Callable,
         authorize_go: Callable,
     ) -> DockerWorkExecution:
+        from cli_agent_orchestrator.services.work_process_effect import (
+            begin_native_effect,
+            confirm_native_effect_closed,
+            observe_native_effect,
+            retain_native_effect_owner,
+        )
+
+        observe_native_effect()
         self._supported_contract(restriction)
         if self.repository is None or not isinstance(binding.contract, EffectiveWorkContractV2):
             raise _unsupported("bound V2 contract and server Work repository are required")
@@ -1036,6 +1049,7 @@ class DockerWorkBackend(TmuxBackend):
 
         mcp_owner_stopped = False
         try:
+            begin_native_effect()
             if mcp_proxy is not None:
                 endpoint = mcp_proxy.create_bound_attempt(
                     attempt_id=attempt_id,
@@ -1086,6 +1100,9 @@ class DockerWorkBackend(TmuxBackend):
                 ]
             )
             container_id = create.stdout.strip()
+            retain_native_effect_owner(
+                (self, attempt_id, generation, container_id), lambda: mcp_owner_stopped
+            )
             if not re.fullmatch(r"[0-9a-f]{64}", container_id):
                 raise DockerWorkBackendUnavailable("Docker returned an invalid container identity")
             try:
@@ -1103,11 +1120,13 @@ class DockerWorkBackend(TmuxBackend):
                 raise DockerWorkBackendUnavailable(
                     "Docker container start could not be observed"
                 ) from error
+            retain_native_effect_owner(process, observe_process_close(process))
             readers = (
                 threading.Thread(target=read_stdout, daemon=True),
                 threading.Thread(target=read_mcp, daemon=True),
             )
             for reader in readers:
+                retain_native_effect_owner(reader, observe_thread_close(reader))
                 reader.start()
             timeout = min(self.timeout_seconds, max(0.1, lease_expires_at - time.time()))
             deadline = time.monotonic() + timeout
@@ -1177,6 +1196,7 @@ class DockerWorkBackend(TmuxBackend):
                         proxy_errors.append(error)
 
                 proxy_thread = threading.Thread(target=serve_proxy, daemon=True)
+                retain_native_effect_owner(proxy_thread, observe_thread_close(proxy_thread))
                 proxy_thread.start()
             authorize(authorize_go)
             write_stdin(b"CAO-GO/1\n")
@@ -1279,6 +1299,13 @@ class DockerWorkBackend(TmuxBackend):
                 reader.join(timeout=1)
             if proxy_thread is not None:
                 proxy_thread.join(timeout=5)
+            if (
+                mcp_owner_stopped
+                and (process is None or process.poll() is not None)
+                and not any(reader.is_alive() for reader in readers)
+                and (proxy_thread is None or not proxy_thread.is_alive())
+            ):
+                confirm_native_effect_closed()
             if mcp_owner_stopped and mcp_proxy is not None:
                 if proxy_thread is not None and proxy_thread.is_alive():
                     raise DockerWorkExecutionUncertain(

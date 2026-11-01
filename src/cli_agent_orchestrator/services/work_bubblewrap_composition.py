@@ -59,6 +59,10 @@ from cli_agent_orchestrator.services.work_mcp_proxy import (
     WorkMcpProxyError,
     WorkMcpProxyUncertain,
 )
+from cli_agent_orchestrator.services.work_process_effect import (
+    observe_process_close,
+    observe_thread_close,
+)
 from cli_agent_orchestrator.services.work_process_supervisor import (
     WorkProcessAttempt,
     WorkProcessState,
@@ -526,6 +530,7 @@ def launch_recorded_bound_work_static_elf(
     setup = WorkBubblewrapSetupIntent(repository)
     endpoint: WorkMcpEndpoint | None = None
     serving_thread: threading.Thread | None = None
+    proxy_join_attempted = False
     proxy_errors: list[WorkMcpProxyError] = []
     proxy_proof: WorkBubblewrapRuntimeIsolationProof | None = None
     proof_context: tuple[WorkRepository, str, int, int, str] | None = None
@@ -595,6 +600,11 @@ def launch_recorded_bound_work_static_elf(
                     proxy_errors.append(exc)
 
             serving_thread = threading.Thread(target=serve_proxy, daemon=True)
+            from cli_agent_orchestrator.services.work_process_effect import (
+                retain_native_effect_owner,
+            )
+
+            retain_native_effect_owner(serving_thread, observe_thread_close(serving_thread))
             serving_thread.start()
         setup.release_if_current(
             evidence,
@@ -627,6 +637,7 @@ def launch_recorded_bound_work_static_elf(
             # before joining; joining first would wait forever on our own FD.
             assert mcp_proxy is not None
             mcp_proxy.revoke(attempt_id, generation)
+            proxy_join_attempted = True
             serving_thread.join(timeout=_PROXY_THREAD_JOIN_SECONDS)
             if serving_thread.is_alive():
                 raise WorkBubblewrapExecutionUncertain(
@@ -642,6 +653,14 @@ def launch_recorded_bound_work_static_elf(
     finally:
         if mcp_proxy is not None:
             mcp_proxy.close()
+        if (
+            serving_thread is not None
+            and serving_thread.ident is not None
+            and not proxy_join_attempted
+        ):
+            # Close first to wake its reader; reuse the one existing join budget.
+            proxy_join_attempted = True
+            serving_thread.join(timeout=_PROXY_THREAD_JOIN_SECONDS)
         if proxy_proof is not None and (
             mcp_proxy is None or mcp_proxy._isolation_proof is not proxy_proof
         ):
@@ -784,6 +803,12 @@ def _launch_owned_stage(
                     )
                     control_socket.settimeout(setup_timeout_seconds)
                     child_stdin = child_control_socket.fileno()
+                from cli_agent_orchestrator.services.work_process_effect import (
+                    begin_native_effect,
+                    retain_native_effect_owner,
+                )
+
+                begin_native_effect()
                 process = subprocess.Popen(
                     argv,
                     executable=accepted_bwrap.proc_path,
@@ -799,6 +824,7 @@ def _launch_owned_stage(
                     start_new_session=True,
                     env={"LC_ALL": "C"},
                 )
+                retain_native_effect_owner(process, observe_process_close(process))
                 if child_control_socket is not None:
                     child_control_socket.close()
                     child_control_socket = None
@@ -1062,9 +1088,7 @@ def _launch_owned_stage(
             # a heavily scheduled guest. Use the bounded cleanup window to
             # prove the complete tree has exited instead of treating that
             # short handoff as an uncertain delivery.
-            state = process_supervisor.wait(
-                supervised_attempt, timeout=_CLEANUP_TIMEOUT_SECONDS
-            )
+            state = process_supervisor.wait(supervised_attempt, timeout=_CLEANUP_TIMEOUT_SECONDS)
             if state is not WorkProcessState.TERMINATED:
                 partial_stdout, partial_stderr, confirmed = cleanup_process_tree()
                 raise WorkBubblewrapCleanupUncertain(

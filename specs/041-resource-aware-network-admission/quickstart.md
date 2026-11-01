@@ -40,3 +40,8 @@ ResourceDomainAuthority.outstanding_resources exige Principal JWT admin verifica
 ## T014 — catálogo HTTP y aborto previo al efecto
 
 El estado anterior de catálogo solo SPI corresponde al checkpoint anterior. Ahora POST /admission/shared/debt requiere JWT admin y runtime shared activado con su propio crédito; usa version1/limit1..1000/after opcional. El cursor es descriptivo. Para abortar un preparing1 mapeado, conservar primero un action_id UUID y enviar version1/action_id/operation_id/expected_revision1 a POST /admission/shared/abort-preparing. Respuesta confirmada conserva ambos UUID y released/revision2; ante503 o cancelación, repetir exactamente el mismo action_id/payload para reconciliar el acuse. Nunca interpretar el error o una página vacía como rollback/liberación.409 exige refrescar el contexto; no reejecutar trabajo. No usar este endpoint para active/uncertain/metadatos ni jobs históricos. Código/esquema de participantes deben coordinar migración5; no rolling upgrade transparente. [Validación](validation-t014-preparing-abort.json).
+
+
+## Cierre de Work nativo
+
+El puerto productivo registra el token del efecto externo automáticamente. Un backend confiable declara su ciclo completo con observe_native_effect, señala begin_native_effect antes del primer arranque posible, conserva handles con retain_native_effect_owner y emite confirm_native_effect_closed solo tras su prueba nativa completa. Nunca emitir ese acuse desde un finally genérico ni desde el mero retorno/error del callback. SQL, proceso y helpers tienen cierres distintos; un native owner incierto conserva costes y receptor. Esto no introduce un límite de agentes ni sustituye la recuperación durable T014. [Validación](validation-t014-work-physical-ownership.json).

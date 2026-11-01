@@ -114,3 +114,9 @@ Descubrimiento del objetivo: POST /admission/shared/debt bajo JWT admin y contro
 
 
 El runtime deriva expected_binding de su concesión opaca y lo contrasta antes del primer SQL, durante la transacción y después. Nunca es input HTTP. El cliente persiste action_id antes del intento y lo reutiliza ante503/cancelación o confirmación perdida; ausencia del objetivo en una página no demuestra rollback. Conflicto409 no autoriza otro efecto.
+
+
+Frontera Work reproducida antes de la corrección: final de callback/hilo no equivale al cierre de su proceso/contenedor. La reserva conserva costes y exclusión mientras quede un efecto externo incierto. Solo no-arranque probado o testigo positivo de cierre del dueño nativo permite su retiro; SQL y efecto externo tienen propietarios distintos. Un futuro testigo durable debe cubrir ambos.
+
+
+Frontera Work corregida en este corte: la reserva conserva un PhysicalEffectReservation por dueño nativo, con handles/observadores exactos además de préstamos SQL. No-start observado o cierre confirmado permite retirarlo; error, timeout y not-alive de un hilo no arrancado no lo permiten. El token no es serializable ni permiso de replay y no se transmite a clientes. Los cargos durables siguen en PostgreSQL; todavía no existe testigo SQL de cierre para un custodio de otra generación.

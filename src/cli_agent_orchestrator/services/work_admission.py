@@ -236,7 +236,17 @@ class _WorkEffectPort:
         )
         if self._receiver_credential_fd is not None:
             process_options["receiver_credential_fd"] = self._receiver_credential_fd
-        return executor(self._restriction, **process_options)
+        from cli_agent_orchestrator.services.work_process_effect import physical_effect_scope
+
+        with physical_effect_scope(self._resource_reservation) as effect:
+            before = process_options["before_effect"]
+
+            def gated_effect():
+                before()
+                effect.gate()
+
+            process_options["before_effect"] = gated_effect
+            return executor(self._restriction, **process_options)
 
     def backend_scope(self):
         from cli_agent_orchestrator.backends.registry import work_backend_scope
