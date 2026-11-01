@@ -4,6 +4,7 @@ import asyncio
 import os
 import queue
 import threading
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -271,6 +272,9 @@ class StorageConnectionReservation:
 
     _lease: "DeliveryReservation"
     _additional: bool
+    _control_connection: weakref.ReferenceType[object] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def finish(self) -> bool:
         lease = self._lease
@@ -316,6 +320,47 @@ class DeliveryReservation:
     @property
     def storage_process_current(self) -> bool:
         return self._owner._pid == os.getpid()
+
+    @property
+    def storage_control_current(self) -> bool:
+        return False
+
+    def owns_storage_connection(self, loan: object) -> bool:
+        if not self.storage_process_current or type(loan) is not StorageConnectionReservation:
+            return False
+        owner = self._owner
+        with owner._guard:
+            return (
+                self._state == "started"
+                and owner._leases.get(self._key) is self
+                and loan._lease is self
+                and loan in self._storage_connections
+            )
+
+    def bind_control_sql_connection(self, loan: object, connection: object) -> bool:
+        if not self.storage_process_current or type(loan) is not StorageConnectionReservation:
+            return False
+        owner = self._owner
+        with owner._guard:
+            if not self.storage_control_current or not self.owns_storage_connection(loan):
+                return False
+            reference = loan._control_connection
+            if reference is not None:
+                return False  # Capture is one-shot, even for the original facade.
+            object.__setattr__(loan, "_control_connection", weakref.ref(connection))
+            return True
+
+    def owns_control_sql_connection(self, loan: object, connection: object) -> bool:
+        if not self.storage_process_current or type(loan) is not StorageConnectionReservation:
+            return False
+        owner = self._owner
+        with owner._guard:
+            return (
+                self.storage_control_current
+                and self.owns_storage_connection(loan)
+                and loan._control_connection is not None
+                and loan._control_connection() is connection
+            )
 
     @property
     def footprint(self) -> ResourceAmounts:
@@ -571,6 +616,18 @@ class _StorageControlReservation(StorageReservation):
     ):
         super().__init__(owner, key, footprint)
         self._completion_hold = completion
+
+    @property
+    def storage_control_current(self) -> bool:
+        if not self.storage_process_current:
+            return False
+        owner = self._owner
+        with owner._guard:
+            return (
+                owner._control_lease is self
+                and owner._leases.get(self._key) is self
+                and self._state == "started"
+            )
 
     def try_acquire_storage_connection(self, *, now: float) -> StorageConnectionReservation | None:
         validate_clock(now)

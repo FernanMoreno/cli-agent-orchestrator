@@ -1,0 +1,309 @@
+{
+  "schema": "caos.spec041.t014-sql-intents.v1",
+  "date": "2026-11-01",
+  "base_head": "49532da332da8622e09821ac4f58d0ff77346c24",
+  "scope": "T014.C2b.P2b worker-scoped pre-TCP intent registration on an existing original funded SQL channel",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-sql-intents-final",
+    "selected_test_files": 87,
+    "passed": 1188,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous1132cases_preserved": true,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "seconds": 1165.328,
+    "available_mib": 12502,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "376cade8b402578228e0fbe89cf33ebe34ca27cbc497a98186dcb1de271cd591"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "c42846fadfacce8634d55fba9ba2c62a52542d7590732e0c4abfffe6c396c063"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "bb52895991db5bb1accd0c95b84760eadc39ac886866554e9d8b7ae4c351bf38"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "53c212ae7a6f426eddd328cec92a197ac3686e6e07a9c683830c45a2a61831b2"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "3a87658b7b1415060af6a57a7d0a8aa6ad0c5dec3a222243318a07d7d125a5c0"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "2d8cab95d622570f03e637822dada777a2b24b46aab0aea813be541b8e75eefc"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "c8095f36c1f4437903de35e517362236969feeb21649f2d17b55b98dfc246a58"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/database.py",
+        "sha256": "20f627f28dd73b76cfe182998a3bba6e01ed965c924939604cd71cdc4cffbcd5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/legacy_memory_audit_repository.py",
+        "sha256": "30b73bc8ec37c850e1622afc9e1290f8afaaf6e6d2fa5b6c4aec7db9d00ee4f1"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "fcebafb89f2204ddf14693596d40f6eb63bcd411e3552f5c2800545e6555ecd8"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/registry.py",
+        "sha256": "b0afecf501c522fc3309acd095ffac26ae99a3315e3680b2dd7acf61084390c3"
+      },
+      {
+        "path": "test/postgres/test_sql_opening_intents.py",
+        "sha256": "5c42e400121c36d5a113e9097f2b7cf6a07911563d3e410de9a2e9da8bd554ce"
+      },
+      {
+        "path": "test/postgres/test_sql_intent_journal.py",
+        "sha256": "efba8c3455c5d2db44fdcbb7d3d3c44552c3b05a4090fb3b3e54d7bdae088ca2"
+      },
+      {
+        "path": "test/utils/test_sql_opening_recorder.py",
+        "sha256": "2a94deced024eac834b41753c343b6710ebb99f51f560b5ab7b8069b7c961a9b"
+      }
+    ],
+    "archive_sha256": "55d721ec26ecf47c4fcc4775b01d329c8c84d4a1050d344318b2279c3a2327dc",
+    "production_archive_match": 11,
+    "owned_python_archive_match": 14,
+    "foreign_graphify_files_preserved": 12
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 14
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 14
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 11
+    }
+  ],
+  "architecture": {
+    "files": 455,
+    "dependencies": 2040,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 19,
+    "nodes": 959,
+    "edges": 2559,
+    "dangling": 184,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-durable-sql-opening-intents",
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "7b5d196d81a247eeb4d2afd6e0fbff41",
+      "e3cb2bbcab424a4eb417f2a5566e7f6c",
+      "47edce6de0d349fca50eb76c99981b9c"
+    ],
+    "final_peer_verdict": "No correctness blocker; read-only review, no executable or global certification.",
+    "root_final_diff_review": true
+  },
+  "implemented": [
+    "Original native Connection captures one-shot nontransferable control funding bound to live loan/scope/PID/Thread/task/target/raw; funded_transaction creates no new TCP or loan.",
+    "Independent sql_opening_intents migration1: owner-only quotas and append-only channels/intents/fences; frozen resource_admission1-7 preserved.",
+    "Owner provisioner and explicit participant binding are separate; metadata root and target identity verified without inventing capacity units.",
+    "Journal/intent advisory locks and indexed ordinal enforce bounded logical record count; first acknowledged control backend pins writer. Duplicate UUID never grants another opening.",
+    "Scoped callback runs before native/ORM/audit driver entry, refuses recursive or foreign worker usage and returns only after an independent acknowledged commit.",
+    "Suppressed rollback fails; lost commit ACK retains UUID and prevents TCP; preparation uncertainty is separate from TCP uncertainty. C1 does not prevent already financed completion registration."
+  ],
+  "evidence_boundaries": [
+    "Final distinct cases only; all1132 prior identities retained. Earlier phases are retained separately, not summed.",
+    "Actual PostgreSQL independent observer sees the committed intent before each of3drivers. Lost-ACK test commits, loses ACK, denies data driver and reads retained UUID.",
+    "Actual fork/task/thread/scope and live other participant provisioning controls; no new provider/model acceptance.",
+    "Read/fence accept another already-paid channel for the same current binding; this is not cross-process crash recovery or authorization to open another connection.",
+    "Initial control TCP remains outside coverage. No global Bridge recorder activation, cross-worker broker or implicit ContextVar propagation to pool threads.",
+    "max_records bounds logical retained rows, not physical bytes or PostgreSQL session capacity; metadata credit remains charged and has no retirement implementation.",
+    "Local counters cannot prove a complete intent inventory: callback can commit then fail post-check without entering TCP.",
+    "First writer claim is a positive backend identity observed only for the funded control channel, not destination backend identity or proof of session absence.",
+    "Full transitive mypy additionally attempted:8errors in3unmodified modules (opencode_v2_store, work_origin, herdr_inbox_service); established scoped mypy11 passes, full-project typing is not claimed.",
+    "Same disposable PostgreSQL reused, custodian retained, no operator/provider credentials modified; historical RECONCILE_REQUIRED untouched.",
+    "Stale copied private offline preflight failed before tests/archive and unused extended selector descriptor was never activated; neither is a product RED."
+  ],
+  "history": [
+    {
+      "phase": "t014-sql-intents-channel-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 7,
+        "failure": 7,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 65.589,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-channel-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 28,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 79.286,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-journal-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 5,
+        "failure": 5,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 73.517,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-binding-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 64.115,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-rollback-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 1,
+        "failure": 1,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 53.98,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-recording-counter-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 3,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 52.921,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 76,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 78.456,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-extended-checks",
+      "exit_code": 0,
+      "cases": {
+        "total": 55,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 59.207,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-intents-participant",
+      "exit_code": 0,
+      "cases": {
+        "total": 12,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 62.242,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "remaining": [
+    "Funded bootstrap and persistent worker/broker activation before every TCP path; initial control opening is outside this scoped component.",
+    "Complete durable attempt/session/native inventory, server visibility and independently funded audited metadata custodian; no metadata credit return implemented.",
+    "Original ten tasks, quotas/distribution, physical M1/M2/M3, SDK/UI and global acceptance."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

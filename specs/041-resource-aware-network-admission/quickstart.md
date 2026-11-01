@@ -85,3 +85,8 @@ El supervisor opt-in activa automáticamente la etiqueta; no configurar manualme
 ## T014.C2b.P2a — cierre terminal de nuevas aperturas
 
 No hay flag nuevo ni límite de agentes: el Bridge supervisado aplica automáticamente el bloqueo de aperturas al terminar su main, después del intento completo de cleanup. No se reinicia dentro del mismo proceso terminal. Procesos sin supervisor mantienen legado. El bloqueo no mata sesiones existentes ni devuelve créditos; las pruebas reales de inventario/retirada y los gates globales siguen pendientes. [Validación](validation-t014-sql-fence.json).
+
+
+## T014.C2b.P2b — registro financiado previo a TCP
+
+No hay activación global ni nuevo flag público. El componente trusted usa un Connection original de control dentro del scope activo y SqlIntentRepository.record_openings alrededor del worker físico; el recorder no se propaga automáticamente a workers/pools. La quota se provisiona por dueño explícito antes, con crédito/binding comprobados; el primer TCP de control no queda cubierto. No usar counters/label/lectura como prueba de ausencia o devolución de créditos. [Validación](validation-t014-sql-intents.json).

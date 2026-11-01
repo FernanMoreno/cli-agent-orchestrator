@@ -119,3 +119,8 @@ La auditoría mantiene application_name en su huella: dentro del proceso es esta
 ## T014.C2b.P2a — cierre terminal de nuevas aperturas
 
 C1 y el drenaje abren SQL financiado; el finally exterior de Bridge.main posterior a asyncio.run conserva ese orden incluso ante error startup. At-fork lee sin mutex heredado: decrementar opening antes de aumentar unconfirmed perdía el intento en el estado intermedio. RED determinista antes de invertirlo; fork real conserva incertidumbre y cierre. No exceptuar callbacks arbitrarios del pool por el tipo de una negativa tardía: puede existir un raw anterior. La vista de contadores no cubre raw-registration ni sesiones servidor. [Validación](validation-t014-sql-fence.json).
+
+
+## T014.C2b.P2b — registro financiado previo a TCP
+
+La financiación del registro no puede obtener otro TCP sin recursión: usa el raw de control original y un préstamo/scope todavía activo del mismo worker. psycopg suprime Rollback en su context manager: exigir final de cuerpo/estado INTRANS evita convertir rollback en acuse. Registrar antes del driver separa fallos de preparación e incertidumbre TCP; un commit sin ACK conserva UUID, no autoriza efecto. El primer backend de control se fija positivamente, sin inferir ausencia de destinos. Lectura/fence alternativos son de la misma identidad viva, no recuperación postcrash. [Validación](validation-t014-sql-intents.json).

@@ -111,3 +111,8 @@ ProcessExitObservation añade sql_application_name canónico y obligatorio; el s
 ## T014.C2b.P2a — cierre terminal de nuevas aperturas
 
 El estado efímero por PID conserva enabled/name/sealed/opening/unconfirmed y lock local. sealed es irreversible; opening cuenta llamadas admitidas, unconfirmed retiene fallos/incertidumbre heredada. Ninguno representa inventario durable o ausencia. Fork nuevo usa identidad distinta y conserva cierre/incertidumbre. No hay cambio del esquema7 ni autorización de devolución. [Validación](validation-t014-sql-fence.json).
+
+
+## T014.C2b.P2b — registro financiado previo a TCP
+
+sql_opening_intents1 añade4tablas independientes: quotas(journal/credit/instance/generation/binding/max_records/actor), channels(journal/binding/backendPID/backend_start), intents(UUID/journal/ordinal/binding/sourcePID/birth/appName/path/destinationhash), fences(journal/binding). Quotas runtimeSELECT, resto append-only. max_records es crecimiento lógico, no bytes/sesiones. Estado local incorpora registration_unconfirmed separado de unconfirmed TCP; ninguno es inventario completo ni autoridad de liberación. [Validación](validation-t014-sql-intents.json).

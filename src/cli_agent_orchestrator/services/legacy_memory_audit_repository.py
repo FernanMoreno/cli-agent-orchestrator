@@ -993,7 +993,7 @@ class LegacyMemoryAuditConnectionManager:
         attempted = False
         try:
             parameters = dict(resolved.parameters)
-            with sql_process_opening():
+            with sql_process_opening(path="audit", destination=resolved.target):
                 attempted = True
                 raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
             track_storage_handle(raw)

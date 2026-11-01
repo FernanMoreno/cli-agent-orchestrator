@@ -739,7 +739,8 @@ _RUNTIME_ROLE_QUERY = """WITH role_flags AS MATERIALIZED (
                           '_cao_resource_metadata_credits',
                           '_cao_resource_metadata_credit_history',
                           '_cao_resource_admin_actions',
-                          '_cao_resource_witness_releases'
+                          '_cao_resource_witness_releases',
+                          '_cao_sql_opening_quotas'
                       )
                       AND CASE WHEN c.relkind NOT IN ('r','p') THEN true ELSE (
                           NOT has_table_privilege(current_user,c.oid,'SELECT')
@@ -932,6 +933,7 @@ def protect_runtime_authority_tables(connection: Connection, target: DatabaseTar
         ("_cao_resource_metadata_credit_history", "resource metadata credit history"),
         ("_cao_resource_admin_actions", "resource administrative action"),
         ("_cao_resource_witness_releases", "resource witnessed release"),
+        ("_cao_sql_opening_quotas", "SQL opening quota"),
     ):
         _protect_runtime_readonly_table(connection, target, protected_name, protected_label)
 
@@ -942,6 +944,14 @@ def protect_runtime_authority_tables(connection: Connection, target: DatabaseTar
         "resource generation seal",
         append_only=True,
     )
+    for name in (
+        "_cao_sql_opening_channels",
+        "_cao_sql_opening_intents",
+        "_cao_sql_opening_fences",
+    ):
+        _protect_runtime_readonly_table(
+            connection, target, name, "SQL opening journal", append_only=True
+        )
 
 
 def migrate_component(target: DatabaseTarget, migrations):

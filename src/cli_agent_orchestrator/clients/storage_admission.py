@@ -3,6 +3,7 @@
 import asyncio
 import os
 import threading
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -101,6 +102,90 @@ class _PhysicalScope:
 
 
 _CURRENT: ContextVar[_PhysicalScope | None] = ContextVar("cao_physical_storage_scope", default=None)
+
+_FUNDING_FACTORY = object()
+
+
+@dataclass(frozen=True, eq=False, init=False, repr=False)
+class _ControlSqlFunding:
+    connection: weakref.ReferenceType[object]
+    loan: StorageConnectionLoan
+    scope: _PhysicalScope
+    pid: int
+    thread: threading.Thread
+    factory: object
+
+    def __init__(self):
+        raise TypeError("SQL funding is issued by an owned native connection")
+
+    def __copy__(self):
+        raise TypeError("SQL funding is not transferable")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("SQL funding is not transferable")
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError("SQL funding is not serializable")
+
+    def check(self, connection: object, loan: StorageConnectionLoan | None) -> None:
+        # Never acquire a possibly inherited scope/owner mutex before PID check.
+        if (
+            self.factory is not _FUNDING_FACTORY
+            or self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self.connection() is not connection
+            or loan is not self.loan
+            or not self.scope.is_current()
+            or not _PROCESS_STORAGE_CLOSES.process_current
+        ):
+            raise StorageAdmissionUnavailable()
+        owner = self.scope.owner
+        owns = getattr(owner, "owns_control_sql_connection", None)
+        if (
+            getattr(owner, "storage_control_current", False) is not True
+            or not callable(owns)
+            or owns(loan, connection) is not True
+            or self.scope.failed()
+        ):
+            raise StorageAdmissionUnavailable()
+
+    @contextmanager
+    def bind(self, connection: object, loan: StorageConnectionLoan | None) -> Iterator[None]:
+        self.check(connection, loan)
+        # Same physical worker only. Reuse its still-active prepaid control
+        # scope while a nested data scope is paused; never mint another loan.
+        token = _CURRENT.set(self.scope)
+        try:
+            yield
+        finally:
+            _CURRENT.reset(token)
+
+
+def capture_control_sql_funding(
+    connection: object, loan: StorageConnectionLoan | None
+) -> _ControlSqlFunding | None:
+    scope = _CURRENT.get()
+    if loan is None or scope is None or scope.logical or not scope.is_current():
+        return None
+    owner = scope.owner
+    bind = getattr(owner, "bind_control_sql_connection", None)
+    if (
+        getattr(owner, "storage_control_current", False) is not True
+        or not callable(bind)
+        or bind(loan, connection) is not True
+    ):
+        return None  # Ordinary funded data connections are not control channels.
+    funding = object.__new__(_ControlSqlFunding)
+    for key, value in (
+        ("connection", weakref.ref(connection)),
+        ("loan", loan),
+        ("scope", scope),
+        ("pid", os.getpid()),
+        ("thread", threading.current_thread()),
+        ("factory", _FUNDING_FACTORY),
+    ):
+        object.__setattr__(funding, key, value)
+    return funding
 
 
 @contextmanager

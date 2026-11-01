@@ -958,7 +958,7 @@ def _native_orm_connection():
     target = DatabaseTarget.from_settings()
     parameters = target.connection_parameters()
     try:
-        with sql_process_opening():
+        with sql_process_opening(path="orm", destination=target):
             connection = psycopg.connect(**parameters)
     finally:
         if "password" in parameters:

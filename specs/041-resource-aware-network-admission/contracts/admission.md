@@ -163,3 +163,8 @@ El canal heredado exige protocolo2 con version/binding/kernel/sql_application_na
 ## T014.C2b.P2a — cierre terminal de nuevas aperturas
 
 En procesos supervisados, admisión de apertura física y sellado local se serializan antes del driver. Una llamada ya admitida puede abrir después y sigue contada hasta volver. El main terminal sella después de limpieza financiada; C1 no activa este cierre. Sesiones existentes conservan SQL/reuso/cierre. Error, contador0 o seal no autorizan metadatos. El siguiente protocolo debe financiar y registrar durablemente los intents antes de TCP. [Validación](../validation-t014-sql-fence.json).
+
+
+## T014.C2b.P2b — registro financiado previo a TCP
+
+SqlIntentRepository recibe canal financiado original, no crea conexión. provision separa actor actual de participant_binding/credit original; record confirma commit antes de permitir driver. Identidad duplicada no concede segundo TCP; pérdida de acuse conserva UUID y bloquea efecto. Canal writer queda fijado al primer backend confirmado. read/fence de otro canal ya financiado admiten solo binding actual idéntico y nunca conceden TCP. C1 permite completion financiada; fence de journal y fence físico son separados. Bootstrap/broker/global/custodio siguen pendientes. [Validación](../validation-t014-sql-intents.json).

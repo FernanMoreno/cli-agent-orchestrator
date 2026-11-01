@@ -255,3 +255,14 @@ El cierre se ejecuta al terminar el main de Bridge, después del intento de limp
 P2a no cierra T014: quedan intents financiados durables ANTES de TCP, inventario completo original, custodia externa y retirada auditada. Un contador local en cero, fallo connect o fin de cliente no prueban ausencia de PostgreSQL.
 
 P2a aporta el cierre local de admisión; la composición durable de ese cierre con el inventario completo y el custodio sigue pendiente.
+
+
+## T014.C2b.P2b — intents PostgreSQL mediante canal prefinanciado (componente scoped validado; activación completa pendiente)
+
+Registrar durablemente cada intento antes del driver cuando una composición confiable instala el registrador en su worker físico. El registrador solo usa una Connection nativa propia ya abierta con préstamo vigente de control, PID/Thread/task originales y scope aún activo. No abre conexiones propias, no tiene fallback ni reutiliza una transacción ajena para emitir un acuse que pudiera revertirse después. Copia/fork/cambio de hilo/task, cierre o préstamo terminado rechazan antes de SQL.
+
+Un componente aditivo sql_opening_intents conserva cuotas owner-written en unidades de registros y canales/intents/fences runtime append-only. La primera inscripción confirmada fija el backend original de control; no autoriza a otro backend a adoptar el writer. El actor dueño puede provisionar para un participante explícito con su binding/crédito original, sin adoptar su identidad. No se convierte una sesión postgres_session en bytes o filas ni se declara que un crédito existente sea automáticamente el intent del bootstrap. La cuota finita explícita es un límite de crecimiento lógico, no aceptación de almacenamiento físico T013. Insertar y acusar exige commit independiente; acuse perdido conserva UUID y nunca permite TCP ni reutilizar el mismo registro para otro efecto.
+
+El fence durable de inscripciones serializa con nuevos intents, sin confundirse con C1: el SQL financiado de finalización sigue necesitando registrar sus aperturas. Un sello C1 no cancela el registro de esos intentos. La instalación es scoped al worker; todas las3rutas usan el mismo callback previo al driver. Reentrada del callback rechaza, jamás omite el registro para evitar recursión.
+
+No se activa aún el registrador globalmente en Bridge: faltan canal persistente/broker concurrente y bootstrap explícitamente financiado anterior a las primeras conexiones. Un intent/contador/fence/etiqueta no prueba ausencia ni devuelve crédito. Jobs históricos y credenciales del operador no se alteran.

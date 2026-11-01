@@ -20,6 +20,7 @@ def component_migrations(scope="main"):
             PRIVATE_PLAN_MIGRATIONS,
         )
         from cli_agent_orchestrator.clients.runtime_channel_schema import runtime_channel_migrations
+        from cli_agent_orchestrator.clients.sql_opening_schema import SQL_OPENING_MIGRATIONS
         from cli_agent_orchestrator.clients.work_continuation_postgres_schema import (
             WORKFLOW_CONTINUATION_MIGRATIONS,
         )
@@ -41,6 +42,7 @@ def component_migrations(scope="main"):
             WORK_POSTGRES_MIGRATIONS,
             RESOURCE_ENVELOPE_MIGRATIONS,
             RESOURCE_ADMISSION_MIGRATIONS,
+            SQL_OPENING_MIGRATIONS,
             import_receipt_migrations("main"),
         )
     if scope == "auth":

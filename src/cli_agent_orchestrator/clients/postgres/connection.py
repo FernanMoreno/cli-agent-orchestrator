@@ -14,11 +14,13 @@ from cli_agent_orchestrator.clients.storage_admission import (
     StorageAdmissionUnavailable,
     StorageConnectionLoan,
     acquire_storage_connection,
+    capture_control_sql_funding,
     note_storage_denial,
     retain_storage_close,
     storage_close_tracks_handle,
     storage_scope_present,
 )
+from cli_agent_orchestrator.models.sql_opening_intent import SqlOpeningPreparationUncertain
 from cli_agent_orchestrator.utils.process_sql_origin import sql_process_opening
 
 from .config import DatabaseTarget
@@ -27,6 +29,10 @@ from .fork_handles import track_storage_handle
 DatabaseError = psycopg.DatabaseError
 IntegrityError = psycopg.IntegrityError
 OperationalError = psycopg.OperationalError
+
+
+class FundedSqlCommitUncertain(SqlOpeningPreparationUncertain):
+    """No effect may start through an unacknowledged funded SQL commit."""
 
 
 class Record:
@@ -135,20 +141,25 @@ def record_factory(cursor: psycopg.Cursor[Any]) -> Callable[[Sequence[Any]], Rec
 class Connection:
     def __init__(self, target: DatabaseTarget, readonly: bool = False) -> None:
         self.target = target
+        self._funded_target = target
         self._owns_raw = True
         self._storage_pid = os.getpid()
         self._storage_loan: StorageConnectionLoan | None = acquire_storage_connection()
+        self._control_sql_funding = None
+        self._funded_raw = None
         raw = None
         attempted = False
         try:
+            self._control_sql_funding = capture_control_sql_funding(self, self._storage_loan)
             parameters = target.connection_parameters()
             try:
-                with sql_process_opening():
+                with sql_process_opening(path="native", destination=target):
                     attempted = True
                     raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
             finally:
                 parameters["password"] = ""
             self.raw: psycopg.Connection[Record] | ConnectionRaw = raw
+            self._funded_raw = raw
             track_storage_handle(raw)
             setattr(raw, "_cao_storage_pid", self._storage_pid)
             self.raw.execute(
@@ -198,8 +209,11 @@ class Connection:
         connection = cls.__new__(cls)
         connection.raw = raw
         connection.target = target
+        connection._funded_target = target
         connection._owns_raw = False
         connection._storage_loan = None  # The enclosing physical owner keeps its token.
+        connection._control_sql_funding = None
+        connection._funded_raw = None
         origin = getattr(raw, "_cao_storage_pid", None)
         if isinstance(origin, bool) or not isinstance(origin, int):
             if storage_scope_present():
@@ -279,6 +293,46 @@ class Connection:
                     closed=lambda: getattr(self.raw, "closed", False) is True,
                     loan=loan,
                 )
+
+    @contextmanager
+    def funded_transaction(self) -> Iterator["Connection"]:
+        funding = self._control_sql_funding
+        if funding is None or not self._owns_raw:
+            raise StorageAdmissionUnavailable()
+        funding.check(self, self._storage_loan)
+        self._check_live()
+        if (
+            self.raw is not self._funded_raw
+            or self.target is not self._funded_target
+            or getattr(self.raw, "closed", None) is not False
+            or self.in_transaction
+        ):
+            raise StorageAdmissionUnavailable()
+        with funding.bind(self, self._storage_loan):
+            body_finished = False
+            try:
+                with self.transaction():
+                    yield self
+                    funding.check(self, self._storage_loan)
+                    if self.raw.info.transaction_status != TransactionStatus.INTRANS:
+                        raise StorageAdmissionUnavailable()
+                    body_finished = True
+            except BaseException as failure:
+                if body_finished:
+                    raise FundedSqlCommitUncertain(
+                        "Funded SQL commit requires reconciliation"
+                    ) from failure
+                raise
+            if not body_finished:
+                # psycopg.Rollback is deliberately suppressed by its context.
+                # Suppression must never become an acknowledgement of commit.
+                raise StorageAdmissionUnavailable()
+            try:
+                funding.check(self, self._storage_loan)
+            except BaseException as failure:
+                raise FundedSqlCommitUncertain(
+                    "Funded SQL commit requires reconciliation"
+                ) from failure
 
     @contextmanager
     def transaction(self) -> Iterator["Connection"]:
