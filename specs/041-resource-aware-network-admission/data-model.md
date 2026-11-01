@@ -49,3 +49,11 @@ StorageControlPermit privado por identidad y PID; _StorageControlReservation ini
 ## Puerto normal de operaciones y lifetimes
 
 StorageOperationAdmission liga dueño/clock/PID/retirement y epoch por servicio. La actividad lógica puede existir con cero leases entre sondeos; cada transacción abre StorageReservation1 propia o reutiliza parent normal exacto. Control nunca sirve datos. Epoch viejo, contexto copiado y binding ajeno fallan sticky. Active0 y dueño físico0 no son conteos de agentes. Runtime mantiene los bindings logrados hasta retry/witness/owner0 y no puede mutar a su sucesor tras retired. El target configurado es pin de aplicación, no identidad de dominio compartido.
+
+## T012 — ledger compartido PostgreSQL implementado (2026-11-01)
+
+resource_admission v1 añade cuatro tablas de autoridad (_cao_resource_domains, _cao_resource_domain_history, _cao_resource_members, _cao_resource_member_history) y tres operativas (_cao_resource_usage, _cao_resource_operations, _cao_resource_allocations). DomainSpec define UUID/encarnación estables, kind host/node/storage, unidad bytes/millicores/postgres_session y presupuesto entero; no define cuotas de tasa. Revisiones administrativas e historia son del dueño explícito. La membresía fija binding privado de proceso y su digest; el digest físico es declaración autorizada de despliegue, no descubrimiento.
+
+Operation conserva ID idempotente, instancia/generación/PID/inicio y huella exacta; allocations conserva dominio/encarnación/revisiones de dominio y membresía/cantidad. preparing/active/releasing/uncertain siguen en committed; released retira cantidades originales una vez. Presupuesto reducido conserva deuda y la encarnación no se sustituye silenciosamente. Uso incremental y auditoría MVCC independiente son conceptos distintos; la auditoría no repara. SharedCommitUncertain distingue grant no confirmable después del commit, con identidad/cargo retenidos.
+
+Este modelo está validado como backend T012; no representa wiring T013, recuperación física T014 ni aceptación M2/M3. [Recibo](validation-t012-shared-ledger.json).

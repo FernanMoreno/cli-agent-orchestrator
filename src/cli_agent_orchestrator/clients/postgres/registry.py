@@ -10,6 +10,7 @@ def component_migrations(scope="main"):
         from cli_agent_orchestrator.clients.admission_bootstrap_schema import (
             RESOURCE_ENVELOPE_MIGRATIONS,
         )
+        from cli_agent_orchestrator.clients.admission_schema import RESOURCE_ADMISSION_MIGRATIONS
         from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
         from cli_agent_orchestrator.clients.interaction_repository import INTERACTION_MIGRATIONS
         from cli_agent_orchestrator.clients.postgres.import_receipt_schema import (
@@ -39,6 +40,7 @@ def component_migrations(scope="main"):
             runtime_channel_migrations(),
             WORK_POSTGRES_MIGRATIONS,
             RESOURCE_ENVELOPE_MIGRATIONS,
+            RESOURCE_ADMISSION_MIGRATIONS,
             import_receipt_migrations("main"),
         )
     if scope == "auth":

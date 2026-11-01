@@ -1,0 +1,264 @@
+{
+  "schema": "caos.spec041.validation.v1",
+  "verified_utc": "2026-11-01T01:09:21.096719+00:00",
+  "base_head": "7c63a5d214b124812b6101517c9587939f290f83",
+  "status": "T012 shared PostgreSQL ledger backend validated",
+  "t012_complete": true,
+  "m2_complete": false,
+  "global_acceptance": false,
+  "native_model_or_provider_cli_executed": false,
+  "tested_files": {
+    "src/cli_agent_orchestrator/models/admission_domains.py": "sha256:5e14c7a12681f7667eed35c31f8c01d5e9755405ed25ab403b631a7ed5c6676f",
+    "src/cli_agent_orchestrator/clients/admission_schema.py": "sha256:e5e3d11754bd2b1bcf0242adcf2f64558e866f159d2672a2db2506ae2ff8f868",
+    "src/cli_agent_orchestrator/clients/admission_repository.py": "sha256:23f1a1cff75737398494d75a0514e4ef33ca799ff95191b54e5b99d9252c5d98",
+    "src/cli_agent_orchestrator/clients/postgres/registry.py": "sha256:13b03e9dc65b05564a277f8aa38537c59bb552fda60dba1bf002be9ae4967407",
+    "src/cli_agent_orchestrator/clients/postgres/migrations.py": "sha256:07282cb3cc83a90b42df49374533941b390677b28f3c2e1cfac1c7d17c5525c8",
+    "src/cli_agent_orchestrator/services/admission_domains.py": "sha256:5c2029345c173281bd50c41f9892ff8934c5bbc16ab5e91eded0306a1695b498",
+    "test/postgres/test_admission_reservations.py": "sha256:b7dc1ac6cb2ca8dc3a12ab43660c9429459d01948c66b6ab8c38b6a6e5428b37",
+    "test/services/test_admission_domains.py": "sha256:e9c67e1a7019f44d26e1d13f871b8a82fd2e4b3d9513168eb57a396711382a3f",
+    "test/clients/test_shared_admission_identity.py": "sha256:c2f00b6ab27a06dd09d951614a839a2ed6295475972ba00d7be46bfc3716b5a9",
+    "test/postgres/test_shared_admission_audit_start.py": "sha256:c6a3302b1f553513c7e3d19c8bde1820e070a4da1b49dfdf09e3a96683132349"
+  },
+  "current_evidence": {
+    "broad_cases": 226,
+    "additional_disjoint_native_case": 1,
+    "unique_current_cases": 227,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "explanation": "Broad tested Python bytes are unchanged; only the additional independent test file was introduced, then executed separately. Earlier105/126 checkpoints overlap and are not summed."
+  },
+  "phases": [
+    {
+      "phase": "t012-shared-ledger-red",
+      "cases": {
+        "total": 8,
+        "failure": 0,
+        "error": 8,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 38.763,
+      "available_mib": 8745,
+      "candidate_sha256": "sha256:92e0d6524b88a4774f586abe4bbc54049fc8bd80caca7b8165d5d06a97d6d82c",
+      "candidate_archive_sha256": "sha256:77485049af73d043d59291413b5eaf6fb4fb54b836f1fd9f4069deef7953060e",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-shared-ledger-green",
+      "cases": {
+        "total": 105,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 76.481,
+      "available_mib": 8496,
+      "candidate_sha256": "sha256:124add735022f26dea17751b713e0f6c6d2f736f13ade138393ff674f3e4fe57",
+      "candidate_archive_sha256": "sha256:b1c01fd1bac495afa0ec3f0f39eebb799eed28582ffd2b9909bc560d8ef3c58f",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-canonical-lock-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 34.908,
+      "available_mib": 8666,
+      "candidate_sha256": "sha256:df2e9e9e673514f708f2ad6d8a0c61147281c1962f124db7b4a5f8dd937740fc",
+      "candidate_archive_sha256": "sha256:39b51dd318e0c5794bf56fd39eb29de4afdd753376138fe65e7ded4f66418ea4",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-start-authority-red",
+      "cases": {
+        "total": 4,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 36.478,
+      "available_mib": 8628,
+      "candidate_sha256": "sha256:f925e2e67fbbd28ebecd0dde29ac49a7cef9f00d16fc39e0069cd353553be516",
+      "candidate_archive_sha256": "sha256:b99466c9c8b6bb119347f25f62a413c39b032cc391f65526b21116642c5d2400",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-counter-fence-red",
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 1,
+      "controller_seconds": 40.911,
+      "available_mib": 8451,
+      "candidate_sha256": "sha256:8bb5d01125b21daa446452267fcb2d60919dfc10bb74d9e9c875135ea1abd959",
+      "candidate_archive_sha256": "sha256:52c918e79710b48bec1e1de738806b512c849164f9b68d52af9f1fbc08917a7d",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 1,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-shared-ledger-boundaries",
+      "cases": {
+        "total": 126,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 73.933,
+      "available_mib": 8517,
+      "candidate_sha256": "sha256:cef4e104f943ba0803e58e856c86c0b0cf2a8e415b092f40108e244b3c2743ea",
+      "candidate_archive_sha256": "sha256:05feee10a1b2a4765d919c396663f98ef8fe7c5168903c72117a3bbf60696037",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-shared-ledger-regression",
+      "cases": {
+        "total": 226,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 170.711,
+      "available_mib": 8771,
+      "candidate_sha256": "sha256:cef4e104f943ba0803e58e856c86c0b0cf2a8e415b092f40108e244b3c2743ea",
+      "candidate_archive_sha256": "sha256:59f19902eb7cacc586ec25dc9a6c3f64e08a40719679bf2823d58e278f51bdf7",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    },
+    {
+      "phase": "t012-known-drift-start",
+      "cases": {
+        "total": 1,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "controller_seconds": 31.927,
+      "available_mib": 8488,
+      "candidate_sha256": "sha256:37dd69766d61cfd9a8256a27b0a3f1ca950ba24df7a5256bd7dba98bdfada70f",
+      "candidate_archive_sha256": "sha256:39197efa34042577114d10be69666c70e2fff8479eb1c0862b5a431ce739d190",
+      "source_preserved": true,
+      "closure": {
+        "exit_code": 0,
+        "support_preserved": true,
+        "source_preserved": true,
+        "descriptor_closed": true
+      }
+    }
+  ],
+  "prepared_never_executed": [
+    {
+      "phase": "t012-shared-boundaries-green",
+      "reason": "Additional counter-audit invalidation regressions prepared before execution; descriptor superseded without launch."
+    }
+  ],
+  "preparation_errors": [
+    "Initial mypy found2returnAny errors; typed cursor and validated cast corrected before green.",
+    "Boundary patch generator produced one unterminated SQL literal; Black caught it before test preparation, source fixed. Not a native execution."
+  ],
+  "checks": {
+    "black_isort": "10 files PASS",
+    "mypy": "6 source files PASS under existing project settings",
+    "composition": "5KEPT/0BROKEN",
+    "postgres": {
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+      "other_clients": 0,
+      "test_databases": 0,
+      "test_roles": 0,
+      "live_reuse_lease_verified": true,
+      "container_stopped": false
+    },
+    "independent_codex_review": "Source boundaries GO; acceptance reviewer requested final drift→active case, then confirmed exactT012scope complete",
+    "obsidian": {
+      "operation_id": "markdown-20261101-shared-domain-ack",
+      "approval_sha256": "sha256:abd53d19f630f134a012df9e5e2d10cdda0fde96786e834ce8144cbd18c6c335",
+      "changed_paths": [
+        "wiki/concepts/Multiagent capacity evidence.md",
+        "wiki/index.md",
+        "wiki/log.md"
+      ],
+      "strict_lint_issues": 0
+    }
+  },
+  "graphify": {
+    "scope": "14 source files and direct neighbors only; not full repository graph",
+    "nodes": 295,
+    "raw_edges": 882,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "root_generated_work_preserved": true,
+    "health_warning": {
+      "dangling_endpoint_edges": 97,
+      "directed_same_endpoint_collapsed_edges": 54
+    },
+    "explanation": "Partial AST extract retains all raw edge records; dangling endpoints and possible simple-DiGraph relation collapse are not full repository coverage. Source review and Import Linter verify actual dependencies."
+  },
+  "scope": [
+    "Additive main resource_admission migration1 before final import_receipts; four runtime-readonly authority tables and three operational ledger tables.",
+    "VerifiedJWT/admin service guard before repository access; current process binding from private wiring; owner credential separation.",
+    "Incremental counters, atomic multi-domain reservation, stable operation ID, exact owner/generation/revision CAS and original quantities.",
+    "Known audit drift blocks new reserve and active before SQL; independent observer proves preparing allocation retained.",
+    "Canonical store/operation UUIDs; sorted effective transaction-lock keys; real administrative writer race and collision controls.",
+    "Post-commit acknowledgement loss retains charge/ID; process exit and stale generations do not release."
+  ],
+  "limits": [
+    "No production Inbox/Work/Bridge delivery wiringT013, distributed recoveryT014, real node placementM3 or physicalM2/T020 acceptance.",
+    "Physical grouping is a trusted administrative declaration, not automatic UUID/URI/hardware discovery.",
+    "Native tests use real PostgreSQL/connections/processes with synthetic deployment claims; quantity bookkeeping is not physical headroom or model acceptance.",
+    "Supported typed bookkeeping units are bytes/millicores/PostgreSQL sessions; provider quota/rate semantics remain for integration design.",
+    "Shared runtime role assumes cooperating server code; no hostile-SQL or per-process RLS isolation claim.",
+    "Initial/explicit independent audit scans ledger state; ordinary admission query shape remains constant after released history. No large-scale latency benchmark claim."
+  ]
+}
