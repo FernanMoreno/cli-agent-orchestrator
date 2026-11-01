@@ -25,3 +25,8 @@ Configurar CAO_ADMISSION_MODE=shared junto con CAO_ADMISSION_POLICY_FILE en el e
 Con JWT admin cao:admin enviar POST /admission/shared/activate y cuerpo JSON {"version":1} al API o control loopback del Bridge. Respuesta version1/activated=true confirma el control de ese lifetime, no observación física de red; repetir en el mismo runtime es idempotente. Fallo devuelve503 fijo sin habilitar datos. Campos extra o tipos convertidos se rechazan422. Un bind fallido deja el coordinador detenido y retenido para drenaje; retirar/reconstruir el lifetime antes de reactivar.
 
 Esta ruta no sustituye configuración versionada PostgreSQL/SDK/UI T022/T023 ni aceptación física T019/T020. Véanse [validación](validation-t013-production-activation.json) y [revisión](composition-t013-production-activation.md).
+
+
+## Prerrequisito de muestreo T019
+
+El sampler contrasta mnt_id real de los descriptores con mountinfo, conserva los directorios para leer controladores y descarta cambios de vista. La sonda readonly vigente comprobó resolución/cierre pero mantiene cobertura parcial; no permite reclamar ancestros invisibles, autoridad de almacenamiento o aceptación de carga. Para T019 aún se necesitan lecturas independientes desde el host del árbol de ancestros y el negativo de un límite real más estrecho en carga propia controlada. No cambiar límites de trabajos ajenos ni sustituir ese gate por fixtures. [Validación](validation-t019-cgroup-visibility.json).

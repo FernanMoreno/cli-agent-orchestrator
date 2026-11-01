@@ -2,7 +2,10 @@
 
 import os
 import re
+import stat
 import time
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Literal
@@ -55,6 +58,13 @@ class ResourceSample:
 class _ReadingError(ValueError):
     def __init__(self, issue: ResourceIssue):
         self.issue = issue
+
+
+@dataclass(frozen=True)
+class _Directory:
+    path: Path
+    descriptor: int
+    mount_id: int
 
 
 @dataclass(frozen=True)
@@ -123,12 +133,16 @@ class LinuxResourceSampler:
         clock: Callable[[], float] = time.monotonic,
         complete_hierarchy: bool = False,
         root_is_host: bool = False,
+        mount_of: Callable[[int], int] | None = None,
     ):
         if not isinstance(complete_hierarchy, bool) or not isinstance(root_is_host, bool):
             raise ValueError("hierarchy attestations must be explicit booleans")
         if root_is_host and not complete_hierarchy:
             raise ValueError("host root requires a trusted complete-hierarchy attestation")
+        if mount_of is not None and not callable(mount_of):
+            raise ValueError("mount descriptor reader must be callable")
         self._proc = proc_root
+        self._mount_of = mount_of if mount_of is not None else self._descriptor_mount
         self._affinity = affinity
         self._clock = clock
         self._previous: _Reading | None = None
@@ -141,9 +155,32 @@ class LinuxResourceSampler:
         """Called by the single sampling owner after a gap or binding change."""
         self._previous = None
 
-    def _groups(self) -> tuple[tuple[Path, ...], bool]:
+    def _descriptor_mount(self, descriptor: int) -> int:
+        rows = [
+            line.split()
+            for line in _text(self._proc / "self/fdinfo" / str(descriptor)).splitlines()
+            if line.partition(":")[0] == "mnt_id"
+        ]
+        if len(rows) != 1 or len(rows[0]) != 2 or rows[0][0] != "mnt_id:":
+            raise _ReadingError("invalid_cgroup_path")
+        value = _unsigned(rows[0][1])
+        if not value:
+            raise _ReadingError("invalid_cgroup_path")
+        return value
+
+    def _on_mount(self, descriptor: int, mount_id: int) -> bool:
+        actual = self._mount_of(descriptor)
+        return type(actual) is int and actual > 0 and actual == mount_id
+
+    @contextmanager
+    def _groups(self) -> Iterator[tuple[tuple[_Directory, ...], bool]]:
+        # A pathname in mountinfo may be covered by ANY other mount, including
+        # a hidden prefix or an inner/file bind mount. The kernel's descriptor
+        # mount ID proves resolution; do not infer visibility from line order.
+        membership = _text(self._proc / "self/cgroup")
+        mountinfo = _text(self._proc / "self/mountinfo")
         unified = []
-        for line in _text(self._proc / "self/cgroup").splitlines():
+        for line in membership.splitlines():
             fields = line.split(":", 2)
             if len(fields) == 3 and fields[:2] == ["0", ""]:
                 unified.append(fields[2])
@@ -152,47 +189,105 @@ class LinuxResourceSampler:
         member = PurePosixPath(unified[0])
         if not member.is_absolute() or ".." in member.parts:
             raise _ReadingError("invalid_cgroup_path")
-        mounts: list[tuple[PurePosixPath, Path]] = []
-        for line in _text(self._proc / "self/mountinfo").splitlines():
+        mounts: list[tuple[PurePosixPath, Path, int]] = []
+        ids = set()
+        for line in mountinfo.splitlines():
             left, separator, right = line.partition(" - ")
             if not separator or not right.startswith("cgroup2 "):
                 continue
             fields = left.split()
             if len(fields) < 6:
                 raise ValueError("invalid controller mount")
+            mount_id = _unsigned(fields[0])
+            if not mount_id or mount_id in ids:
+                raise ValueError("invalid controller mount identity")
+            ids.add(mount_id)
             root = PurePosixPath(_mount_path(fields[3]))
             mount = Path(_mount_path(fields[4]))
-            if not root.is_absolute() or not mount.is_absolute() or ".." in root.parts:
+            if (
+                not root.is_absolute()
+                or not mount.is_absolute()
+                or ".." in root.parts
+                or ".." in mount.parts
+            ):
                 raise _ReadingError("invalid_cgroup_path")
             if member.is_relative_to(root):
-                mounts.append((root, mount))
-        if not mounts:
-            raise _ReadingError("unsupported_cgroup")
-        root, mount = max(mounts, key=lambda item: len(item[0].parts))
-        current = mount.joinpath(*member.relative_to(root).parts)
-        ancestors = []
-        while True:
-            ancestors.append(current)
-            if current == mount:
-                break
-            current = current.parent
-        return tuple(ancestors), root != PurePosixPath("/")
+                mounts.append((root, mount, mount_id))
+        # Prefer the widest proven view, not the deepest bind alias. Keep the
+        # verified directory handles through controller reads, closing each
+        # rejected candidate before trying another. Work grows with ancestry,
+        # not cgroup process count; cgroup.procs is never scanned.
+        for root, mount, mount_id in sorted(mounts, key=lambda item: len(item[0].parts)):
+            stack = ExitStack()
+            directories = []
+            current = mount.joinpath(*member.relative_to(root).parts)
+            try:
+                while True:
+                    descriptor = os.open(
+                        current, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+                    )
+                    stack.callback(os.close, descriptor)
+                    if not self._on_mount(descriptor, mount_id):
+                        raise _ReadingError("invalid_cgroup_path")
+                    directories.append(_Directory(current, descriptor, mount_id))
+                    if current == mount:
+                        break
+                    current = current.parent
+            except (OSError, ValueError):
+                stack.close()
+                continue
+            except BaseException:
+                stack.close()
+                raise
+            try:
+                yield tuple(directories), root != PurePosixPath("/")
+                if (
+                    _text(self._proc / "self/cgroup") != membership
+                    or _text(self._proc / "self/mountinfo") != mountinfo
+                ):
+                    raise _ReadingError("invalid_cgroup_path")
+            finally:
+                stack.close()
+            return
+        raise _ReadingError("unsupported_cgroup")
 
-    @staticmethod
-    def _group(path: Path, *, host_root: bool = False) -> _Group:
-        info = path.stat()
+    def _text_at(self, directory: _Directory, name: str) -> str:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory.descriptor,
+        )
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode) or not self._on_mount(
+                descriptor, directory.mount_id
+            ):
+                raise _ReadingError("invalid_cgroup_path")
+            # Controller records are small. An unexpected source cannot make a
+            # sample read a FIFO or allocate without bound.
+            with os.fdopen(
+                descriptor, encoding="utf-8", errors="surrogateescape", closefd=False
+            ) as stream:
+                text = stream.read(65537)
+            if len(text) > 65536:
+                raise ValueError("controller record exceeds observation bound")
+            return text
+        finally:
+            os.close(descriptor)
+
+    def _group(self, directory: _Directory, *, host_root: bool = False) -> _Group:
+        info = os.fstat(directory.descriptor)
         if host_root:
             # The actual hierarchy root has no non-root controller limits.
             # Its finite resource bounds come from host memory and affinity.
             return _Group((info.st_dev, info.st_ino), None, 0, None, None)
-        memory_current = _unsigned(_text(path / "memory.current").strip())
+        memory_current = _unsigned(self._text_at(directory, "memory.current").strip())
         limits = [
             value
             for name in ("memory.max", "memory.high")
-            if (value := _finite_limit(_text(path / name))) is not None
+            if (value := _finite_limit(self._text_at(directory, name))) is not None
         ]
         memory_limit = min(limits) if limits else None
-        quota = _text(path / "cpu.max").split()
+        quota = self._text_at(directory, "cpu.max").split()
         if len(quota) != 2:
             raise ValueError("invalid CPU quota")
         period = _unsigned(quota[1])
@@ -203,7 +298,7 @@ class LinuxResourceSampler:
             raise ValueError("CPU quota is below observable precision")
         usage = [
             fields[1]
-            for line in _text(path / "cpu.stat").splitlines()
+            for line in self._text_at(directory, "cpu.stat").splitlines()
             if len(fields := line.split()) == 2 and fields[0] == "usage_usec"
         ]
         if len(usage) != 1:
@@ -249,14 +344,14 @@ class LinuxResourceSampler:
             cpu_rows[cpu] = (total, total - values[3] - values[4])
         if set(cpu_rows) != set(affinity):
             raise ValueError("host CPU coverage unavailable")
-        paths, hidden = self._groups()
-        groups = tuple(
-            self._group(
-                path,
-                host_root=self._root_is_host and not hidden and index == len(paths) - 1,
+        with self._groups() as (directories, hidden):
+            groups = tuple(
+                self._group(
+                    directory,
+                    host_root=self._root_is_host and not hidden and index == len(directories) - 1,
+                )
+                for index, directory in enumerate(directories)
             )
-            for index, path in enumerate(paths)
-        )
         memory_domains = (ResourceHeadroom(memory["MemAvailable:"], memory["MemTotal:"]),) + tuple(
             ResourceHeadroom(group.memory_available, group.memory_limit)
             for group in groups

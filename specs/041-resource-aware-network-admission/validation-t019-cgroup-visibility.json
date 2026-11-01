@@ -1,0 +1,140 @@
+{
+  "schema": "caos.spec041.t019-cgroup-visibility.v1",
+  "date": "2026-11-01",
+  "base_head": "f1bef64ff9eb9509faeaf93c7a88aa7ceb66739e",
+  "scope": "Sampler visibility prerequisite; not physical admission acceptance",
+  "task_complete": false,
+  "global_acceptance": false,
+  "phase": "t019-mount-visibility-green",
+  "passed": 135,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "warnings": 2,
+  "seconds": 47.593,
+  "source_preserved": true,
+  "support_preserved": true,
+  "descriptor_closed": true,
+  "source_archive_sha256": "afa7068f6c302caf81100311169c6600373e063e598266355d123d725f4cfd40",
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_resources.py",
+      "sha256": "1fe7bb830cd5f76dec2256cf8740130e3b529748f80c7a1ce96205de68ccaeff"
+    },
+    {
+      "path": "test/services/test_admission_resources.py",
+      "sha256": "336793138dd103418cf579be2f6066d3def29770fc8cfed0cd7fe0c1a0f44427"
+    },
+    {
+      "path": "test/services/test_cgroup_mount_visibility.py",
+      "sha256": "9c6af883e537dffefe602a928f4186783767e596f1486ff052ceb94493a20eef"
+    }
+  ],
+  "format_files": 3,
+  "mypy_production_files": 1,
+  "architecture": {
+    "files": 446,
+    "dependencies": 1995,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 4,
+    "nodes": 149,
+    "edges": 394,
+    "dangling": 49,
+    "scope": "partial AST final cgroup visibility correction; call paths checked against source"
+  },
+  "foreign_graphify_preserved": 12,
+  "native_readonly_probe": {
+    "scope": "Read-only current Linux namespace; no mount/cgroup mutations, no operator attestation, no SQL or admission authority",
+    "global_acceptance": false,
+    "verified_directories": 2,
+    "visible_root_truncated": false,
+    "mount_descriptor_match": true,
+    "samples": [
+      {
+        "observation": {
+          "observed_at": 583096.592596884,
+          "memory_available_bytes": 8734588928,
+          "memory_limit_bytes": 16646365184,
+          "cpu_available_millicores": null,
+          "cpu_limit_millicores": 32000,
+          "storage_available_slots": null,
+          "coverage": "partial",
+          "memory_domains": [
+            {
+              "available_units": 8734588928,
+              "limit_units": 16646365184
+            }
+          ],
+          "cpu_domains": []
+        },
+        "issues": [
+          "storage_unknown",
+          "cpu_warming",
+          "unverified_hierarchy"
+        ]
+      },
+      {
+        "observation": {
+          "observed_at": 583096.595557548,
+          "memory_available_bytes": 8734588928,
+          "memory_limit_bytes": 16646365184,
+          "cpu_available_millicores": null,
+          "cpu_limit_millicores": 32000,
+          "storage_available_slots": null,
+          "coverage": "partial",
+          "memory_domains": [
+            {
+              "available_units": 8734588928,
+              "limit_units": 16646365184
+            }
+          ],
+          "cpu_domains": []
+        },
+        "issues": [
+          "storage_unknown",
+          "cpu_warming",
+          "unverified_hierarchy"
+        ]
+      }
+    ],
+    "descriptors_before": 4,
+    "descriptors_after": 4,
+    "descriptors_preserved": true
+  },
+  "red": {
+    "phase": "t019-mount-visibility-red",
+    "failed": 6,
+    "passed": 1,
+    "seconds": 40.66,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true
+  },
+  "peer_review": {
+    "job": "768af253b9b54de88ddbcbad1ab8a656",
+    "status": "completed",
+    "verdict": "No blocking defects, source read only"
+  },
+  "knowledge": {
+    "operation": "markdown-20261101-cgroup-descriptor-evidence",
+    "pages": 3,
+    "strict_lint_issues": 0
+  },
+  "limits": [
+    "Synthetic overmount fixtures simulate kernel mount identities; no real mount/cgroup mutations",
+    "Actual descriptor probe proves current namespace only",
+    "Independent host ancestor evidence and tighter-real-ancestor negative still required for T019",
+    "M1/M2/M3/native-provider acceptance and remaining Spec041 tasks remain open"
+  ]
+}

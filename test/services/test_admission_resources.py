@@ -47,6 +47,7 @@ def sampler(linux_files, *, complete=True, host_root=False):
     clock = [10.0]
     value = api().LinuxResourceSampler(
         proc_root=proc,
+        mount_of=lambda descriptor: 20,  # Synthetic mountinfo, not a physical mount.
         affinity=lambda: frozenset({0, 1}),
         clock=lambda: clock[0],
         complete_hierarchy=complete,
@@ -293,7 +294,10 @@ def test_default_sampler_never_attests_its_own_namespace_view(linux_files):
     proc, group = linux_files
     clock = [10.0]
     value = api().LinuxResourceSampler(
-        proc_root=proc, affinity=lambda: frozenset({0, 1}), clock=lambda: clock[0]
+        proc_root=proc,
+        mount_of=lambda descriptor: 20,
+        affinity=lambda: frozenset({0, 1}),
+        clock=lambda: clock[0],
     )
     value.sample(storage=storage())
     advance(proc, group)
