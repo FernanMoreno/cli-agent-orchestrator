@@ -1114,6 +1114,12 @@ def main() -> None:
         asyncio.run(_amain())
     except ChannelRefused as exc:
         raise SystemExit(f"cao-bridge: {exc}")
+    finally:
+        # C1 and all funded cleanup run before this physical-opening fence.
+        # Also cover startup failures before _amain created its runtime.
+        from cli_agent_orchestrator.utils.process_sql_origin import seal_sql_process_openings
+
+        seal_sql_process_openings()
 
 
 if __name__ == "__main__":

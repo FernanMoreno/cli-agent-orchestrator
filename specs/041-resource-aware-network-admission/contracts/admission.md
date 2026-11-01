@@ -158,3 +158,8 @@ ProcessExitObservation solo vive en memoria opaca/no transferible; no es un DTO 
 ## T014.C2b.P1 — atribución SQL
 
 El canal heredado exige protocolo2 con version/binding/kernel/sql_application_name exactos y etiqueta UUIDv4 canónica. Protocolo1, falta/invalidación de etiqueta o emisor ajeno rechazan. Ningún consumidor usa esta etiqueta mutable como autoridad de ausencia o devolución. C1 sigue permitiendo SQL financiado de cierre/control: el fence físico terminal y los intents durables previos a TCP son contratos posteriores. [Validación](../validation-t014-sql-origin.json).
+
+
+## T014.C2b.P2a — cierre terminal de nuevas aperturas
+
+En procesos supervisados, admisión de apertura física y sellado local se serializan antes del driver. Una llamada ya admitida puede abrir después y sigue contada hasta volver. El main terminal sella después de limpieza financiada; C1 no activa este cierre. Sesiones existentes conservan SQL/reuso/cierre. Error, contador0 o seal no autorizan metadatos. El siguiente protocolo debe financiar y registrar durablemente los intents antes de TCP. [Validación](../validation-t014-sql-fence.json).

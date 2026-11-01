@@ -106,3 +106,8 @@ Binding original, boot_id, start_time_ticks, pid_namespace, exit_kind (exited/si
 ## T014.C2b.P1 — atribución SQL
 
 ProcessExitObservation añade sql_application_name canónico y obligatorio; el supervisor lo conserva solo tras ACK del binding protocolo2. Es atribución opaca en memoria, no tabla de inventario ni prueba de ausencia. PostgreSQL permanece esquema7. Fork cambia etiqueta; exec sin un nuevo supervisor no conserva cobertura. [Validación](validation-t014-sql-origin.json).
+
+
+## T014.C2b.P2a — cierre terminal de nuevas aperturas
+
+El estado efímero por PID conserva enabled/name/sealed/opening/unconfirmed y lock local. sealed es irreversible; opening cuenta llamadas admitidas, unconfirmed retiene fallos/incertidumbre heredada. Ninguno representa inventario durable o ausencia. Fork nuevo usa identidad distinta y conserva cierre/incertidumbre. No hay cambio del esquema7 ni autorización de devolución. [Validación](validation-t014-sql-fence.json).

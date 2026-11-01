@@ -244,3 +244,14 @@ La observación acredita únicamente la salida del proceso fijado: no prueba cie
 Las conexiones PostgreSQL abiertas por un proceso supervisado llevan una etiqueta aleatoria estable para ese proceso, independiente del proveedor y de sus lifetimes lógicos. El fork tiene otra identidad; no hereda la atribución del padre. El testigo de salida conserva la etiqueta recibida por el canal autenticado antes de admitir el runtime. La activación es interna al supervisor; un proceso no marcado conserva el nombre legado y no obtiene por ello una prueba de sesiones.
 
 La presencia de la etiqueta permite localizar actividad positiva en el servidor. Su ausencia no demuestra cierre: puede haber aperturas en vuelo, etiqueta modificada, visibilidad insuficiente o pooler. No retirar créditos con una consulta vacía, ProcessExitObservation, sello C1 o estado retirado local. El sello C1 sigue permitiendo SQL de finalización financiado; no convertirlo en una prohibición general de aperturas físicas. El inventario durable de intentos previo al TCP y el cierre terminal de productores físicos siguen pendientes antes del custodio liberador.
+
+
+## T014.C2b.P2a — cierre local de admisión de aperturas SQL (componente validado; inventario pendiente)
+
+Un proceso supervisado que termina su entrypoint cierra irreversiblemente la admisión de nuevos intentos físicos SQL. Los tres caminos nativo/ORM/auditoría comprueban este cierre antes de invocar psycopg.connect, bajo el mismo lock local que serializa la decisión de cierre. La decisión no mantiene el lock durante TCP ni espera un connect ajeno. Intentos ya admitidos pueden completar o fallar después del cierre: su incertidumbre no desaparece. Las sesiones existentes pueden ejecutar SQL de limpieza, devolver préstamos y cerrarse.
+
+El cierre se ejecuta al terminar el main de Bridge, después del intento de limpieza completa, también con error temprano, cancelación o BaseException; C1 y sus consultas financiadas anteriores conservan su contrato. Proceso no supervisado conserva el recorrido legado. Fork posterior al cierre conserva el bloqueo con otra identidad SQL y contador local nuevo; no se atribuye cierre del árbol ni inventario heredado. No hay reapertura/reset público ni transferencia de dueño a otro PID. El estado de intentos en vuelo es memoria local de diagnóstico, jamás ausencia del servidor ni autoridad durable.
+
+P2a no cierra T014: quedan intents financiados durables ANTES de TCP, inventario completo original, custodia externa y retirada auditada. Un contador local en cero, fallo connect o fin de cliente no prueban ausencia de PostgreSQL.
+
+P2a aporta el cierre local de admisión; la composición durable de ese cierre con el inventario completo y el custodio sigue pendiente.

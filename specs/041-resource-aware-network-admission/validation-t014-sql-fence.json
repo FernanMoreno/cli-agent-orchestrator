@@ -1,0 +1,224 @@
+{
+  "schema": "caos.spec041.t014-sql-fence.v1",
+  "date": "2026-11-01",
+  "base_head": "4e420fad67458b74c6fe9f9c5f8598400df9db9e",
+  "scope": "T014.C2b.P2a irreversible terminal process-local SQL opening admission; no durable inventory or metadata return",
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-sql-fence-final",
+    "selected_test_files": 83,
+    "passed": 1132,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous1018cases_preserved": true,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "seconds": 1005.966,
+    "available_mib": 12314,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "0abb07cb84fc738df04ee8afb2d273fd016eded55ea968584d5ef647fe4cdae3"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "fa86b1a96a5af0adc969422898391aa34e2cce9eca64cd5e110983416ff8c134"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/database.py",
+        "sha256": "797f1b9c46a361c2eee2809fad5461efba378110d7f72faebcf5d8d6c15d6c9c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/legacy_memory_audit_repository.py",
+        "sha256": "1466bebb0a2f14822249055e251b73814a48f7bf95a5a2f70d9734ad977e0771"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "fa8647cbfd882f50ec3b76a6a7ab9a4e45bad86882f6bd293075cac7015d2154"
+      },
+      {
+        "path": "test/utils/test_process_sql_fence.py",
+        "sha256": "599552c3cb4b154e6d496afa367c2c5c33d028a7e4dbe863830cc6e96be90b61"
+      },
+      {
+        "path": "test/postgres/test_process_sql_fence.py",
+        "sha256": "4ae3b194490ebf0cded55ede834a939d2115511a33e93b4123a2b2fa59d0c530"
+      }
+    ],
+    "archive_sha256": "91eab5d20797d242092c87264434af95ef4c497cbf23952e2211eb50380f111b",
+    "production_archive_match": 5,
+    "owned_python_archive_match": 7,
+    "foreign_graphify_files_preserved": 12
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 7
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 7
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 5
+    }
+  ],
+  "architecture": {
+    "files": 452,
+    "dependencies": 2025,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 12,
+    "nodes": 658,
+    "edges": 1550,
+    "dangling": 136,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261101-terminal-sql-opening-fence",
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "ead22487fb6949aa878bb02d99329a95",
+      "7fbae1514637434facd9168664a4e164",
+      "f1910b385ee740a79ffca0b4d986b561"
+    ],
+    "scope": "Read-only scoped source/test review plus independent root source/composition/executable evidence review; no global certification.",
+    "fixed_finding": "Publish unconfirmed before decrementing opening; at-fork cannot take an inherited mutex and may snapshot intermediate writes.",
+    "rejected_suggestion": "Do not exempt arbitrary pool creators from conservative debt solely by a typed refusal: an earlier physical effect may already have happened.",
+    "root_final_diff_review": true,
+    "final_round_scope": "Full helper and both new test files, full StorageQueuePool and storage_admission186-201. Unchanged driver/main wiring was reviewed in round2; root independently reviewed the final full owned diffs."
+  },
+  "implemented": [
+    "Shared opt-in per-process irreversible fence and local in-flight/sticky uncertainty diagnostics; same origin identity and atomic PID successor.",
+    "Gate before psycopg.connect in native Connection, ORM creator and private audit physical opening. No mutex held during the driver.",
+    "Outer Bridge.main finally seals after asyncio.run and funded cleanup, including startup failures, cancellation, MemoryError and ChannelRefused.",
+    "Fork retains sealed/activation, renews name and conservatively inherits unresolved attempts without taking the parent mutex. Publish uncertainty before decrementing calls.",
+    "Existing native/ORM/audit sessions remain usable, including pool reuse/pre-ping; an empty pool cannot create another connection after the fence."
+  ],
+  "evidence_boundaries": [
+    "Final distinct regression cases only; all1018 previous identities retained. Earlier phases are history, not added to acceptance.",
+    "Actual PostgreSQL demonstrates a call admitted before sealing can begin TCP afterward. The fence is admission ordering, not a wall-clock no-TCP or session-absence witness.",
+    "Existing session SQL/return/close remains available; no C1 semantics, database migration, permissions, external API/MCP or provider/model-output contract changed.",
+    "Counters cover admitted driver calls, not completed raw registration, live server backends or every inherited socket. Sticky uncertainty has no public reset or release method.",
+    "Cancelled waiter does not finish the owned worker call. Terminal counter zero never authorizes generation retirement.",
+    "Unmarked processes retain legacy behavior; exec without a new supervisor and external deployments remain outside the coverage claim.",
+    "Same PostgreSQL container/image reused, no operator/provider credentials or Claude login changed, historical RECONCILE_REQUIRED untouched.",
+    "Initial offline fork preflight rejected lowercase cwd alias before any test/archive; rerun in the exact canonical bound path produced the retained genuine RED.",
+    "New fenced PostgreSQL/pool cases run without physical_storage_scope: they prove driver exclusion and session reuse, not a new funded-pool closure acceptance. Funded arbitrary-creator conservative debt remains unchanged and source-reviewed; existing storage reservation regressions are retained."
+  ],
+  "history": [
+    {
+      "phase": "t014-sql-fence-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 12,
+        "failure": 12,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 53.346,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-fence-paths-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 33,
+        "failure": 4,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 57.824,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-fence-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 64,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 80.236,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-sql-fence-reviewed-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 37,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 55.745,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "fork-red-bound",
+      "mode": "offline source-bound controller; no SQL/provider acceptance",
+      "exit_code": 1,
+      "passed": 0,
+      "failed": 1,
+      "errors": 0,
+      "skipped": 0,
+      "source_preserved": true,
+      "support_preserved": true,
+      "controller_finished": true,
+      "note": "Deterministic snapshot after opening decrement inherited0 instead of1; fixed by publishing uncertainty first."
+    }
+  ],
+  "remaining": [
+    "Funded durable intents before TCP startup, including in-flight/failed/unacknowledged attempts; no postconnect-only inventory.",
+    "Complete original process/session/native inventory and separately funded audited metadata custodian; labels/client exit/zero local calls are insufficient.",
+    "Original ten tasks including quotas, distribution, physical M1/M2/M3, SDK/UI/global gates."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

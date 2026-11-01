@@ -19,6 +19,7 @@ from cli_agent_orchestrator.clients.storage_admission import (
     storage_close_tracks_handle,
     storage_scope_present,
 )
+from cli_agent_orchestrator.utils.process_sql_origin import sql_process_opening
 
 from .config import DatabaseTarget
 from .fork_handles import track_storage_handle
@@ -142,8 +143,9 @@ class Connection:
         try:
             parameters = target.connection_parameters()
             try:
-                attempted = True
-                raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
+                with sql_process_opening():
+                    attempted = True
+                    raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
             finally:
                 parameters["password"] = ""
             self.raw: psycopg.Connection[Record] | ConnectionRaw = raw

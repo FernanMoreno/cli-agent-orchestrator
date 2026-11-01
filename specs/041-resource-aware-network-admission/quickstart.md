@@ -80,3 +80,8 @@ No se devuelve capacidad de metadatos con este comando: el testigo del líder no
 ## T014.C2b.P1 — atribución SQL
 
 El supervisor opt-in activa automáticamente la etiqueta; no configurar manualmente CAO_INTERNAL_RESOURCE_BINDING_FD. Padre/hijo deben estar actualizados a protocolo2. Solo el entorno copiado del hijo pierde PGAPPNAME para evitar contradicción con el nombre explícito; el operador conserva su entorno y todos los demás controles libpq. Sin supervisor permanece caos. No devuelve créditos ni demuestra cierre de sesiones. [Validación](validation-t014-sql-origin.json).
+
+
+## T014.C2b.P2a — cierre terminal de nuevas aperturas
+
+No hay flag nuevo ni límite de agentes: el Bridge supervisado aplica automáticamente el bloqueo de aperturas al terminar su main, después del intento completo de cleanup. No se reinicia dentro del mismo proceso terminal. Procesos sin supervisor mantienen legado. El bloqueo no mata sesiones existentes ni devuelve créditos; las pruebas reales de inventario/retirada y los gates globales siguen pendientes. [Validación](validation-t014-sql-fence.json).

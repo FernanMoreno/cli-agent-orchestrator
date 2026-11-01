@@ -41,6 +41,7 @@ from cli_agent_orchestrator.clients.storage_admission import (
     storage_close_owns_loan,
 )
 from cli_agent_orchestrator.clients.work_repository import WorkRepository
+from cli_agent_orchestrator.utils.process_sql_origin import sql_process_opening
 
 
 class PooledAuditLeaseExpired(RuntimeError):
@@ -992,8 +993,9 @@ class LegacyMemoryAuditConnectionManager:
         attempted = False
         try:
             parameters = dict(resolved.parameters)
-            attempted = True
-            raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
+            with sql_process_opening():
+                attempted = True
+                raw = psycopg.connect(**parameters, autocommit=True, row_factory=record_factory)
             track_storage_handle(raw)
             current = self._resolve(resolved.target, resolver)
             try:

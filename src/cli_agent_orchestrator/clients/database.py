@@ -953,9 +953,16 @@ def _native_orm_connection():
     import psycopg
 
     from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+    from cli_agent_orchestrator.utils.process_sql_origin import sql_process_opening
 
     target = DatabaseTarget.from_settings()
-    connection = psycopg.connect(**target.connection_parameters())
+    parameters = target.connection_parameters()
+    try:
+        with sql_process_opening():
+            connection = psycopg.connect(**parameters)
+    finally:
+        if "password" in parameters:
+            parameters["password"] = ""
     setattr(connection, "_cao_database_target", target)
     return connection
 
