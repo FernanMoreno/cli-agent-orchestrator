@@ -31,8 +31,15 @@ from cli_agent_orchestrator.models.resource_generation import (
     _issue_process_exit_observation,
     is_process_exit_observation,
 )
+from cli_agent_orchestrator.models.sql_process_origin import (
+    RESOURCE_BINDING_FD_ENV as BINDING_FD_ENV,
+)
+from cli_agent_orchestrator.models.sql_process_origin import (
+    is_sql_process_application_name,
+)
+from cli_agent_orchestrator.utils.process_sql_origin import current_sql_application_name
 
-BINDING_FD_ENV = "CAO_INTERNAL_RESOURCE_BINDING_FD"
+BINDING_PROTOCOL_VERSION = 2
 _MAX_PACKET_BYTES = 8192
 _CREDENTIALS = struct.Struct("3i")
 
@@ -160,9 +167,11 @@ def publish_resource_binding(binding: ResourceBinding, *, timeout_s: float = 30)
     No SQL, file receipt, credentials or authority is created. The child waits
     for its parent's ACK before its caller proceeds to resource admission.
     """
-    raw = os.environ.pop(BINDING_FD_ENV, None)
-    if raw is None:
+    if BINDING_FD_ENV not in os.environ:
         return False
+    # Latch before consuming the FD, including a child with no earlier SQL.
+    sql_application_name = current_sql_application_name()
+    raw = os.environ.pop(BINDING_FD_ENV)
     _timeout(timeout_s)
     if not raw.isdecimal() or int(raw) < 3:
         raise ResourceProcessUnproven("resource binding channel is invalid")
@@ -181,7 +190,12 @@ def publish_resource_binding(binding: ResourceBinding, *, timeout_s: float = 30)
         if not _matches(binding, identity):
             raise ResourceProcessUnproven("resource binding does not match the live process")
         payload = json.dumps(
-            {"version": 1, "binding": asdict(binding), "kernel": asdict(identity)},
+            {
+                "version": BINDING_PROTOCOL_VERSION,
+                "binding": asdict(binding),
+                "kernel": asdict(identity),
+                "sql_application_name": sql_application_name,
+            },
             separators=(",", ":"),
             allow_nan=False,
         ).encode()
@@ -198,6 +212,7 @@ class ResourceProcessSupervisor:
     _owner_pid: int
     _owner_thread: threading.Thread
     _binding: ResourceBinding | None
+    _sql_application_name: str | None
     _observation: ProcessExitObservation | None
     _identity: _KernelIdentity | None
     _pidfd: int | None
@@ -243,6 +258,10 @@ class ResourceProcessSupervisor:
         ):
             raise ValueError("resource process requires a canonical target digest")
         environment = dict(os.environ if env is None else env)
+        # The child's explicit diagnostic label is controlled here, not by an
+        # inherited optional PGAPPNAME. Keep the parent's environment intact
+        # and preserve all other strict libpq/profile validation.
+        environment.pop("PGAPPNAME", None)
         if BINDING_FD_ENV in environment:
             raise ResourceProcessUnproven("resource process cannot inherit another supervisor")
         if not hasattr(os, "pidfd_open") or not hasattr(socket, "SCM_CREDENTIALS"):
@@ -251,6 +270,7 @@ class ResourceProcessSupervisor:
         value._owner_pid = os.getpid()
         value._owner_thread = threading.current_thread()
         value._binding = None
+        value._sql_application_name = None
         value._observation = None
         value._identity = None
         value._pidfd = None
@@ -312,6 +332,12 @@ class ResourceProcessSupervisor:
         self._check_owner()
         return self._observation
 
+    @property
+    def sql_application_name(self) -> str | None:
+        """Authenticated attribution only, never a server-side absence witness."""
+        self._check_owner()
+        return self._sql_application_name
+
     def receive_binding(self, *, timeout_s: float = 30) -> ResourceBinding:
         self._check_owner()
         _timeout(timeout_s)
@@ -364,9 +390,10 @@ class ResourceProcessSupervisor:
             packet = json.loads(payload, object_pairs_hook=_unique_object)
             if (
                 not isinstance(packet, dict)
-                or set(packet) != {"version", "binding", "kernel"}
+                or set(packet) != {"version", "binding", "kernel", "sql_application_name"}
                 or type(packet["version"]) is not int
-                or packet["version"] != 1
+                or packet["version"] != BINDING_PROTOCOL_VERSION
+                or not is_sql_process_application_name(packet["sql_application_name"])
                 or not isinstance(packet["binding"], dict)
                 or set(packet["binding"]) != {f.name for f in fields(ResourceBinding)}
             ):
@@ -389,6 +416,7 @@ class ResourceProcessSupervisor:
             if self._channel.send(b"1") != 1:
                 raise ResourceProcessUnproven("resource binding acknowledgement failed")
             self._binding = binding
+            self._sql_application_name = packet["sql_application_name"]
             return binding
         except (
             OSError,
@@ -424,6 +452,7 @@ class ResourceProcessSupervisor:
             and self._pidfd is not None
             and self._identity is not None
             and self._wait_status is not None
+            and self._sql_application_name is not None
             and _exit_ready(self._pidfd) is True
         ):
             code, status = self._wait_status
@@ -439,6 +468,7 @@ class ResourceProcessSupervisor:
                 pid_namespace=self._identity.pid_ns,
                 exit_kind=kinds[code],
                 exit_status=status,
+                sql_application_name=self._sql_application_name,
             )
         return self._observation
 

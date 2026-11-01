@@ -153,3 +153,8 @@ El sello es un hecho negativo append-only de servidores cooperantes confiables, 
 El supervisor común posee su Popen y descriptor kernel; el binding completo llega por canal heredado con SCM_CREDENTIALS comprobado y esquema JSON cerrado. El padre fija realm/config, nacimiento/boot/ticks/pidns/UID/vista antes del ACK. waitid(P_PIDFD) aporta estado real estructurado y el mismo descriptor debe notificar salida; ECHILD, timeout, PID ausente, canal cerrado o sello C1 no bastan. Las señales usan pidfd; los FD inesperados SCM_RIGHTS se cierran incluso en rechazo/truncación y no se heredan por exec. Excepción de arranque con handle retenido y SIGTERM/SIGHUP/SIGINT conservan unión física antes de propagar el primer error.
 
 ProcessExitObservation solo vive en memoria opaca/no transferible; no es un DTO autorizador ni persistencia alternativa a PostgreSQL. Los UUID del hijo son descriptivos hasta contrastar binding original/sello y cierre completo mediante custodio propio financiado y auditado. Un descendiente puede seguir vivo después del testigo del líder. Sin devolución, replay, endpoint, migración ni adopción de despliegues externos. [Validación](../validation-t014-process-exit.json).
+
+
+## T014.C2b.P1 — atribución SQL
+
+El canal heredado exige protocolo2 con version/binding/kernel/sql_application_name exactos y etiqueta UUIDv4 canónica. Protocolo1, falta/invalidación de etiqueta o emisor ajeno rechazan. Ningún consumidor usa esta etiqueta mutable como autoridad de ausencia o devolución. C1 sigue permitiendo SQL financiado de cierre/control: el fence físico terminal y los intents durables previos a TCP son contratos posteriores. [Validación](../validation-t014-sql-origin.json).

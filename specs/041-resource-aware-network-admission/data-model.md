@@ -101,3 +101,8 @@ _cao_resource_generation_seals usa PK(instance_id,process_generation), seal_id �
 ## T014.C2a — ProcessExitObservation transitoria
 
 Binding original, boot_id, start_time_ticks, pid_namespace, exit_kind (exited/signaled/core_dumped) y exit_status derivados del wait kernel propio; returncode es una proyección, nunca el cero sintetizado de Popen. Capacidad opaca con PID emisor/factory privada, no copiable ni serializable y sin validez tras fork. El supervisor mantiene Popen/pidfd/canal y Thread exacto; no son tablas ni autoridad de devolución. Esquema PostgreSQL permanece7 sin cambios. El futuro hecho durable de cierre necesita más que este proceso y su sello. [Validación](validation-t014-process-exit.json).
+
+
+## T014.C2b.P1 — atribución SQL
+
+ProcessExitObservation añade sql_application_name canónico y obligatorio; el supervisor lo conserva solo tras ACK del binding protocolo2. Es atribución opaca en memoria, no tabla de inventario ni prueba de ausencia. PostgreSQL permanece esquema7. Fork cambia etiqueta; exec sin un nuevo supervisor no conserva cobertura. [Validación](validation-t014-sql-origin.json).

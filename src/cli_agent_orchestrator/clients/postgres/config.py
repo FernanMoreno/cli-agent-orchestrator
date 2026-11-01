@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
 
+from cli_agent_orchestrator.utils.process_sql_origin import current_sql_application_name
+
 
 class ConfigurationError(RuntimeError):
     """Storage configuration is missing or unsafe."""
@@ -105,7 +107,7 @@ class DatabaseTarget:
             "password": password,
             "sslmode": self.sslmode,
             "connect_timeout": 10,
-            "application_name": "caos",
+            "application_name": current_sql_application_name(),
         }
 
     def migration_target(self):

@@ -75,3 +75,8 @@ En el entorno Python configurado del proyecto puede lanzarse `python -m cli_agen
 El handshake del adaptador usa30s por defecto; el supervisor común expone receive_binding(timeout_s=...) para composiciones con otro presupuesto explícito. Cambio de vista/ausencia de prueba rechaza el binding conservadoramente. La limpieza une al hijo propio sin declarar cierre por deadline ni enviar señales a un PID reciclado. SIGTERM/SIGHUP/SIGINT pasan por esa limpieza; SIGKILL o pérdida de Popen no aportan testigo. Un despliegue externo directo no se adopta por PID ni se modifica automáticamente.
 
 No se devuelve capacidad de metadatos con este comando: el testigo del líder no demuestra descendientes, sesiones PostgreSQL o generación completa cerrados. El siguiente gate de T014 es el custodio durable, financiado y auditado con el conjunto físico completo y sello original. [Evidencia](validation-t014-process-exit.json).
+
+
+## T014.C2b.P1 — atribución SQL
+
+El supervisor opt-in activa automáticamente la etiqueta; no configurar manualmente CAO_INTERNAL_RESOURCE_BINDING_FD. Padre/hijo deben estar actualizados a protocolo2. Solo el entorno copiado del hijo pierde PGAPPNAME para evitar contradicción con el nombre explícito; el operador conserva su entorno y todos los demás controles libpq. Sin supervisor permanece caos. No devuelve créditos ni demuestra cierre de sesiones. [Validación](validation-t014-sql-origin.json).

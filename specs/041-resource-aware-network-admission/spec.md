@@ -237,3 +237,10 @@ Persistencia aditiva v7 con tablas/checksums1–6 conservados, sello append-only
 Un supervisor local de confianza conservará el handle de su propio hijo y verificará su binding por un canal heredado con identidad del emisor comprobada por el kernel. Solo la recogida del hijo propio y notificación positiva de su descriptor fijado producirán una observación de salida para el binding original. Ausencia de PID, error, descriptor cerrado, timeout o datos de otro proceso no constituyen prueba. La referencia no se transfiere por copia, serialización ni fork. No se envían señales ni se recorre el inventario de agentes.
 
 La observación acredita únicamente la salida del proceso fijado: no prueba cierre de descendientes, contenedores, sesiones PostgreSQL del servidor ni toda la generación. No es autorización de devolución de créditos. La integración con el despliegue y el custodio financiado y auditado sigue siendo requisito de T014. El contrato es común a proveedores; Linux sin soporte pidfd conserva desconocido.
+
+
+## T014.C2b.P1 — origen SQL del proceso supervisado (componente validado; inventario pendiente)
+
+Las conexiones PostgreSQL abiertas por un proceso supervisado llevan una etiqueta aleatoria estable para ese proceso, independiente del proveedor y de sus lifetimes lógicos. El fork tiene otra identidad; no hereda la atribución del padre. El testigo de salida conserva la etiqueta recibida por el canal autenticado antes de admitir el runtime. La activación es interna al supervisor; un proceso no marcado conserva el nombre legado y no obtiene por ello una prueba de sesiones.
+
+La presencia de la etiqueta permite localizar actividad positiva en el servidor. Su ausencia no demuestra cierre: puede haber aperturas en vuelo, etiqueta modificada, visibilidad insuficiente o pooler. No retirar créditos con una consulta vacía, ProcessExitObservation, sello C1 o estado retirado local. El sello C1 sigue permitiendo SQL de finalización financiado; no convertirlo en una prohibición general de aperturas físicas. El inventario durable de intentos previo al TCP y el cierre terminal de productores físicos siguen pendientes antes del custodio liberador.

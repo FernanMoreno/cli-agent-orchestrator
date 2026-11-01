@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
+from cli_agent_orchestrator.models.sql_process_origin import is_sql_process_application_name
 
 _FACTORY = object()
 
@@ -75,6 +76,7 @@ class ProcessExitObservation:
     pid_namespace: tuple[int, int]
     exit_kind: str
     exit_status: int
+    sql_application_name: str
     _issuer_pid: int
     _factory: object
 
@@ -100,9 +102,11 @@ def _issue_process_exit_observation(
     pid_namespace: tuple[int, int],
     exit_kind: str,
     exit_status: int,
+    sql_application_name: str,
 ) -> ProcessExitObservation:
     if (
         type(binding) is not ResourceBinding
+        or not is_sql_process_application_name(sql_application_name)
         or str(UUID(boot_id)) != boot_id
         or type(start_time_ticks) is not int
         or start_time_ticks < 1
@@ -123,6 +127,7 @@ def _issue_process_exit_observation(
         ("pid_namespace", pid_namespace),
         ("exit_kind", exit_kind),
         ("exit_status", exit_status),
+        ("sql_application_name", sql_application_name),
         ("_issuer_pid", os.getpid()),
         ("_factory", _FACTORY),
     ):

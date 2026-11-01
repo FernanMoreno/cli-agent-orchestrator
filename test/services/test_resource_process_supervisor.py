@@ -25,6 +25,7 @@ from dataclasses import replace
 from pathlib import Path
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
 from cli_agent_orchestrator.services.resource_process_supervisor import publish_resource_binding
+from cli_agent_orchestrator.utils.process_sql_origin import current_sql_application_name
 pid=os.getpid()
 ns=[os.stat('/proc/self/ns/'+name) for name in ('mnt','cgroup')]
 c=Path('/proc/self/cgroup').read_bytes();m=Path('/proc/self/mountinfo').read_bytes()
@@ -41,22 +42,31 @@ if mode=='descendant_sender':
     if descendant:
         os.waitpid(descendant,0)
         os._exit(19)
+    current_sql_application_name()
     with socket.socket(fileno=int(os.environ.pop(BINDING_FD_ENV))) as channel:
-        channel.send(json.dumps({'version':1,'binding':asdict(binding),'kernel':asdict(_identity(pid))}).encode())
+        channel.send(json.dumps({'version':2,'binding':asdict(binding),'kernel':asdict(_identity(pid)),'sql_application_name':current_sql_application_name()}).encode())
         channel.recv(2)
     os._exit(0)
 if mode=='descendant_alive':
     descendant=os.fork()
     if not descendant: time.sleep(60);os._exit(0)
     Path(os.environ['CAOS_EXIT_TEST_DESCENDANT']).write_text(str(descendant))
+if mode=='inherited_pgappname':
+    from cli_agent_orchestrator.services.legacy_memory_audit_repository import _check_libpq_environment
+    _check_libpq_environment(dict(host='localhost',port=1,dbname='private',user='runtime',sslmode='disable',connect_timeout=10,application_name=current_sql_application_name()))
 if mode.startswith('packet_'):
     from cli_agent_orchestrator.services.resource_process_supervisor import BINDING_FD_ENV, _identity
-    packet={'version':1,'binding':asdict(binding),'kernel':asdict(_identity(pid))}
+    packet={'version':2,'binding':asdict(binding),'kernel':asdict(_identity(pid)),'sql_application_name':current_sql_application_name()}
     if mode=='packet_version': packet['version']=True
+    if mode=='packet_legacy': packet['version']=1
+    if mode=='packet_sql_legacy': packet['sql_application_name']='caos'
+    if mode=='packet_sql_missing': packet.pop('sql_application_name')
+    if mode=='packet_sql_type': packet['sql_application_name']=[]
+    if mode=='packet_sql_forged': packet['sql_application_name']='caos-sql-v1-'+'0'*32
     if mode=='packet_extra': packet['binding']['extra']=1
     if mode=='packet_kernel': packet['kernel']['ticks']+=1
     payload=json.dumps(packet).encode()
-    if mode=='packet_duplicate': payload=b'{"version":1,'+payload[1:]
+    if mode=='packet_duplicate': payload=b'{"version":2,'+payload[1:]
     if mode=='packet_oversized': payload=b'x'*16384
     with socket.socket(fileno=int(os.environ.pop(BINDING_FD_ENV))) as channel:
         channel.send(payload)
@@ -170,8 +180,11 @@ def test_kernel_sender_credentials_reject_a_forked_descendant():
     # The original leader still owns the unreaped descendant in this case. Its
     # protocol exception exits the descendant after the inherited channel closes.
     with child("descendant_sender") as owner:
-        with pytest.raises(api().ResourceProcessUnproven):
+        with pytest.raises(api().ResourceProcessUnproven) as failed:
             owner.receive_binding(timeout_s=10)
+        assert (
+            str(failed.value.__context__) == "resource binding sender differs from the owned child"
+        )
         assert owner.wait(timeout_s=10) is None
 
 
@@ -497,3 +510,29 @@ def test_failed_bridge_publication_has_no_sql_generation_or_closeable_bootstrap(
     assert failed.value is original
     assert not hasattr(bootstrap, "close")
     assert not target.secret_file.exists()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "packet_legacy",
+        "packet_sql_legacy",
+        "packet_sql_missing",
+        "packet_sql_type",
+        "packet_sql_forged",
+    ],
+)
+def test_process_exit_requires_protocol_two_and_a_valid_sql_origin(mode):
+    with child(mode) as owner:
+        with pytest.raises(api().ResourceProcessUnproven):
+            owner.receive_binding(timeout_s=10)
+        assert owner.wait(timeout_s=10) is None
+        assert owner.sql_application_name is None
+
+
+def test_supervised_child_canonicalizes_sql_name_without_mutating_operator_environment(monkeypatch):
+    monkeypatch.setenv("PGAPPNAME", "caos")
+    with child("inherited_pgappname") as owner:
+        owner.receive_binding(timeout_s=30)
+        assert owner.sql_application_name.startswith("caos-sql-v1-")
+        assert os.environ["PGAPPNAME"] == "caos"
