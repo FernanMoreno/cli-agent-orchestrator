@@ -193,3 +193,8 @@ launch(first_sql_grant=True), publish_resource_binding(first_sql_grant=True) y r
 ## Registro explícito de follow-ups — T014.C2b.P2c.C3.A
 
 record_child_followup exige canal original financiado, ancla del mismo journal/actor y VerifiedChildSqlSubject todavía vivo con identidad kernel exacta. sequence debe ser el siguiente entero positivo; intent_id no puede existir en ninguno de los tres tipos. Se confirma la fila antes de devolver. read_child_followup es descriptivo; reescribir el UUID falla. SqlIntentCommitUncertain conserva IDs y SqlFollowupAckUnavailableAfterCommit conserva recibo confirmado. El registro no consume claim/claim_session ni concede permiso. Path/usuario/TLS/scope pueden variar dentro del target del binding; la autorización operativa pertenece al futuro broker. [Validación](../validation-t014-child-followup-intents.json).
+
+
+## Broker opt-in y resultado de una solicitud — T014.C2b.P2c.C3.B
+
+launch(sql_broker=True, first_sql_grant=True) crea un FD reservado distinto del de startup. El publisher explícito v3 instala el cliente mientras el issuer está aprobado. receive_binding_with_child_grant conserva canal de control y recibo inicial; en modo broker registra también la asociación del cargo. serve_child_sql_request procesa exactamente una solicitud en el owner/canal/task originales y devuelve recibo confirmado, SqlBrokerIdle.NO_REQUEST sin efecto o None por EOF de transporte. Cargo, plan y asociación se confirman antes de respuesta; emisor SCM y kernel originales se revalidan por mensaje. Nunca se transfiere Connection/funding a otro executor. Los permisos2/3 y startup_spent no se reinterpretan; no hay refund ni retry automático. [Validación](../validation-t014-sql-opening-broker.json).

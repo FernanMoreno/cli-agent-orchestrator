@@ -149,3 +149,8 @@ SO_PEERCRED por sí solo identifica el socket original, no al escritor de cada r
 ## Permisos efectivos y confirmación de la fila — T014.C2b.P2c.C3.A
 
 Crear una tabla no la integra automáticamente en la política central de ACL. La primera ejecución reprodujo40rechazos correctos del verificador: faltaba declarar la tabla append-only en el migrador. Se corrigió el provisionamiento, no el verificador. Otra reproducción mostró que ignorar RETURNING permite anunciar un recibo sin inserción; ahora se valida la fila devuelta y se compara con el recibo esperado antes de commit. Mantener separados ACK perdido, commit incierto y pérdida del sujeto después de commit. [Validación](validation-t014-child-followup-intents.json).
+
+
+## Esperas, incertidumbre y propiedad antes de consumir — T014.C2b.P2c.C3.B
+
+El timeout del primer recv del servidor no ha consumido un mensaje SEQPACKET y debe ser Idle, no EOF terminal. En cambio un timeout del cliente después de enviar conserva un UUID posiblemente confirmado y termina el canal. Un proveedor muerto instalado inventaba incertidumbre por cada rechazo posterior: se reproduce y corrige separando errores locales antes de enviar, desconexión del proveedor bajo guard y cierre fuera. También se reprodujo un poll desde task ajeno: ahora se verifica el canal/worker financiado antes de cualquier IPC. La prueba de paralelismo exige barrera dentro del driver y continuidad del mismo backend; esperar solo tras abrir no demuestra que el lock estuviera libre durante el driver. [Validación](validation-t014-sql-opening-broker.json).

@@ -310,3 +310,14 @@ Cada apertura posterior necesita una solicitud durable propia anclada al intento
 El commit se observa antes de devolver el recibo. Incertidumbre conserva IDs; comprobación fallida después de commit conserva recibo confirmado. No se crea capacidad física ni se autoriza TCP por registrar solicitudes. Migración SQL3 aditiva preserva SQL1/2 y resource1–7; lectura descriptiva sin replay. Broker persistente, financiación por solicitud, renovación autenticada fuera del handshake, root y activación Bridge quedan pendientes.
 
 Path, usuario/TLS y scope pueden variar en cada solicitud dentro del store y target del binding original; el recibo conserva esos datos y no autoriza ninguna operación. La autoridad por operación y el cargo pertenecen al futuro broker.
+
+
+## T014.C2b.P2c.C3.B — canal persistente y permiso por apertura
+
+Opt-in explícito sql_broker junto a first_sql_grant. Mantener los protocolos 2/3 y startup_spent irreversible. Un segundo socket SEQPACKET heredado y reservado conserva el canal de solicitudes sin reinterpretar ni alargar el ACK inicial. Solo el handshake inicial autenticado puede instalar el cliente; cada mensaje posterior exige emisor SCM original, vista kernel vigente, UUID de solicitud, ancla y secuencia estricta, path y destino exactos. Datos construidos por sí solos no instalan autoridad.
+
+El padre atiende una solicitud por llamada en su PID/Thread/task originales: sujeto nuevo y efímero, una unidad prepagada de reserva de datos iniciada/held/preparada, registro y asociación durable del cargo en la misma transacción, revalidación y respuesta. SQL4 añade un mapeo append-only unívoco session_id↔intent de arranque o posterior, conservando SQL1–3 y resource1–7. El cargo solo puede asociarse una vez por el canal original; no equivale a custodia o recuperación financiada.
+
+El gate común pide un permiso por apertura posterior y lo consume en el worker que solicita, sin I/O bajo su mutex ni mantener el lock de intercambio durante el driver. No reinicia el permiso inicial. Fork cierra el canal heredado y conserva rechazo; timeout después de envío, EOF, schema/emisor inválido o commit incierto terminan el broker sin retry/refund automático. Las sesiones abiertas siguen utilizables. El presupuesto limita recursos del nodo, no fija número de agentes; no crear hilos por agente. Bridge/root/inventario/custodia y los diez gates permanecen pendientes.
+
+La espera del servidor sin mensaje devuelve un estado Idle explícito distinto del EOF; no consume unidad, secuencia ni SQL. Un error local previo al envío o exchange ocupado se rechaza sin envenenar a otros workers. Una solicitud enviada y no confirmada termina el broker; posteriores denegaciones locales no inventan otra incertidumbre. El cierre y la instalación son monotónicos, y el task/canal originales se verifican antes de leer IPC.

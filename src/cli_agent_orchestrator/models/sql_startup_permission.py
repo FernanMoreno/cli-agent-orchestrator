@@ -13,6 +13,7 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
+from enum import Enum
 from uuid import UUID
 from weakref import WeakKeyDictionary
 
@@ -194,3 +195,92 @@ def _approve_verified_sql_startup_permission(value: VerifiedSqlStartupPermission
 def _expire_verified_sql_startup_permission(value: VerifiedSqlStartupPermission) -> None:
     object.__setattr__(value, "_active", False)
     _ISSUED.pop(value, None)
+
+
+SQL_BROKER_FD_ENV = "CAO_INTERNAL_SQL_BROKER_FD"
+
+
+@dataclass(frozen=True)
+class SqlBrokerRequest:
+    journal_id: str
+    startup_intent_id: str
+    intent_id: str
+    sequence: int
+    subject_binding_sha256: str
+    sql_application_name: str
+    path: str
+    destination_sha256: str
+    destination_scope: str
+
+    def __post_init__(self) -> None:
+        # Share the bounded destination/identity validation, without issuing a
+        # capability or pretending this request already has a paid session.
+        for value in (self.journal_id, self.startup_intent_id, self.intent_id):
+            if type(value) is not str or str(UUID(value)) != value:
+                raise ValueError("broker request requires canonical identities")
+        if type(self.sequence) is not int or not 1 <= self.sequence < 2**63:
+            raise ValueError("broker request requires a positive bounded sequence")
+        if (
+            not is_sql_process_application_name(self.sql_application_name)
+            or type(self.path) is not str
+            or self.path not in {"native", "orm", "audit"}
+            or type(self.destination_scope) is not str
+            or not 1 <= len(self.destination_scope) <= 128
+            or any(
+                type(v) is not str or re.fullmatch("[0-9a-f]{64}", v) is None
+                for v in (self.subject_binding_sha256, self.destination_sha256)
+            )
+        ):
+            raise ValueError("broker request has an invalid bounded destination")
+
+    def to_packet(self) -> dict[str, object]:
+        return dict(version=4, kind="sql_opening_request", **asdict(self))
+
+    @classmethod
+    def from_packet(cls, packet: object) -> SqlBrokerRequest:
+        if (
+            type(packet) is not dict
+            or set(packet) != {"version", "kind", *(f.name for f in fields(cls))}
+            or type(packet["version"]) is not int
+            or packet["version"] != 4
+            or packet["kind"] != "sql_opening_request"
+        ):
+            raise ValueError("broker request schema is invalid")
+        return cls(**{f.name: packet[f.name] for f in fields(cls)})
+
+
+@dataclass(frozen=True, kw_only=True)
+class SqlBrokerPermissionRecord(SqlStartupPermissionRecord):
+    startup_intent_id: str
+    sequence: int
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if (
+            type(self.startup_intent_id) is not str
+            or str(UUID(self.startup_intent_id)) != self.startup_intent_id
+            or type(self.sequence) is not int
+            or not 1 <= self.sequence < 2**63
+        ):
+            raise ValueError("broker permission requires an original anchor and sequence")
+
+    def to_packet(self) -> dict[str, object]:
+        return dict(version=4, kind="sql_opening", **asdict(self))
+
+    @classmethod
+    def from_packet(cls, packet: object) -> SqlBrokerPermissionRecord:
+        if (
+            type(packet) is not dict
+            or set(packet) != {"version", "kind", *(f.name for f in fields(cls))}
+            or type(packet["version"]) is not int
+            or packet["version"] != 4
+            or packet["kind"] != "sql_opening"
+        ):
+            raise ValueError("broker permission schema is invalid")
+        return cls(**{f.name: packet[f.name] for f in fields(cls)})
+
+
+class SqlBrokerIdle(Enum):
+    """No request was received; this is distinct from terminal transport EOF."""
+
+    NO_REQUEST = "no_request"

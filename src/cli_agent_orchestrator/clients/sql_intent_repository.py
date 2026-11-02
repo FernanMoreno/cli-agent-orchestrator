@@ -9,7 +9,7 @@ import json
 import re
 from contextlib import contextmanager
 from dataclasses import asdict, fields, replace
-from typing import Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Callable, Iterator, Sequence
 from uuid import uuid4
 
 from psycopg import sql
@@ -32,6 +32,7 @@ from cli_agent_orchestrator.clients.postgres.migrations import (
 )
 from cli_agent_orchestrator.clients.sql_opening_schema import (
     SQL_CHILD_FOLLOWUPS,
+    SQL_CHILD_FUNDINGS,
     SQL_CHILD_OPENINGS,
     SQL_OPENING_ALL_TABLES,
     SQL_OPENING_CHANNELS,
@@ -54,6 +55,9 @@ from cli_agent_orchestrator.utils.process_sql_origin import (
     current_sql_application_name,
     sql_opening_recorder,
 )
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.clients.storage_admission import ChildSqlSessionCharge
 
 
 class SqlIntentUnavailable(RuntimeError):
@@ -187,6 +191,7 @@ class SqlIntentRepository:
             "fences": SQL_OPENING_FENCES,
             "children": SQL_CHILD_OPENINGS,
             "followups": SQL_CHILD_FOLLOWUPS,
+            "fundings": SQL_CHILD_FUNDINGS,
             "credits": "_cao_resource_metadata_credits",
             "domains": "_cao_resource_domains",
         }
@@ -494,6 +499,7 @@ class SqlIntentRepository:
         subject: VerifiedChildSqlSubject,
         destination: DatabaseTarget,
         path: str = "native",
+        session_charge: "ChildSqlSessionCharge | None" = None,
     ) -> ChildSqlOpeningIntent:
         journal, request = canonical_id(journal_id), canonical_id(intent_id)
         if type(subject) is not VerifiedChildSqlSubject:
@@ -515,6 +521,8 @@ class SqlIntentRepository:
             (subject.boot_id, subject.pid_namespace, bound.process_pid, subject.start_time_ticks),
             separators=(",", ":"),
         )
+        if session_charge is not None:
+            channel._claim_child_sql_session(session_charge, subject, request)
         with self._transaction(channel, journal, request) as (c, actor):
             if actor.process_pid == bound.process_pid or (
                 actor.instance_id,
@@ -593,6 +601,8 @@ class SqlIntentRepository:
             receipt = _child_receipt(row)
             if receipt.subject != bound:
                 raise SchemaMismatch("Child SQL opening did not retain its original binding")
+            if session_charge is not None:
+                self._record_session_funding(c, request, session_charge, startup=True)
             subject.check()
         try:
             subject.check()
@@ -611,6 +621,7 @@ class SqlIntentRepository:
         subject: VerifiedChildSqlSubject,
         destination: DatabaseTarget,
         path: str = "native",
+        session_charge: "ChildSqlSessionCharge | None" = None,
     ) -> ChildSqlFollowupIntent:
         """Append one live-subject request; never repeat a startup claim or grant SQL."""
         journal, startup, request = map(canonical_id, (journal_id, startup_intent_id, intent_id))
@@ -628,6 +639,8 @@ class SqlIntentRepository:
             or subject.binding.target_identity_sha256 != target_digest
         ):
             raise SqlIntentUnavailable("follow-up destination differs from its subject")
+        if session_charge is not None:
+            channel._claim_child_sql_session(session_charge, subject, request)
         with self._transaction(channel, journal, request) as (c, actor):
             ordinal = self._append_position(c, journal, request, actor)
             anchor = self._q(
@@ -702,12 +715,34 @@ class SqlIntentRepository:
             )
             if receipt != expected:
                 raise SchemaMismatch("follow-up request differs from its persisted row")
+            if session_charge is not None:
+                self._record_session_funding(c, request, session_charge, startup=False)
             subject.check()
         try:
             subject.check()
         except BaseException as failure:
             raise SqlFollowupAckUnavailableAfterCommit(receipt) from failure
         return receipt
+
+    def _record_session_funding(
+        self, channel: Connection, request: str, charge: "ChildSqlSessionCharge", *, startup: bool
+    ) -> None:
+        charge.check()
+        row = self._q(
+            channel,
+            """INSERT INTO {fundings}
+            (intent_id,session_id,startup_intent_id,followup_intent_id)
+            VALUES(%s,%s,%s,%s) RETURNING intent_id,session_id""",
+            (
+                request,
+                charge.session_id,
+                request if startup else None,
+                None if startup else request,
+            ),
+        ).fetchone()
+        if row is None or (str(row[0]), str(row[1])) != (request, charge.session_id):
+            raise SchemaMismatch("session funding association was not persisted")
+        charge.check()
 
     def read_child_followup(
         self,

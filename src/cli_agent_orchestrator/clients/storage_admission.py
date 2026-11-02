@@ -190,6 +190,7 @@ class _ControlSqlFunding:
             ("_control_loan", loan),
             ("_reservation", reservation),
             ("_loan", None),
+            ("_intent_id", None),
             ("_factory", _FUNDING_FACTORY),
         ):
             object.__setattr__(charge, name, value)
@@ -216,6 +217,7 @@ class ChildSqlSessionCharge:
     """
 
     session_id: str
+    _intent_id: str | None
     subject: ResourceBinding
     _funding: _ControlSqlFunding
     _connection: weakref.ReferenceType[object]
@@ -251,6 +253,24 @@ class ChildSqlSessionCharge:
             or owns(self._reservation, self._loan) is not True
         ):
             raise StorageAdmissionUnavailable()
+
+    def _claim_intent(
+        self, connection: object, subject: VerifiedChildSqlSubject, intent_id: str
+    ) -> None:
+        from uuid import UUID
+
+        self.check()
+        if (
+            self._connection() is not connection
+            or type(subject) is not VerifiedChildSqlSubject
+            or self.subject is not subject.binding
+            or self._intent_id is not None
+            or type(intent_id) is not str
+            or str(UUID(intent_id)) != intent_id
+        ):
+            raise StorageAdmissionUnavailable()
+        subject.check()
+        object.__setattr__(self, "_intent_id", intent_id)
 
 
 def capture_control_sql_funding(

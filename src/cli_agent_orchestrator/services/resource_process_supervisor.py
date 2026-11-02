@@ -19,10 +19,10 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psutil
 
@@ -45,8 +45,12 @@ from cli_agent_orchestrator.models.sql_process_origin import (
     is_sql_process_application_name,
 )
 from cli_agent_orchestrator.models.sql_startup_permission import (
+    SQL_BROKER_FD_ENV,
     SQL_STARTUP_PERMISSION_ENV,
     SQL_STARTUP_PERMISSION_VERSION,
+    SqlBrokerIdle,
+    SqlBrokerPermissionRecord,
+    SqlBrokerRequest,
     SqlStartupPermissionRecord,
     _approve_verified_sql_startup_permission,
     _expire_verified_sql_startup_permission,
@@ -56,6 +60,7 @@ from cli_agent_orchestrator.models.sql_startup_permission import (
 )
 from cli_agent_orchestrator.utils.process_sql_origin import (
     _deny_sql_startup_permission,
+    _install_sql_broker,
     _install_sql_startup_permission,
     current_sql_application_name,
 )
@@ -64,7 +69,10 @@ if TYPE_CHECKING:
     from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget
     from cli_agent_orchestrator.clients.sql_intent_repository import SqlIntentRepository
     from cli_agent_orchestrator.clients.storage_admission import ChildSqlSessionCharge
-    from cli_agent_orchestrator.models.sql_opening_intent import ChildSqlOpeningIntent
+    from cli_agent_orchestrator.models.sql_opening_intent import (
+        ChildSqlFollowupIntent,
+        ChildSqlOpeningIntent,
+    )
 
 BINDING_PROTOCOL_VERSION = 2
 _MAX_PACKET_BYTES = 8192
@@ -367,6 +375,14 @@ def _publish_sql_startup_binding(binding: ResourceBinding, *, timeout_s: float) 
                 )
                 _approve_verified_sql_startup_permission(permission)
                 _install_sql_startup_permission(permission)
+                _attach_sql_broker(
+                    permission,
+                    parent_pid=parent_pid,
+                    parent=parent,
+                    validate_process=validate_process,
+                    timeout_s=timeout_s,
+                    startup_fd=fd,
+                )
             finally:
                 active = False
                 if permission is not None:
@@ -374,16 +390,211 @@ def _publish_sql_startup_binding(binding: ResourceBinding, *, timeout_s: float) 
         return True
     except (OSError, ValueError, TypeError, RecursionError, psutil.Error):
         _deny_sql_startup_permission()
+        _close_uninstalled_broker()
         raise ResourceProcessUnproven("SQL startup permission could not be authenticated") from None
     except BaseException:
         _deny_sql_startup_permission()
+        _close_uninstalled_broker()
         raise
+
+
+def _broker_receive(channel: socket.socket, sender: int, *, eof: bool = False):
+    """Bounded authenticated message; reject and close every received descriptor."""
+    payload, ancillary, flags, _ = channel.recvmsg(
+        _MAX_PACKET_BYTES + 1,
+        socket.CMSG_SPACE(_CREDENTIALS.size) + socket.CMSG_SPACE(struct.calcsize("i")),
+        socket.MSG_CMSG_CLOEXEC,
+    )
+    rights = False
+    for level, kind, data in ancillary:
+        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+            rights = True
+            size = struct.calcsize("i")
+            for offset in range(0, len(data) - len(data) % size, size):
+                try:
+                    os.close(struct.unpack_from("i", data, offset)[0])
+                except OSError:
+                    pass
+    if rights or flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC) or len(payload) > _MAX_PACKET_BYTES:
+        raise ResourceProcessUnproven("SQL broker message is incomplete")
+    if not payload and eof and not ancillary:
+        return None
+    if not payload or len(ancillary) != 1:
+        raise ResourceProcessUnproven("SQL broker message has no authenticated sender")
+    level, kind, data = ancillary[0]
+    if (
+        level != socket.SOL_SOCKET
+        or kind != socket.SCM_CREDENTIALS
+        or len(data) != _CREDENTIALS.size
+        or _CREDENTIALS.unpack(data)[:2] != (sender, os.getuid())
+    ):
+        raise ResourceProcessUnproven("SQL broker message sender differs from its owner")
+    return json.loads(payload, object_pairs_hook=_unique_object)
+
+
+def _broker_send(channel: socket.socket, packet: dict[str, object]) -> None:
+    payload = json.dumps(packet, separators=(",", ":"), allow_nan=False).encode()
+    if len(payload) > _MAX_PACKET_BYTES or channel.send(payload) != len(payload):
+        raise ResourceProcessUnproven("SQL broker message was not sent completely")
+
+
+class _SqlBrokerClient:
+    """One process-wide exchange, never held across the physical driver call."""
+
+    def __init__(self, channel, permission, parent_pid, parent, validate_process, timeout_s):
+        self.channel = channel
+        self.initial = permission.record
+        self.binding = permission.binding
+        self.parent_pid = parent_pid
+        self.parent = parent
+        self.pid = os.getpid()
+        self.validate_process = validate_process
+        self.timeout_s = timeout_s
+        self.exchange = threading.Lock()
+        self.sequence = 0
+        self.failed = False
+        # One immutable broker installation per process; no growing callback registry.
+        os.register_at_fork(after_in_child=self._after_fork)
+
+    def _after_fork(self):
+        self.failed = True
+        self.channel.close()  # Do not touch any inherited Python mutex.
+
+    def close(self):
+        self.failed = True
+        self.channel.close()
+
+    def _check(self):
+        if (
+            self.pid != os.getpid()
+            or self.failed
+            or self.channel.fileno() < 0
+            or os.getppid() != self.parent_pid
+            or _identity(self.parent_pid) != self.parent
+        ):
+            raise ResourceProcessUnproven("original SQL broker is unavailable")
+        self.validate_process()
+
+    def request(self, path, destination):
+        from cli_agent_orchestrator.utils.process_sql_origin import (
+            SqlBrokerRequestRefused,
+            SqlBrokerUnavailable,
+            SqlStartupPermissionUnavailable,
+        )
+
+        if self.pid != os.getpid():
+            raise SqlStartupPermissionUnavailable("SQL broker belongs to another process")
+        # Validate without taking the shared channel or poisoning another worker.
+        try:
+            template = SqlBrokerRequest(
+                journal_id=self.initial.journal_id,
+                startup_intent_id=self.initial.intent_id,
+                intent_id=str(uuid4()),
+                sequence=1,
+                subject_binding_sha256=self.initial.subject_binding_sha256,
+                sql_application_name=self.initial.sql_application_name,
+                path=path,
+                destination_sha256=sql_startup_destination_sha256(destination),
+                destination_scope=getattr(destination, "scope", None),
+            )
+        except (ValueError, TypeError, AttributeError):
+            raise SqlBrokerRequestRefused("invalid local SQL broker request") from None
+        if not self.exchange.acquire(timeout=self.timeout_s):
+            raise SqlBrokerRequestRefused("SQL broker exchange is busy")
+        request = None
+        sent = False
+        try:
+            self._check()
+            request = replace(template, sequence=self.sequence + 1)
+            self.sequence = request.sequence
+            self.channel.settimeout(self.timeout_s)
+            sent = True
+            _broker_send(self.channel, request.to_packet())
+            record = SqlBrokerPermissionRecord.from_packet(
+                _broker_receive(self.channel, self.parent_pid)
+            )
+            self._check()
+            if (
+                record.intent_id != request.intent_id
+                or record.sequence != request.sequence
+                or record.startup_intent_id != request.startup_intent_id
+                or record.journal_id != request.journal_id
+                or record.subject_binding_sha256 != request.subject_binding_sha256
+                or record.sql_application_name != request.sql_application_name
+                or record.path != request.path
+                or record.destination_sha256 != request.destination_sha256
+                or record.destination_scope != request.destination_scope
+            ):
+                raise ResourceProcessUnproven("SQL broker returned an unrelated permission")
+            return record
+        except BaseException as failure:
+            self.close()
+            if isinstance(failure, (OSError, ValueError, TypeError, RuntimeError, psutil.Error)):
+                if not sent:
+                    raise SqlStartupPermissionUnavailable(
+                        "SQL broker transport is unavailable"
+                    ) from failure
+                error = SqlBrokerUnavailable(
+                    "SQL broker did not establish a physical opening permission"
+                )
+                if request is not None:
+                    error.journal_id = request.journal_id
+                    error.intent_id = request.intent_id
+                    error.sequence = request.sequence
+                raise error from failure
+            raise
+        finally:
+            self.exchange.release()
+
+
+def _attach_sql_broker(permission, *, parent_pid, parent, validate_process, timeout_s, startup_fd):
+    raw = os.environ.pop(SQL_BROKER_FD_ENV, None)
+    if raw is None:
+        return
+    if not raw.isdecimal() or int(raw) < 3 or int(raw) == startup_fd:
+        raise ResourceProcessUnproven("SQL broker requires its distinct inherited channel")
+    channel = socket.socket(fileno=int(raw))
+    try:
+        os.set_inheritable(channel.fileno(), False)
+        peer = _CREDENTIALS.unpack(
+            channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, _CREDENTIALS.size)
+        )
+        if (
+            channel.family != socket.AF_UNIX
+            or channel.type != socket.SOCK_SEQPACKET
+            or peer[:2] != (parent_pid, os.getuid())
+        ):
+            raise ResourceProcessUnproven("SQL broker channel parent is unproven")
+        channel.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
+        client = _SqlBrokerClient(
+            channel, permission, parent_pid, parent, validate_process, timeout_s
+        )
+        _install_sql_broker(permission, client.request, close=client.close)
+    except BaseException:
+        channel.close()
+        raise
+
+
+def _close_uninstalled_broker():
+    raw = os.environ.pop(SQL_BROKER_FD_ENV, None)
+    if raw is not None and raw.isdecimal() and int(raw) >= 3:
+        try:
+            os.close(int(raw))
+        except OSError:
+            pass
 
 
 class ResourceProcessSupervisor:
     """Single PID/thread owner of one child, its IPC and its pinned kernel handle."""
 
     _owner_pid: int
+    _broker_channel: socket.socket | None
+    _broker_startup: ChildSqlOpeningIntent | None
+    _broker_control: Connection | None
+    _broker_failed: bool
+    _broker_receiving: bool
+    _broker_sequence: int
+    _broker_charges: dict[str, ChildSqlSessionCharge]
     _first_sql_grant: bool
     _owner_thread: threading.Thread
     _binding: ResourceBinding | None
@@ -425,6 +636,7 @@ class ResourceProcessSupervisor:
         expected_target_identity_sha256: str,
         env: Mapping[str, str] | None = None,
         first_sql_grant: bool = False,
+        sql_broker: bool = False,
     ) -> ResourceProcessSupervisor:
         if (
             isinstance(argv, (str, bytes))
@@ -437,10 +649,14 @@ class ResourceProcessSupervisor:
             value not in "0123456789abcdef" for value in expected_target_identity_sha256
         ):
             raise ValueError("resource process requires a canonical target digest")
-        if type(first_sql_grant) is not bool:
-            raise ValueError("SQL startup mode must be explicit")
+        if (
+            type(first_sql_grant) is not bool
+            or type(sql_broker) is not bool
+            or (sql_broker and not first_sql_grant)
+        ):
+            raise ValueError("SQL startup and broker modes must be explicit")
         environment = dict(os.environ if env is None else env)
-        if SQL_STARTUP_PERMISSION_ENV in environment:
+        if SQL_STARTUP_PERMISSION_ENV in environment or SQL_BROKER_FD_ENV in environment:
             raise ResourceProcessUnproven(
                 "resource process cannot inherit another SQL startup mode"
             )
@@ -459,6 +675,13 @@ class ResourceProcessSupervisor:
         value._first_sql_grant = first_sql_grant
         value._owner_thread = threading.current_thread()
         value._child_sql_session_charge = None
+        value._broker_channel = None
+        value._broker_startup = None
+        value._broker_control = None
+        value._broker_failed = False
+        value._broker_receiving = False
+        value._broker_sequence = 0
+        value._broker_charges = {}
         value._binding = None
         value._sql_application_name = None
         value._observation = None
@@ -475,19 +698,32 @@ class ResourceProcessSupervisor:
         value._target_digest = expected_target_identity_sha256
         parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         value._channel = parent
+        broker_child = None
         try:
+            inherited = [child.fileno()]
+            if sql_broker:
+                value._broker_channel, broker_child = socket.socketpair(
+                    socket.AF_UNIX, socket.SOCK_SEQPACKET
+                )
+                value._broker_channel.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
+                environment[SQL_BROKER_FD_ENV] = str(broker_child.fileno())
+                inherited.append(broker_child.fileno())
             parent.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
             environment[BINDING_FD_ENV] = str(child.fileno())
             value._process = subprocess.Popen(
-                list(argv), env=environment, close_fds=True, pass_fds=(child.fileno(),)
+                list(argv), env=environment, close_fds=True, pass_fds=tuple(inherited)
             )
         except BaseException as error:
             parent.close()
+            if value._broker_channel is not None:
+                value._broker_channel.close()
             # Losing the Popen handle does NOT establish no-start or cleanup.
             error.add_note("Child start is unobserved; no resource exit proof was produced.")
             raise
         finally:
             child.close()
+            if broker_child is not None:
+                broker_child.close()
         try:
             value._pidfd = os.pidfd_open(value._process.pid, 0)
             os.set_inheritable(value._pidfd, False)
@@ -507,9 +743,13 @@ class ResourceProcessSupervisor:
             # Still retain the returned Popen: callers must join their own child.
             value._binding_failed = True
             parent.close()
+            if value._broker_channel is not None:
+                value._broker_channel.close()
         except BaseException as error:
             value._binding_failed = True
             parent.close()
+            if value._broker_channel is not None:
+                value._broker_channel.close()
             # Keep the first exception and the exact physical child owner.
             setattr(error, "resource_process_owner", value)
             error.add_note("Resource child still requires its original owner's join.")
@@ -632,6 +872,11 @@ class ResourceProcessSupervisor:
                 subject=subject,
                 path=path,
                 destination=destination,
+                **(
+                    {"session_charge": self._child_sql_session_charge}
+                    if self._broker_channel is not None
+                    else {}
+                ),
             )
             if type(result) is not ChildSqlOpeningIntent or result.subject is not subject.binding:
                 raise SqlIntentCommitUncertain(journal_id, intent_id)
@@ -642,6 +887,7 @@ class ResourceProcessSupervisor:
                 charge = self._child_sql_session_charge
                 if (
                     charge is None
+                    or (self._broker_channel is not None and charge._intent_id != result.intent_id)
                     or charge.subject is not subject.binding
                     or result.journal_id != str(UUID(journal_id))
                     or result.intent_id != str(UUID(intent_id))
@@ -677,6 +923,9 @@ class ResourceProcessSupervisor:
                 first_sql_reply=grant_reply if first_sql_grant else None,
             )
         except BaseException as failure:
+            if self._broker_channel is not None:
+                self._broker_failed = True
+                self._broker_channel.close()
             charge = self._child_sql_session_charge
             if charge is None:
                 charge = getattr(failure, "child_sql_session_charge", None)
@@ -695,7 +944,213 @@ class ResourceProcessSupervisor:
             raise
         if receipt is None:
             raise ResourceProcessUnproven("child registration has no acknowledged receipt")
+        if self._broker_channel is not None:
+            self._broker_startup = receipt
+            self._broker_control = channel
         return receipt
+
+    @property
+    def child_sql_session_charges(self) -> tuple[ChildSqlSessionCharge, ...]:
+        """Retained bounded-by-reservation obligations, not physical close evidence."""
+        self._check_owner()
+        initial = (
+            () if self._child_sql_session_charge is None else (self._child_sql_session_charge,)
+        )
+        return initial + tuple(self._broker_charges.values())
+
+    def serve_child_sql_request(
+        self,
+        *,
+        channel: Connection,
+        repository: SqlIntentRepository,
+        destination: DatabaseTarget,
+        session_reservation: object,
+        timeout_s: float = 30,
+    ) -> ChildSqlFollowupIntent | SqlBrokerIdle | None:
+        """Serve one paid request on the original owner; EOF is transport closure only."""
+        from cli_agent_orchestrator.clients.sql_intent_repository import (
+            SqlFollowupAckUnavailableAfterCommit,
+            SqlIntentCommitUncertain,
+            SqlIntentRepository,
+        )
+        from cli_agent_orchestrator.models.sql_opening_intent import ChildSqlFollowupIntent
+
+        self._check_owner()
+        _timeout(timeout_s)
+        broker = self._broker_channel
+        startup = self._broker_startup
+        if (
+            broker is None
+            or startup is None
+            or self._closed
+            or self._broker_failed
+            or self._broker_receiving
+            or self._binding is None
+            or self._identity is None
+            or type(repository) is not SqlIntentRepository
+            or channel is not self._broker_control
+        ):
+            raise ResourceProcessUnproven("SQL broker requires its original confirmed startup")
+        channel._check_funded_worker()
+        self._broker_receiving = True
+        token = object()
+        self._subject_token = token
+        subject = None
+        charge = None
+        receipt = None
+        request = None
+        try:
+            broker.settimeout(timeout_s)
+            try:
+                packet = _broker_receive(broker, self._process.pid, eof=True)
+            except (TimeoutError, BlockingIOError):
+                return SqlBrokerIdle.NO_REQUEST
+            if packet is None:
+                self._broker_failed = True
+                broker.close()
+                return None
+            request = SqlBrokerRequest.from_packet(packet)
+            if (
+                request.journal_id != startup.journal_id
+                or request.startup_intent_id != startup.intent_id
+                or request.sequence != self._broker_sequence + 1
+                or request.intent_id == startup.intent_id
+                or request.subject_binding_sha256 != sql_startup_binding_sha256(self._binding)
+                or request.sql_application_name != self._sql_application_name
+                or request.destination_sha256 != sql_startup_destination_sha256(destination)
+                or request.destination_scope != destination.scope
+            ):
+                raise ResourceProcessUnproven("SQL broker request differs from its bound operation")
+            live = _identity(self._process.pid)
+            if (
+                live != self._identity
+                or not _matches(self._binding, live)
+                or self._pidfd is None
+                or _exit_ready(self._pidfd) is not False
+            ):
+                raise ResourceProcessUnproven("SQL broker child view is unavailable")
+
+            def revalidate(value: VerifiedChildSqlSubject) -> None:
+                self._check_owner()
+                if (
+                    not self._broker_receiving
+                    or self._broker_failed
+                    or self._closed
+                    or self._exited
+                    or broker.fileno() < 0
+                    or value not in self._issued_subjects
+                    or value._handshake_token is not token
+                    or self._subject_token is not token
+                    or self._pidfd is None
+                    or _exit_ready(self._pidfd) is not False
+                    or _identity(self._process.pid) != live
+                ):
+                    raise ResourceProcessUnproven("original SQL broker request is no longer live")
+
+            poller = select.poll()
+            hangup = select.POLLHUP | select.POLLERR | getattr(select, "POLLRDHUP", 0)
+            poller.register(broker.fileno(), hangup)
+            if any(flags & hangup for _, flags in poller.poll(0)):
+                raise ResourceProcessUnproven("SQL broker peer already closed before financing")
+            subject = _issue_verified_child_sql_subject(
+                self._binding,
+                sql_application_name=self._sql_application_name,
+                boot_id=live.boot_id,
+                start_time_ticks=live.ticks,
+                pid_namespace=live.pid_ns,
+                validate=revalidate,
+                handshake_token=token,
+            )
+            self._issued_subjects.add(subject)
+            _approve_verified_child_sql_subject(subject)
+            charge = channel.reserve_child_sql_session(
+                reservation=session_reservation, subject=subject
+            )
+            self._broker_charges[charge.session_id] = charge
+            result = repository.record_child_followup(
+                channel,
+                journal_id=request.journal_id,
+                startup_intent_id=request.startup_intent_id,
+                intent_id=request.intent_id,
+                sequence=request.sequence,
+                subject=subject,
+                destination=destination,
+                path=request.path,
+                session_charge=charge,
+            )
+            if (
+                type(result) is not ChildSqlFollowupIntent
+                or (
+                    result.intent_id,
+                    result.journal_id,
+                    result.startup_intent_id,
+                    result.sequence,
+                    result.path,
+                    result.destination_sha256,
+                    result.destination_scope,
+                    result.subject_binding_sha256,
+                    result.subject_sql_application_name,
+                )
+                != (
+                    request.intent_id,
+                    request.journal_id,
+                    request.startup_intent_id,
+                    request.sequence,
+                    request.path,
+                    request.destination_sha256,
+                    request.destination_scope,
+                    request.subject_binding_sha256,
+                    request.sql_application_name,
+                )
+                or charge._intent_id != request.intent_id
+            ):
+                raise SqlIntentCommitUncertain(request.journal_id, request.intent_id)
+            receipt = result
+            charge.check()
+            subject.check()
+            record = SqlBrokerPermissionRecord(
+                session_id=charge.session_id,
+                journal_id=receipt.journal_id,
+                startup_intent_id=receipt.startup_intent_id,
+                intent_id=receipt.intent_id,
+                sequence=receipt.sequence,
+                subject_binding_sha256=receipt.subject_binding_sha256,
+                sql_application_name=receipt.subject_sql_application_name,
+                path=receipt.path,
+                destination_sha256=receipt.destination_sha256,
+                destination_scope=receipt.destination_scope,
+            )
+            _broker_send(broker, record.to_packet())
+            self._broker_sequence = request.sequence
+            return receipt
+        except BaseException as failure:
+            self._broker_failed = True
+            broker.close()
+            if request is not None:
+                setattr(failure, "sql_broker_request", request)
+            if charge is None:
+                charge = getattr(failure, "child_sql_session_charge", None)
+            if charge is not None:
+                self._broker_charges[charge.session_id] = charge
+                setattr(failure, "child_sql_session_charge", charge)
+            if receipt is not None and not isinstance(
+                failure, (SqlFollowupAckUnavailableAfterCommit, SqlIntentCommitUncertain)
+            ):
+                error = SqlFollowupAckUnavailableAfterCommit(receipt)
+                if charge is not None:
+                    setattr(error, "child_sql_session_charge", charge)
+                if request is not None:
+                    setattr(error, "sql_broker_request", request)
+                raise error from failure
+            raise
+        finally:
+            try:
+                if subject is not None:
+                    _expire_verified_child_sql_subject(subject)
+            finally:
+                self._issued_subjects.clear()
+                self._subject_token = None
+                self._broker_receiving = False
 
     def _receive_binding(
         self,
@@ -975,6 +1430,8 @@ class ResourceProcessSupervisor:
                     "live resource process ownership cannot be discarded"
                 ) from None
         self._channel.close()
+        if self._broker_channel is not None:
+            self._broker_channel.close()
         if self._pidfd is not None:
             os.close(self._pidfd)
             self._pidfd = None

@@ -329,6 +329,31 @@ class Connection:
             self, self._storage_loan, reservation=reservation, subject=subject
         )
 
+    def _check_funded_worker(self) -> None:
+        """Verify the original control worker without opening a SQL transaction."""
+        funding = self._control_sql_funding
+        if funding is None or not self._owns_raw:
+            raise StorageAdmissionUnavailable()
+        funding.check(self, self._storage_loan)
+        self._check_live()
+        if (
+            self.raw is not self._funded_raw
+            or self.target is not self._funded_target
+            or getattr(self.raw, "closed", None) is not False
+            or self.in_transaction
+        ):
+            raise StorageAdmissionUnavailable()
+
+    def _claim_child_sql_session(
+        self, charge: ChildSqlSessionCharge, subject: VerifiedChildSqlSubject, intent_id: str
+    ) -> None:
+        if (
+            type(charge) is not ChildSqlSessionCharge
+            or charge._funding is not self._control_sql_funding
+        ):
+            raise StorageAdmissionUnavailable()
+        charge._claim_intent(self, subject, intent_id)
+
     @contextmanager
     def funded_transaction(self) -> Iterator["Connection"]:
         funding = self._control_sql_funding

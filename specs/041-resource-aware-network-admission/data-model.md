@@ -141,3 +141,8 @@ SqlStartupPermissionRecord describe session/journal/intent UUID, binding SHA, et
 ## Solicitudes posteriores ancladas — T014.C2b.P2c.C3.A
 
 SQL3 añade _cao_sql_child_followups: intent_id, journal_id, startup_intent_id, ordinal, sequence, path y destino(scope/store/digest). Una FK compuesta conserva el journal del ancla; UNIQUE(startup,sequence) impide repetir posiciones. Binding/kernel del sujeto se leen del arranque inmutable, sin duplicarlos. ChildSqlFollowupIntent es un recibo tipado e inmutable que valida UUID, posiciones, path/scope y hashes; no tiene métodos de grant/cargo/retiro. [Validación](validation-t014-child-followup-intents.json).
+
+
+## Solicitudes, permisos y asociación de financiación — T014.C2b.P2c.C3.B
+
+SqlBrokerRequest y SqlBrokerPermissionRecord usan versión 4 y kinds distintos, UUID del intento como nonce, ancla/sequence, destino/path/scope, etiqueta y digest del binding. El permiso posterior conserva slots exactamente 1. SqlBrokerIdle.NO_REQUEST es un resultado explícito distinto de None/EOF. SQL4 añade _cao_sql_child_session_fundings: intent_id PK, session_id UNIQUE y exactamente una FK matching hacia startup o followup. No duplica kernel ni crea crédito físico desde datos. El cargo opaco retiene claim de intento único, canal, sujeto y unidad originales; las filas son descriptivas. [Validación](validation-t014-sql-opening-broker.json).

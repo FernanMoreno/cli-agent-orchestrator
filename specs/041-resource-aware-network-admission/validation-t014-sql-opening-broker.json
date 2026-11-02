@@ -1,0 +1,290 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-02",
+  "component": "T014.C2b.P2c.C3.B",
+  "status": "validated-scoped-persistent-paid-sql-broker",
+  "base_head": "6be356c775c9a2833a9942588b12c98e26d8c7fa",
+  "acceptance": {
+    "phase": "t014-broker-final",
+    "selected_test_files": 101,
+    "passed": 1405,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous1360cases_preserved": true,
+    "new_distinct_cases": 45,
+    "seconds": 1317.796,
+    "available_mib": 12695,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 8,
+    "owned_python_archive_match": 11,
+    "archive_sha256": "89cab48a067a695e0114dd764f56aa4c90800cd28a3018bc18e5e92905337b29",
+    "foreign_graphify_files_preserved": 12,
+    "warnings": 17
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+      "sha256": "ccebe031dd53e9cad43be19ce190d245b3f569248834c6ef17afd56f38604a22"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+      "sha256": "7915dec7cd1afcfaca47df9f67f9d1152387dcca7f2a943cd3740be13f76a363"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+      "sha256": "48a3adc0c5145d023a2ba2ee662cdb05b5dd68645de70922ce4aa5e83ca2008d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+      "sha256": "daca7c9849a00966a17fed0b35969b37935f310ea76d2d14c1c11fee0c9d0cf7"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+      "sha256": "15baa64bd5890033fba4d8e361ec4bb3cc674f41c8d52d7ba20342ab6956893a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+      "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+      "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+      "sha256": "55a06ad1988d094941026a34a33a21f476450f7bf2b21646b4a75382ecc502e3"
+    },
+    {
+      "path": "test/utils/test_sql_broker.py",
+      "sha256": "b074c279d6325cbc7cde2f4dbaeb1ed18dc0983c68f8f72e37292fd792c96f57"
+    },
+    {
+      "path": "test/services/test_sql_broker_transport.py",
+      "sha256": "4cf77a9871862bb3660538eb228adac56182fcd78a7c50409f8ff6a8191adcf7"
+    },
+    {
+      "path": "test/postgres/test_sql_broker.py",
+      "sha256": "2f289d9c0ad30713ac570cdd6598274d7d4c90efd9782dba3b5ed6bcd1aacb42"
+    }
+  ],
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 11
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 11
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 8
+    }
+  ],
+  "architecture": {
+    "files": 457,
+    "dependencies": 2059,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 19,
+    "nodes": 772,
+    "edges": 2316,
+    "dangling": 175,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+        "sha256": "1f09648199c6abd473a1bf6ed62af89f7de4096002417c7ead327ec6d8c9b5ea"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "0fe01bdf4ef9cb13979fe0f4a7e30a574a1ef57bd720701442ba072837ae7e75"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_envelope.py",
+        "sha256": "2ede51fd1f9b70f47f6abb5da7ac074e53c7ec53a08c48fdcdee61b24f68553a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "a2cf6a1e9e830367faa71f61601bf01fc8ab5b01d0da7f1fb83e117e23a331d5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "48a3adc0c5145d023a2ba2ee662cdb05b5dd68645de70922ce4aa5e83ca2008d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "daca7c9849a00966a17fed0b35969b37935f310ea76d2d14c1c11fee0c9d0cf7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "15baa64bd5890033fba4d8e361ec4bb3cc674f41c8d52d7ba20342ab6956893a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "dc8ae06cb109a7a02dd047e20114733199dbf4b2fbc06ce2b7c018daf66d89ac"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+        "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "55a06ad1988d094941026a34a33a21f476450f7bf2b21646b4a75382ecc502e3"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3bff8a5090a2e8ade13b1cf651aa82fa2a703b1caeaedc8354404da535550051"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "404b41f5f1fd385f3e6168ed3526c4d0c70c5de573161f29d630563236257829"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge_supervisor.py",
+        "sha256": "60b4582f5300f068c09c51d5424fd85f45966fe61700c030c4bb07a9eeb6f656"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "7915dec7cd1afcfaca47df9f67f9d1152387dcca7f2a943cd3740be13f76a363"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_process_origin.py",
+        "sha256": "c510eac2afbd0a6b67bd9120247d194ca0189827269ee9ed5b786b440868312f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+        "sha256": "ccebe031dd53e9cad43be19ce190d245b3f569248834c6ef17afd56f38604a22"
+      }
+    ]
+  },
+  "behavior": "Opt-in persistent authenticated second SEQPACKET channel. Every later opening obtains a fresh live child subject and prepaid held data loan from the original funded owner. SQL4 atomically commits intent and unique session association before a typed worker-scoped permission; initial startup remains single-use.",
+  "history": [
+    {
+      "phase": "unit-red",
+      "failed": 10,
+      "meaning": "Broker model and API absent."
+    },
+    {
+      "phase": "offline-first",
+      "passed": 26,
+      "warnings": 2,
+      "meaning": "Controlled protocol and kernel transport; not financing proof."
+    },
+    {
+      "phase": "t014-broker-focused-checked",
+      "passed": 171,
+      "warnings": 2,
+      "meaning": "Initial real SQL/transport/C1-C3.A compatibility acceptance before lifecycle corrections."
+    },
+    {
+      "phase": "t014-broker-review-red",
+      "failed": 4,
+      "warnings": 2,
+      "meaning": "Reproduced false repeated uncertainty, reinstallation after close, invalid local input poisoning and idle timeout poisoning."
+    },
+    {
+      "phase": "t014-broker-owner-red",
+      "failed": 1,
+      "meaning": "Foreign task could poll before funding ownership was checked."
+    },
+    {
+      "phase": "t014-broker-reviewed-checked",
+      "passed": 180,
+      "warnings": 2,
+      "meaning": "Corrected lifecycle and ownership plus SQL4 constraints and compatibility; all eight production files equal final acceptance."
+    },
+    {
+      "phase": "t014-broker-driver-overlap",
+      "passed": 1,
+      "new_distinct_case": false,
+      "meaning": "Strengthened the existing parallel test: barrier inside driver call and same backend before/after connection barrier. Only test fixture changed, root reviewed and full final suite includes it."
+    }
+  ],
+  "invariants": [
+    "Launch broker requires explicit first_sql_grant and rejects inherited reserved descriptors; protocols2/3 keep meaning.",
+    "Only the original approved startup issuer installs the client; installation and close are monotonic; startup_spent never resets.",
+    "Actual SCM sender, original parent/child kernel view and bounded exact schemas/nonce/sequence/destination protect each exchange; all received rights are closed on refusal.",
+    "Per-request grant is captured on actual requesting PID/Thread/task; no network or SQL under gate.guard and no exchange lock across driver.",
+    "Parent retains exact original channel and checks funded PID/Thread/task/scope/raw/target before any IPC; fresh request subjects expire after each serve.",
+    "One held prepared data unit is borrowed for each request; charge can claim only one intent on its exact original channel and subject.",
+    "SQL4 maps intent to unique session_id, with exactly one matching startup/follow-up FK, in the same confirmed transaction; actual RETURNING data verified.",
+    "Startup funding is mapped in broker mode; legacy v3 historical startups are not silently remapped.",
+    "Idle is distinct from EOF; invalid local input/busy exchange is known refusal, while sent unknown requests fail terminal with stable IDs.",
+    "Broker failure detaches before closing; later local refusals do not manufacture more registration uncertainty.",
+    "Failures and client/channel closure retain the original whole lease. Claim without row after rollback is retained debt, not reusable authority."
+  ],
+  "real_scope": {
+    "controlled_python_child": true,
+    "adapters": [
+      "native",
+      "orm",
+      "audit"
+    ],
+    "sequential_extra_openings": 20,
+    "parallel_sql_workers_in_one_child": 5,
+    "parallel_agents_accepted": false,
+    "independent_commit_observer": true
+  },
+  "limits": [
+    "No production Bridge/provider activation, root genesis/first control TCP funding, full inventory, independently funded custody or global M1/M2/M3 acceptance.",
+    "Runtime cooperation boundary, not a sandbox against arbitrary trusted Python/raw SQL or credential changes.",
+    "A pre-attach descendant may inherit and steal a descriptor for denial of service; SCM prevents impersonation, and after attach fork closes the inherited channel.",
+    "IPC is synchronous and deadline-bounded; async integration must use an owner worker that creates/keeps its own supervisor and funding, not transfer existing objects to an executor.",
+    "Parent idle timeout preserves channel; client timeout after send is terminal. Slow dispatch or cancellation can leave a paid orphan; pre-charge HUP polling is best-effort, never absence or refund proof.",
+    "Busy exchange timeout refuses only the local unsent request. No automatic request retry, resynchronization or data-credit refund.",
+    "SQL4 owner migration is required before current journal APIs; no runtime DDL fallback. Runtime ACL is append-only; database owner remains trusted for migration/fixture provisioning.",
+    "Logical journal quota bounds metadata records and one association per intent, not physical byte or global session coverage.",
+    "Twenty sequential openings and five concurrent SQL workers in one child are not twenty/five agents or distributed-network capacity.",
+    "All ten original gates and SDK/UI configuration remain open."
+  ],
+  "peer_review": {
+    "mode": "read",
+    "rounds_completed": 3,
+    "final_source_verdict": "no new blocking findings",
+    "tests_before_fixture_strengthening_read": true,
+    "root_reviewed_final_tests": true,
+    "fixture_strengthening_after_peer": "Root strengthened driver overlap and backend continuity and executed the final case/full suite; implementation unchanged."
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261102-sql-opening-broker",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint": 0
+  },
+  "composition_report": "composition-t014-sql-opening-broker.md"
+}

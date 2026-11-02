@@ -142,3 +142,25 @@ SQL_OPENING_MIGRATIONS += (
         tables=SQL_OPENING_ALL_TABLES,
     ),
 )
+
+
+SQL_CHILD_FUNDINGS = "_cao_sql_child_session_fundings"
+SQL_OPENING_ALL_TABLES += (SQL_CHILD_FUNDINGS,)
+SQL_OPENING_MIGRATIONS += (
+    ComponentMigration(
+        component="sql_opening_intents",
+        scope="main",
+        version=4,
+        statements=(
+            """CREATE TABLE _cao_sql_child_session_fundings (
+            intent_id UUID PRIMARY KEY, session_id UUID NOT NULL UNIQUE,
+            startup_intent_id UUID REFERENCES _cao_sql_child_openings(intent_id),
+            followup_intent_id UUID REFERENCES _cao_sql_child_followups(intent_id),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK(pg_catalog.num_nonnulls(startup_intent_id,followup_intent_id)=1),
+            CHECK(intent_id=COALESCE(startup_intent_id,followup_intent_id))
+        )""",
+        ),
+        tables=SQL_OPENING_ALL_TABLES,
+    ),
+)

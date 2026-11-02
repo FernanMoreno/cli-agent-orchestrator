@@ -17,7 +17,9 @@ from cli_agent_orchestrator.models.sql_process_origin import (
     SQL_ORIGIN_PREFIX,
 )
 from cli_agent_orchestrator.models.sql_startup_permission import (
+    SQL_BROKER_FD_ENV,
     SQL_STARTUP_PERMISSION_ENV,
+    SqlBrokerPermissionRecord,
     SqlStartupPermissionRecord,
     VerifiedSqlStartupPermission,
     sql_startup_binding_sha256,
@@ -39,6 +41,9 @@ class _State:
     startup_failed: bool = False
     startup_spent: bool = False
     startup_grant: _StartupOpening | None = None
+    broker: _SqlBroker | None = None
+    broker_installed: bool = False
+    broker_failed: bool = False
     guard: threading.Lock = field(default_factory=threading.Lock)
     successors: dict[int, _State] = field(default_factory=dict, repr=False)
 
@@ -140,7 +145,7 @@ def _process_state() -> _State:
 
 def _latch_sql_mode(state: _State) -> None:
     marker = os.environ.get(SQL_STARTUP_PERMISSION_ENV)
-    if marker is not None:
+    if marker is not None or SQL_BROKER_FD_ENV in os.environ:
         # Fork reads without the mutex. Publish the restrictive fact first.
         state.startup_required = True
         if marker != "1":
@@ -155,6 +160,108 @@ _latch_sql_mode(_STATE)
 
 class SqlStartupPermissionUnavailable(RuntimeError):
     """A physical opening has no valid paid startup permission; no fallback."""
+
+
+class SqlBrokerRequestRefused(SqlStartupPermissionUnavailable):
+    """A local request was refused before any broker transmission."""
+
+
+class SqlBrokerUnavailable(SqlStartupPermissionUnavailable, SqlOpeningPreparationUncertain):
+    """A broker exchange did not establish permission; retain its request identity."""
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class _SqlBroker:
+    initial: SqlStartupPermissionRecord
+    binding: ResourceBinding
+    pid: int
+    request: Callable[[str, object | None], SqlBrokerPermissionRecord]
+    close: Callable[[], None]
+    validate_process: Callable[[], None]
+
+    def prepare(self, path: str, destination: object | None) -> _StartupOpening:
+        if self.pid != os.getpid():
+            raise SqlStartupPermissionUnavailable("SQL broker belongs to another process")
+        thread, task = threading.current_thread(), _recording_task()
+        try:
+            self.validate_process()
+            record = self.request(path, destination)
+            if (
+                type(record) is not SqlBrokerPermissionRecord
+                or record.startup_intent_id != self.initial.intent_id
+                or record.journal_id != self.initial.journal_id
+                or record.subject_binding_sha256 != self.initial.subject_binding_sha256
+                or record.sql_application_name != self.initial.sql_application_name
+            ):
+                raise SqlBrokerUnavailable("SQL broker returned an unrelated permission")
+            result = _StartupOpening(
+                record, self.binding, self.pid, thread, task, self.validate_process
+            )
+            result.check_worker()
+            return result
+        except SqlBrokerRequestRefused:
+            raise
+        except BaseException:
+            state = _process_state()
+            with state.guard:
+                if state.broker is self:
+                    state.broker_failed = True
+                    state.broker = None
+            try:
+                self.close()
+            except BaseException:
+                pass
+            raise
+
+
+def _install_sql_broker(
+    permission: VerifiedSqlStartupPermission,
+    request: Callable[[str, object | None], SqlBrokerPermissionRecord],
+    *,
+    close: Callable[[], None],
+) -> None:
+    if (
+        type(permission) is not VerifiedSqlStartupPermission
+        or not callable(request)
+        or not callable(close)
+    ):
+        raise SqlStartupPermissionUnavailable("SQL broker requires a live authenticated issuer")
+    permission.check()
+    permission.validate_process()
+    state = _process_state()
+    broker = _SqlBroker(
+        permission.record,
+        permission.binding,
+        os.getpid(),
+        request,
+        close,
+        permission.validate_process,
+    )
+    with state.guard:
+        if (
+            not state.startup_required
+            or state.startup_failed
+            or state.sealed
+            or state.startup_spent
+            or state.startup_grant is None
+            or state.broker_installed
+            or state.broker_failed
+            or state.startup_grant.record is not permission.record
+        ):
+            raise SqlStartupPermissionUnavailable("SQL broker cannot replace its original issuer")
+        state.broker_installed = True
+        state.broker = broker
+
+
+def close_sql_broker() -> None:
+    """Close transport only; never certify physical retirement or refund a charge."""
+    state = _process_state()
+    with state.guard:
+        broker = state.broker
+        state.broker_failed = True
+        state.broker = None
+    if broker is not None:
+        broker.close()
 
 
 @dataclass(frozen=True, eq=False, repr=False)
@@ -283,6 +390,7 @@ def sql_process_opening(
         else None
     )
     grant = None
+    broker = None
     with state.guard:
         _latch_sql_mode(state)
         controlled = state.enabled
@@ -290,22 +398,33 @@ def sql_process_opening(
             if state.sealed:
                 raise SqlProcessOpeningsSealed("terminal process refused a new SQL opening")
             if state.startup_required:
-                grant = state.startup_grant
-                if (
-                    state.startup_failed
-                    or state.startup_spent
-                    or grant is None
-                    or grant.pid != os.getpid()
-                    or grant.thread is not threading.current_thread()
-                    or grant.task is not startup_task
-                ):
-                    raise SqlStartupPermissionUnavailable("physical SQL has no startup permission")
-                state.startup_spent = True
+                if state.startup_failed:
+                    raise SqlStartupPermissionUnavailable("physical SQL startup is refused")
+                if state.startup_spent:
+                    broker = state.broker
+                    if broker is None or state.broker_failed:
+                        raise SqlStartupPermissionUnavailable(
+                            "physical SQL has no startup permission"
+                        )
+                else:
+                    grant = state.startup_grant
+                    if (
+                        grant is None
+                        or grant.pid != os.getpid()
+                        or grant.thread is not threading.current_thread()
+                        or grant.task is not startup_task
+                    ):
+                        raise SqlStartupPermissionUnavailable(
+                            "physical SQL has no startup permission"
+                        )
+                    state.startup_spent = True
             state.opening += 1
     uncertain = False
     entered_driver = False
     registration_uncertain = False
     try:
+        if broker is not None:
+            grant = broker.prepare(path, destination)
         if grant is not None:
             grant.check_destination(path, destination)
             grant.check_process()
