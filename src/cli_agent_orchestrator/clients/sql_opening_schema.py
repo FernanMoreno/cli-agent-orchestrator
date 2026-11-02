@@ -66,7 +66,7 @@ SQL_OPENING_MIGRATIONS: tuple[ComponentMigration, ...] = (
 # checksum. Version2 adds a distinct planned child opening, never a fake local
 # driver call in the original intents table.
 SQL_CHILD_OPENINGS = "_cao_sql_child_openings"
-SQL_OPENING_ALL_TABLES = SQL_OPENING_TABLES + (SQL_CHILD_OPENINGS,)
+SQL_OPENING_ALL_TABLES: tuple[str, ...] = SQL_OPENING_TABLES + (SQL_CHILD_OPENINGS,)
 SQL_OPENING_MIGRATIONS += (
     ComponentMigration(
         component="sql_opening_intents",
@@ -105,6 +105,38 @@ SQL_OPENING_MIGRATIONS += (
                 UNIQUE(journal_id,ordinal),
                 UNIQUE(subject_instance_id,subject_process_generation),
                 UNIQUE(boot_id,pid_namespace_device,pid_namespace_inode,subject_process_pid,start_time_ticks)
+            )""",
+        ),
+        tables=SQL_OPENING_ALL_TABLES,
+    ),
+)
+
+# Prior migration objects retain their original table tuples and checksums.
+SQL_CHILD_FOLLOWUPS = "_cao_sql_child_followups"
+SQL_OPENING_ALL_TABLES += (SQL_CHILD_FOLLOWUPS,)
+SQL_OPENING_MIGRATIONS += (
+    ComponentMigration(
+        component="sql_opening_intents",
+        scope="main",
+        version=3,
+        statements=(
+            """ALTER TABLE _cao_sql_child_openings
+                ADD CONSTRAINT _cao_sql_child_openings_anchor_key UNIQUE(intent_id,journal_id)""",
+            """CREATE TABLE _cao_sql_child_followups (
+                intent_id UUID PRIMARY KEY,
+                journal_id UUID NOT NULL REFERENCES _cao_sql_opening_quotas(journal_id),
+                startup_intent_id UUID NOT NULL,
+                ordinal BIGINT NOT NULL CHECK(ordinal>0),
+                sequence BIGINT NOT NULL CHECK(sequence>0),
+                path TEXT NOT NULL CHECK(path IN ('native','orm','audit')),
+                destination_store_id UUID NOT NULL,
+                destination_scope TEXT NOT NULL CHECK(length(destination_scope) BETWEEN 1 AND 128),
+                destination_sha256 TEXT NOT NULL CHECK(destination_sha256 ~ '^[0-9a-f]{64}$'),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(startup_intent_id,journal_id)
+                    REFERENCES _cao_sql_child_openings(intent_id,journal_id),
+                UNIQUE(journal_id,ordinal),
+                UNIQUE(startup_intent_id,sequence)
             )""",
         ),
         tables=SQL_OPENING_ALL_TABLES,

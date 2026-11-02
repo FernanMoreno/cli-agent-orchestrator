@@ -31,6 +31,7 @@ from cli_agent_orchestrator.clients.postgres.migrations import (
     verify_runtime_role,
 )
 from cli_agent_orchestrator.clients.sql_opening_schema import (
+    SQL_CHILD_FOLLOWUPS,
     SQL_CHILD_OPENINGS,
     SQL_OPENING_ALL_TABLES,
     SQL_OPENING_CHANNELS,
@@ -43,6 +44,7 @@ from cli_agent_orchestrator.models.admission_domains import canonical_id
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding, envelope_integer
 from cli_agent_orchestrator.models.sql_child_subject import VerifiedChildSqlSubject
 from cli_agent_orchestrator.models.sql_opening_intent import (
+    ChildSqlFollowupIntent,
     ChildSqlOpeningIntent,
     SqlOpeningIntent,
     SqlOpeningPreparationUncertain,
@@ -82,6 +84,16 @@ class SqlChildAckUnavailableAfterCommit(SqlIntentUnavailable):
 
     def __init__(self, receipt: ChildSqlOpeningIntent):
         super().__init__("Child acknowledgement unavailable after confirmed commit")
+        self.receipt = receipt
+        self.journal_id = receipt.journal_id
+        self.intent_id = receipt.intent_id
+
+
+class SqlFollowupAckUnavailableAfterCommit(SqlIntentUnavailable):
+    """Confirmed follow-up survives loss of its post-commit subject observation."""
+
+    def __init__(self, receipt: ChildSqlFollowupIntent):
+        super().__init__("Follow-up acknowledgement unavailable after confirmed commit")
         self.receipt = receipt
         self.journal_id = receipt.journal_id
         self.intent_id = receipt.intent_id
@@ -140,6 +152,30 @@ def _child_receipt(row: Record) -> ChildSqlOpeningIntent:
         raise SchemaMismatch("Retained child opening has an invalid subject") from failure
 
 
+def _followup_receipt(row: Record, origin: ChildSqlOpeningIntent) -> ChildSqlFollowupIntent:
+    try:
+        if (
+            str(row["startup_intent_id"]),
+            str(row["journal_id"]),
+            str(row["destination_store_id"]),
+        ) != (origin.intent_id, origin.journal_id, origin.subject.store_id):
+            raise ValueError("follow-up anchor differs")
+        return ChildSqlFollowupIntent(
+            str(row["intent_id"]),
+            str(row["journal_id"]),
+            row["ordinal"],
+            origin.intent_id,
+            row["sequence"],
+            row["path"],
+            row["destination_scope"],
+            row["destination_sha256"],
+            binding_digest(origin.subject),
+            origin.subject_sql_application_name,
+        )
+    except (ValueError, TypeError, KeyError) as failure:
+        raise SchemaMismatch("retained follow-up request is invalid") from failure
+
+
 class SqlIntentRepository:
     def __init__(self, target: DatabaseTarget, *, binding_supplier: Callable[[], ResourceBinding]):
         self.target = target
@@ -150,6 +186,7 @@ class SqlIntentRepository:
             "intents": SQL_OPENING_INTENTS,
             "fences": SQL_OPENING_FENCES,
             "children": SQL_CHILD_OPENINGS,
+            "followups": SQL_CHILD_FOLLOWUPS,
             "credits": "_cao_resource_metadata_credits",
             "domains": "_cao_resource_domains",
         }
@@ -386,16 +423,18 @@ class SqlIntentRepository:
         if self._q(
             c,
             """SELECT intent_id FROM {intents} WHERE intent_id=%s
-            UNION ALL SELECT intent_id FROM {children} WHERE intent_id=%s LIMIT 1""",
-            (request, request),
+            UNION ALL SELECT intent_id FROM {children} WHERE intent_id=%s
+            UNION ALL SELECT intent_id FROM {followups} WHERE intent_id=%s LIMIT 1""",
+            (request, request, request),
         ).fetchone():
             raise SqlIntentConflict("A retained SQL intent cannot grant another opening")
         last = self._q(
             c,
             """SELECT GREATEST(
             COALESCE((SELECT ordinal FROM {intents} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0),
-            COALESCE((SELECT ordinal FROM {children} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0))""",
-            (journal, journal),
+            COALESCE((SELECT ordinal FROM {children} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0),
+            COALESCE((SELECT ordinal FROM {followups} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0))""",
+            (journal, journal, journal),
         ).fetchone()
         if last is None:
             raise SchemaMismatch("SQL journal position is unavailable")
@@ -560,6 +599,150 @@ class SqlIntentRepository:
         except BaseException as failure:
             raise SqlChildAckUnavailableAfterCommit(receipt) from failure
         return replace(receipt, subject=bound)
+
+    def record_child_followup(
+        self,
+        channel: Connection,
+        *,
+        journal_id: str,
+        startup_intent_id: str,
+        intent_id: str,
+        sequence: int,
+        subject: VerifiedChildSqlSubject,
+        destination: DatabaseTarget,
+        path: str = "native",
+    ) -> ChildSqlFollowupIntent:
+        """Append one live-subject request; never repeat a startup claim or grant SQL."""
+        journal, startup, request = map(canonical_id, (journal_id, startup_intent_id, intent_id))
+        if type(sequence) is not int or not 1 <= sequence < 2**63:
+            raise ValueError("follow-up sequence must be a positive bounded integer")
+        if type(subject) is not VerifiedChildSqlSubject:
+            raise ValueError("follow-up requires its live authenticated subject")
+        subject.check()
+        actor_label, digest = self._opening_payload(path, destination)
+        target_digest = hashlib.sha256(
+            json.dumps(destination.identity, separators=(",", ":")).encode()
+        ).hexdigest()
+        if (
+            subject.binding.store_id != canonical_id(destination.store_id)
+            or subject.binding.target_identity_sha256 != target_digest
+        ):
+            raise SqlIntentUnavailable("follow-up destination differs from its subject")
+        with self._transaction(channel, journal, request) as (c, actor):
+            ordinal = self._append_position(c, journal, request, actor)
+            anchor = self._q(
+                c,
+                "SELECT * FROM {children} WHERE intent_id=%s AND journal_id=%s",
+                (startup, journal),
+            ).fetchone()
+            if anchor is None:
+                raise SqlIntentUnavailable("follow-up startup anchor is unavailable")
+            origin = _child_receipt(anchor)
+            if (
+                origin.parent_binding_sha256,
+                origin.parent_process_pid,
+                origin.parent_process_started_at,
+            ) != (binding_digest(actor), actor.process_pid, actor.process_started_at):
+                raise SqlIntentUnavailable("follow-up belongs to another parent")
+            if (
+                origin.subject,
+                origin.subject_sql_application_name,
+                origin.boot_id,
+                origin.start_time_ticks,
+                origin.pid_namespace,
+            ) != (
+                subject.binding,
+                subject.sql_application_name,
+                subject.boot_id,
+                subject.start_time_ticks,
+                subject.pid_namespace,
+            ):
+                raise SqlIntentUnavailable("follow-up belongs to another live subject")
+            if origin.parent_sql_application_name != actor_label:
+                raise SqlIntentUnavailable("follow-up actor label differs from its startup")
+            last = self._q(
+                c,
+                """SELECT sequence FROM {followups}
+                WHERE startup_intent_id=%s ORDER BY sequence DESC LIMIT 1""",
+                (startup,),
+            ).fetchone()
+            if sequence != (0 if last is None else last[0]) + 1:
+                raise SqlIntentConflict("follow-up sequence must be consecutive")
+            row = self._q(
+                c,
+                """INSERT INTO {followups}(intent_id,journal_id,startup_intent_id,
+                ordinal,sequence,path,destination_store_id,destination_scope,destination_sha256)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (
+                    request,
+                    journal,
+                    startup,
+                    ordinal,
+                    sequence,
+                    path,
+                    canonical_id(destination.store_id),
+                    destination.scope,
+                    digest,
+                ),
+            ).fetchone()
+            if row is None:
+                raise SchemaMismatch("follow-up request was not persisted")
+            receipt = _followup_receipt(row, origin)
+            expected = ChildSqlFollowupIntent(
+                request,
+                journal,
+                ordinal,
+                startup,
+                sequence,
+                path,
+                destination.scope,
+                digest,
+                binding_digest(subject.binding),
+                subject.sql_application_name,
+            )
+            if receipt != expected:
+                raise SchemaMismatch("follow-up request differs from its persisted row")
+            subject.check()
+        try:
+            subject.check()
+        except BaseException as failure:
+            raise SqlFollowupAckUnavailableAfterCommit(receipt) from failure
+        return receipt
+
+    def read_child_followup(
+        self,
+        channel: Connection,
+        *,
+        journal_id: str,
+        intent_id: str,
+    ) -> ChildSqlFollowupIntent | None:
+        journal, request = canonical_id(journal_id), canonical_id(intent_id)
+        with self._transaction(channel, journal) as (c, actor):
+            self._quota(c, journal, actor)
+            row = self._q(
+                c,
+                "SELECT * FROM {followups} WHERE journal_id=%s AND intent_id=%s",
+                (journal, request),
+            ).fetchone()
+            if row is None:
+                return None
+            anchor = self._q(
+                c,
+                "SELECT * FROM {children} WHERE journal_id=%s AND intent_id=%s",
+                (journal, str(row["startup_intent_id"])),
+            ).fetchone()
+            if anchor is None:
+                raise SchemaMismatch("follow-up startup anchor is unavailable")
+            origin = _child_receipt(anchor)
+            if (
+                origin.parent_binding_sha256,
+                origin.parent_process_pid,
+                origin.parent_process_started_at,
+            ) != (binding_digest(actor), actor.process_pid, actor.process_started_at) or str(
+                row["destination_store_id"]
+            ) != origin.subject.store_id:
+                raise SchemaMismatch("follow-up ownership differs from its startup")
+            return _followup_receipt(row, origin)
 
     def read_child_opening(
         self, channel: Connection, *, journal_id: str, intent_id: str

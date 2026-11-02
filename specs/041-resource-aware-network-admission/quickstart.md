@@ -110,3 +110,8 @@ En el worker confiable, reservar e iniciar una reserva de almacenamiento dedicad
 ## Prueba controlada de primera apertura — T014.C2b.P2c.C2
 
 Usar padre/hijo propios y reserva dedicada ya iniciada/preparada con hold. Lanzar first_sql_grant=True, ejecutar publisher explícito3 en el hijo antes de cualquier SQL y recibir con receive_binding_with_child_grant pasando canal original/journal/intento/destino/reserva/path. El hijo puede abrir una sola vez por ese adaptador en el mismo Thread/task; las sesiones existentes conservan uso. No activar automáticamente Bridge: faltan las siguientes sesiones financiadas. Conservar plan/cargo incluso si el hijo rechaza paquete o driver falla; no liberar sin custodio independiente. [Validación](validation-t014-child-sql-permission.json).
+
+
+## Migración y solicitudes dentro del handshake — T014.C2b.P2c.C3.A
+
+El dueño debe aplicar SQL3 antes de usar el journal; SQL2 se rechaza sin DDL implícito. Durante before_ack, registrar el arranque una vez y conservar su intent_id. Registrar cada plan posterior mediante record_child_followup con UUID independiente y sequence1,2,…; conservar recibos/errores. Tras expirar el handshake se rechaza el sujeto, incluso si quedan descriptores. No copiarlo a otro worker, reabrir el canal ni activar Bridge como si los planes financiaran sesiones. Faltan el broker persistente, financiación por solicitud y custodia. [Validación](validation-t014-child-followup-intents.json).

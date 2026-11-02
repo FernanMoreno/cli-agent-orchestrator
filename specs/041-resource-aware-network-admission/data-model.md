@@ -136,3 +136,8 @@ Objeto opaco no serializable: UUID de sesión y ResourceBinding descriptivos, fu
 ## Permiso estructurado y autoridad efímera — T014.C2b.P2c.C2
 
 SqlStartupPermissionRecord describe session/journal/intent UUID, binding SHA, etiqueta/path/destino con usuario/TLS/scope y slots exactamente int1. Serializar ese registro no instala autoridad. VerifiedSqlStartupPermission se aprueba/reclama/expira en el handshake vivo; el gate conserva solo una apertura con identidad de PID/Thread/task y callback de vista kernel. Estado required/failed/spent es monotónico; descriptor no equivale a aceptación, fila, TCP o ausencia. [Validación](validation-t014-child-sql-permission.json).
+
+
+## Solicitudes posteriores ancladas — T014.C2b.P2c.C3.A
+
+SQL3 añade _cao_sql_child_followups: intent_id, journal_id, startup_intent_id, ordinal, sequence, path y destino(scope/store/digest). Una FK compuesta conserva el journal del ancla; UNIQUE(startup,sequence) impide repetir posiciones. Binding/kernel del sujeto se leen del arranque inmutable, sin duplicarlos. ChildSqlFollowupIntent es un recibo tipado e inmutable que valida UUID, posiciones, path/scope y hashes; no tiene métodos de grant/cargo/retiro. [Validación](validation-t014-child-followup-intents.json).

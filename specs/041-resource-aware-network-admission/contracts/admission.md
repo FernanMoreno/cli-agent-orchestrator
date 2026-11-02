@@ -188,3 +188,8 @@ receive_binding_with_child_intent(session_reservation=lease) requiere reserva no
 ## Protocolo3 explícito de una apertura — T014.C2b.P2c.C2
 
 launch(first_sql_grant=True), publish_resource_binding(first_sql_grant=True) y receive_binding_with_child_grant(session_reservation=lease) componen permiso pagado; modo mismatched falla antes de cargo/SQL. Sesión original preparada y retenida más commit B confirmado preceden al paquete. Valida esquema exacto/duplicados/tamaño/FDs/SCM emisor original, destino y worker; consume una vez antes del driver sin refund. b1/protocolo2 siguen identidad. Devolver ChildSqlOpeningIntent tras emitir no prueba aceptación del hijo ni apertura. [Validación](../validation-t014-child-sql-permission.json).
+
+
+## Registro explícito de follow-ups — T014.C2b.P2c.C3.A
+
+record_child_followup exige canal original financiado, ancla del mismo journal/actor y VerifiedChildSqlSubject todavía vivo con identidad kernel exacta. sequence debe ser el siguiente entero positivo; intent_id no puede existir en ninguno de los tres tipos. Se confirma la fila antes de devolver. read_child_followup es descriptivo; reescribir el UUID falla. SqlIntentCommitUncertain conserva IDs y SqlFollowupAckUnavailableAfterCommit conserva recibo confirmado. El registro no consume claim/claim_session ni concede permiso. Path/usuario/TLS/scope pueden variar dentro del target del binding; la autorización operativa pertenece al futuro broker. [Validación](../validation-t014-child-followup-intents.json).

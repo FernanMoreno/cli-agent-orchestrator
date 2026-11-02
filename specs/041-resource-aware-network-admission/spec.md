@@ -301,3 +301,12 @@ Bridge no opta automáticamente a este modo: su arranque posterior necesita más
 ## Alcance comprobado del permiso — T014.C2b.P2c.C2
 
 La garantía corresponde al runtime confiable y al primer efecto pagado, no a código Python arbitrario. Se conserva modo estricto si se limpia el entorno después de importar el runtime; eliminar el marcador antes de importarlo o ejecutar con entorno limpio queda fuera. El permiso es de PID/Thread/task y linaje exec exactos. Emisión, aceptación y conexión física son hechos separados. Bridge completo y financiación/custodia global permanecen abiertos. [Validación](validation-t014-child-sql-permission.json).
+
+
+## T014.C2b.P2c.C3.A — solicitudes posteriores ligadas al arranque
+
+Cada apertura posterior necesita una solicitud durable propia anclada al intento de arranque del mismo hijo y journal. Conservar las filas y unicidad del arranque: no reinterpretar su permiso ni el cargo C1. La nueva solicitud exige sujeto kernel positivo todavía vivo, mismo actor/canal original y destino perteneciente al binding; secuencia consecutiva positiva por arranque y UUID global sin reutilización entre tipos. Locales, arranques y posteriores comparten ordinal, cuota y fence del journal.
+
+El commit se observa antes de devolver el recibo. Incertidumbre conserva IDs; comprobación fallida después de commit conserva recibo confirmado. No se crea capacidad física ni se autoriza TCP por registrar solicitudes. Migración SQL3 aditiva preserva SQL1/2 y resource1–7; lectura descriptiva sin replay. Broker persistente, financiación por solicitud, renovación autenticada fuera del handshake, root y activación Bridge quedan pendientes.
+
+Path, usuario/TLS y scope pueden variar en cada solicitud dentro del store y target del binding original; el recibo conserva esos datos y no autoriza ninguna operación. La autoridad por operación y el cargo pertenecen al futuro broker.

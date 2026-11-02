@@ -524,3 +524,10 @@ Gate de los tres adaptadores físicos consume una unidad de forma atómica y glo
 ## Cierre de validación del permiso — T014.C2b.P2c.C2
 
 Importar runtime fija restricción sin I/O ni autoridad; publicar primero required/failed evita snapshots fork permisivos. Clasificar rechazo de vista kernel antes del driver sin ocultar cancelación o MemoryError. Verificar destino/usuario/TLS/scope/path, worker original y paquete pagado corrupto. Los58casos nuevos conservan los1271anteriores; no cambian fuentes de Bridge ni migraciones. [Validación](validation-t014-child-sql-permission.json).
+
+
+### T014.C2b.P2c.C3.A — journal de solicitudes posteriores
+
+Añadir tabla append-only de followups anclada por FK al arranque original, con secuencia única y ordinal indexado; evitar duplicar binding/kernel ya retenidos en el ancla. Modelo descriptivo y API record/read en SqlIntentRepository, con canal financiado original, sujeto vivo y comprobación de todas las identidades kernel. Extender búsqueda de UUID/último ordinal a los tres tipos bajo el mismo lock, sin modificar checksums anteriores ni fabricar permisos. TDD: API ausente, persistencia PG real/observador independiente, secuencia y replay cruzado, cuota/fence, actor/sujeto/destino y pérdida de confirmación. Revisión independiente, arquitectura, formato/tipos, fuentes exactas y cierre de recursos.
+
+Una base SQL2 falla cerrada con las APIs actuales hasta aplicar SQL3 mediante el dueño; no se intenta DDL desde runtime. El registro posterior requiere el mismo handshake vivo. Dos backends de escritura válidos no forman parte del contrato: el journal exige su canal original. La regresión conserva el rechazo de otros escritores.

@@ -949,6 +949,7 @@ def protect_runtime_authority_tables(connection: Connection, target: DatabaseTar
         "_cao_sql_opening_intents",
         "_cao_sql_opening_fences",
         "_cao_sql_child_openings",
+        "_cao_sql_child_followups",
     ):
         _protect_runtime_readonly_table(
             connection, target, name, "SQL opening journal", append_only=True

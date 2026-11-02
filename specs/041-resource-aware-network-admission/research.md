@@ -144,3 +144,8 @@ El crédito de control no es capacidad de datos; sumar una unidad local bajo ese
 ## Emisor real y publicación restrictiva — T014.C2b.P2c.C2
 
 SO_PEERCRED por sí solo identifica el socket original, no al escritor de cada respuesta: se reprodujo el control con escritor fork y se exige SCM_CREDENTIALS del padre original. Latch tardío no basta tras limpieza del entorno; hacerlo al importar runtime. Fork observa asignaciones intermedias sin mutex original, por lo que required/failed deben publicarse primero. OSError de la vista kernel se traduce a rechazo tipado predriver. El fallo inicial de destino era fixture role frente a user; exigir cambio real del digest. [Validación](validation-t014-child-sql-permission.json).
+
+
+## Permisos efectivos y confirmación de la fila — T014.C2b.P2c.C3.A
+
+Crear una tabla no la integra automáticamente en la política central de ACL. La primera ejecución reprodujo40rechazos correctos del verificador: faltaba declarar la tabla append-only en el migrador. Se corrigió el provisionamiento, no el verificador. Otra reproducción mostró que ignorar RETURNING permite anunciar un recibo sin inserción; ahora se valida la fila devuelta y se compara con el recibo esperado antes de commit. Mantener separados ACK perdido, commit incierto y pérdida del sujeto después de commit. [Validación](validation-t014-child-followup-intents.json).
