@@ -183,3 +183,8 @@ receive_binding_with_child_intent requiere repo nativo y Connection original ya 
 ## Cargo opcional antes del ACK de identidad — T014.C2b.P2c.C1
 
 receive_binding_with_child_intent(session_reservation=lease) requiere reserva normal exacta, iniciada, con hold previo y misma raíz que el canal financiado original; en modo compartido, preparación activa ya confirmada. Consume un préstamo prepagado sin ampliar costes ni usar el crédito de control. child_sql_session_charge conserva cargo y las excepciones lo adjuntan incluso al envolver un commit confirmado. No-hook/sin session_reservation conserva el contrato anterior; b1 sigue identidad solamente. Toda la reserva queda retenida hasta custodia, sin refund ni retry automático. [Validación](../validation-t014-child-session-charge.json).
+
+
+## Protocolo3 explícito de una apertura — T014.C2b.P2c.C2
+
+launch(first_sql_grant=True), publish_resource_binding(first_sql_grant=True) y receive_binding_with_child_grant(session_reservation=lease) componen permiso pagado; modo mismatched falla antes de cargo/SQL. Sesión original preparada y retenida más commit B confirmado preceden al paquete. Valida esquema exacto/duplicados/tamaño/FDs/SCM emisor original, destino y worker; consume una vez antes del driver sin refund. b1/protocolo2 siguen identidad. Devolver ChildSqlOpeningIntent tras emitir no prueba aceptación del hijo ni apertura. [Validación](../validation-t014-child-sql-permission.json).

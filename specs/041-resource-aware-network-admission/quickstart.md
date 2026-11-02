@@ -105,3 +105,8 @@ Composición programática confiable: usar owner.receive_binding_with_child_inte
 ## Composición explícita del cargo del padre — T014.C2b.P2c.C1
 
 En el worker confiable, reservar e iniciar una reserva de almacenamiento dedicada antes de entrar en el lane de control. En modo compartido, coordinator.prepare(lease) debe confirmar la operación y crear hold; en local, lease.hold_retirement() debe preceder al débito. Dentro del scope original de control ya financiado, pasar session_reservation=lease a receive_binding_with_child_intent. Conservar supervisor.child_sql_session_charge y todo recibo/error; el finally ordinario usa lease.finish() y deja el cargo retenido. No abrir otra conexión para registrar este cargo ni copiar el canal/scope a un broker. Este ejemplo no activa CLI, concede permiso al hijo ni implementa custodia. [Validación](validation-t014-child-session-charge.json).
+
+
+## Prueba controlada de primera apertura — T014.C2b.P2c.C2
+
+Usar padre/hijo propios y reserva dedicada ya iniciada/preparada con hold. Lanzar first_sql_grant=True, ejecutar publisher explícito3 en el hijo antes de cualquier SQL y recibir con receive_binding_with_child_grant pasando canal original/journal/intento/destino/reserva/path. El hijo puede abrir una sola vez por ese adaptador en el mismo Thread/task; las sesiones existentes conservan uso. No activar automáticamente Bridge: faltan las siguientes sesiones financiadas. Conservar plan/cargo incluso si el hijo rechaza paquete o driver falla; no liberar sin custodio independiente. [Validación](validation-t014-child-sql-permission.json).

@@ -139,3 +139,8 @@ La inscripción de sujeto debe tener tabla propia para no falsificar el signific
 ## Retención antes de prestar la unidad del hijo — T014.C2b.P2c.C1
 
 El crédito de control no es capacidad de datos; sumar una unidad local bajo ese lane podría saltarse el mapeo compartido. Reutilizar una reserva previamente iniciada/preparada y su unidad original, sin SQL recursivo. Se reprodujo RuntimeError en finish con préstamo externo pero sin hold: exigir hold antes del cargo conserva el finally normal. Rechazar binding no permite emitir ProcessExitObservation autenticada; las fixtures negativas exigen waitid estructurado y marcador negativo, sin inferir que None equivale a proceso vivo. [Validación](validation-t014-child-session-charge.json).
+
+
+## Emisor real y publicación restrictiva — T014.C2b.P2c.C2
+
+SO_PEERCRED por sí solo identifica el socket original, no al escritor de cada respuesta: se reprodujo el control con escritor fork y se exige SCM_CREDENTIALS del padre original. Latch tardío no basta tras limpieza del entorno; hacerlo al importar runtime. Fork observa asignaciones intermedias sin mutex original, por lo que required/failed deben publicarse primero. OSError de la vista kernel se traduce a rechazo tipado predriver. El fallo inicial de destino era fixture role frente a user; exigir cambio real del digest. [Validación](validation-t014-child-sql-permission.json).

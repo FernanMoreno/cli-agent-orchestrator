@@ -512,3 +512,15 @@ T014.C2b.P2c.B — registro financiado del arranque de un hijo antes del ACK (20
 Reutilizar StorageReservation/DeliveryReservation iniciada, con hold_retirement previo que permite finish ordinario sin devolver el cargo, y su préstamo físico original, con chequeo del canal en Connection y _ControlSqlFunding. _StorageControlReservation valida dueño exacto, capacidad prepagada, observación fresca y preparación compartida ya activa; no inicia otra preparación bajo el lane de control. SharedDeliveryCoordinator expone solo una comprobación positiva sin SQL; el orden coordinador→owner no se invierte. VerifiedChildSqlSubject mantiene claim de cargo separado del claim de registro. ResourceProcessSupervisor acepta session_reservation opcional y conserva un cargo opaco; ACK identidad y recibo de SQL existentes mantienen su significado.
 
 TDD: cargo antes del commit/ACK, reserva ajena/reserved/control/stage/retirada y falta de preparación denegadas; cantidades 1/2/7/20 sin techo4; copia/hilo/fork/expired/duplicados; deuda retenida en todas las salidas. PG real serializado con baseline enfocado, controles de shared coordinator y Bridge/supervisor/SQL/funding. Preservar todos los checksums; no DDL, privilegios, credenciales ni activación global.
+
+
+### T014.C2b.P2c.C2 — transporte autenticado y gate común
+
+Modelo puro de paquete protocol3/IDs/subject digest/etiqueta/path/destino+scope/slots1 y capability efímera positiva emitida solo en handshake validado. Publisher explícito autentica credenciales SCM del padre, cierra FDs recibidos incluso en rechazo y activa permiso en utils/process_sql_origin durante ese contexto; el descriptor serializado por sí solo no activa autoridad. Launcher reserva marcador interno y distingue versión3; métodos de identidad/registro2 mantienen contratos y no conceden permiso. Nuevo método del supervisor exige reserva y confirma C1→B→paquete antes del ACK.
+
+Gate de los tres adaptadores físicos consume una unidad de forma atómica y global al proceso, ligado a PID/Thread/task y target/path/scope exactos, sin I/O bajo su mutex. Revalida vista kernel antes del driver y después del recorder. Mantiene modo estricto tras error y fork, sin reset/refund. No nuevos hilos, TCP de bootstrap, DDL o credenciales. Pruebas RED antes de fuente; negativos de esquema/emisor/downgrade/preACK/fork/copia/worker, error/cancelación/recorder, fence y PG positivo de un solo TCP real, con cargo original retenido. Regresión enfocada conserva baseline1271 y fuentes/soporte exactos.
+
+
+## Cierre de validación del permiso — T014.C2b.P2c.C2
+
+Importar runtime fija restricción sin I/O ni autoridad; publicar primero required/failed evita snapshots fork permisivos. Clasificar rechazo de vista kernel antes del driver sin ocultar cancelación o MemoryError. Verificar destino/usuario/TLS/scope/path, worker original y paquete pagado corrupto. Los58casos nuevos conservan los1271anteriores; no cambian fuentes de Bridge ni migraciones. [Validación](validation-t014-child-sql-permission.json).

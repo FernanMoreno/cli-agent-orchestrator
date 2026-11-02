@@ -8,12 +8,21 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
 from cli_agent_orchestrator.models.sql_opening_intent import SqlOpeningPreparationUncertain
 from cli_agent_orchestrator.models.sql_process_origin import (
     RESOURCE_BINDING_FD_ENV,
     SQL_ORIGIN_PREFIX,
+)
+from cli_agent_orchestrator.models.sql_startup_permission import (
+    SQL_STARTUP_PERMISSION_ENV,
+    SqlStartupPermissionRecord,
+    VerifiedSqlStartupPermission,
+    sql_startup_binding_sha256,
+    sql_startup_destination_sha256,
+    sql_startup_target_identity_sha256,
 )
 
 
@@ -26,6 +35,10 @@ class _State:
     opening: int = 0
     unconfirmed: int = 0
     registration_unconfirmed: int = 0
+    startup_required: bool = False
+    startup_failed: bool = False
+    startup_spent: bool = False
+    startup_grant: _StartupOpening | None = None
     guard: threading.Lock = field(default_factory=threading.Lock)
     successors: dict[int, _State] = field(default_factory=dict, repr=False)
 
@@ -101,6 +114,9 @@ def _successor(state: _State, pid: int) -> _State:
         # Preserve uncertainty, never treat a new local counter as absence.
         unconfirmed=state.unconfirmed + state.opening,
         registration_unconfirmed=state.registration_unconfirmed,
+        startup_required=state.startup_required,
+        startup_failed=state.startup_failed,
+        startup_spent=state.startup_required,
     )
 
 
@@ -122,11 +138,113 @@ def _process_state() -> _State:
     return state
 
 
+def _latch_sql_mode(state: _State) -> None:
+    marker = os.environ.get(SQL_STARTUP_PERMISSION_ENV)
+    if marker is not None:
+        # Fork reads without the mutex. Publish the restrictive fact first.
+        state.startup_required = True
+        if marker != "1":
+            state.startup_failed = True
+    state.enabled = state.enabled or state.startup_required or RESOURCE_BINDING_FD_ENV in os.environ
+
+
+# Latch before a caller can clean its environment after importing the runtime.
+# This creates no authority; an absent authenticated permission remains closed.
+_latch_sql_mode(_STATE)
+
+
+class SqlStartupPermissionUnavailable(RuntimeError):
+    """A physical opening has no valid paid startup permission; no fallback."""
+
+
+@dataclass(frozen=True, eq=False, repr=False)
+class _StartupOpening:
+    record: SqlStartupPermissionRecord
+    binding: ResourceBinding
+    pid: int
+    thread: threading.Thread
+    task: object | None
+    validate_process: Callable[[], None]
+
+    def check_worker(self) -> None:
+        if (
+            self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or self.task is not _recording_task()
+        ):
+            raise SqlStartupPermissionUnavailable("startup permission belongs to another worker")
+
+    def check_process(self) -> None:
+        self.check_worker()
+        try:
+            self.validate_process()
+        except (OSError, ValueError, RuntimeError):
+            raise SqlStartupPermissionUnavailable("startup process view is unavailable") from None
+        self.check_worker()
+
+    def check_destination(self, path: str, destination: object | None) -> None:
+        try:
+            if (
+                path != self.record.path
+                or sql_startup_destination_sha256(destination) != self.record.destination_sha256
+                or getattr(destination, "scope", None) != self.record.destination_scope
+                or sql_startup_target_identity_sha256(destination)
+                != self.binding.target_identity_sha256
+                or str(UUID(getattr(destination, "identity")[-1])) != self.binding.store_id
+            ):
+                raise ValueError("startup destination mismatch")
+        except (ValueError, TypeError, AttributeError):
+            raise SqlStartupPermissionUnavailable(
+                "startup permission destination is unavailable"
+            ) from None
+
+
+def _install_sql_startup_permission(permission: VerifiedSqlStartupPermission) -> None:
+    if type(permission) is not VerifiedSqlStartupPermission:
+        raise SqlStartupPermissionUnavailable("startup permission requires an authenticated issuer")
+    permission.claim()
+    permission.validate_process()
+    state = _process_state()
+    name = current_sql_application_name()
+    if (
+        permission.record.subject_binding_sha256 != sql_startup_binding_sha256(permission.binding)
+        or permission.record.sql_application_name != name
+    ):
+        raise SqlStartupPermissionUnavailable("startup permission belongs to another process")
+    grant = _StartupOpening(
+        permission.record,
+        permission.binding,
+        os.getpid(),
+        threading.current_thread(),
+        _recording_task(),
+        permission.validate_process,
+    )
+    with state.guard:
+        _latch_sql_mode(state)
+        if (
+            not state.startup_required
+            or state.startup_failed
+            or state.startup_spent
+            or state.startup_grant is not None
+            or state.sealed
+        ):
+            raise SqlStartupPermissionUnavailable("startup permission cannot be replaced")
+        state.startup_grant = grant
+
+
+def _deny_sql_startup_permission() -> None:
+    state = _process_state()
+    with state.guard:
+        state.startup_required = True
+        state.startup_failed = True
+        state.enabled = True
+
+
 def current_sql_application_name() -> str:
     """Latch opt-in; PID resolution always precedes an inherited mutex."""
     state = _process_state()
     with state.guard:
-        state.enabled = state.enabled or RESOURCE_BINDING_FD_ENV in os.environ
+        _latch_sql_mode(state)
         if not state.enabled:
             return "caos"
         if state.name is None:
@@ -142,7 +260,7 @@ def seal_sql_process_openings() -> bool:
     """Irreversibly refuse later attempts; never await or certify session closure."""
     state = _process_state()
     with state.guard:
-        state.enabled = state.enabled or RESOURCE_BINDING_FD_ENV in os.environ
+        _latch_sql_mode(state)
         if not state.enabled:
             return False
         state.sealed = True
@@ -159,17 +277,38 @@ def sql_process_opening(
     neither inventory server backends nor authorize resource retirement.
     """
     state = _process_state()
+    startup_task = (
+        _recording_task()
+        if state.startup_required or SQL_STARTUP_PERMISSION_ENV in os.environ
+        else None
+    )
+    grant = None
     with state.guard:
-        state.enabled = state.enabled or RESOURCE_BINDING_FD_ENV in os.environ
+        _latch_sql_mode(state)
         controlled = state.enabled
         if controlled:
             if state.sealed:
                 raise SqlProcessOpeningsSealed("terminal process refused a new SQL opening")
+            if state.startup_required:
+                grant = state.startup_grant
+                if (
+                    state.startup_failed
+                    or state.startup_spent
+                    or grant is None
+                    or grant.pid != os.getpid()
+                    or grant.thread is not threading.current_thread()
+                    or grant.task is not startup_task
+                ):
+                    raise SqlStartupPermissionUnavailable("physical SQL has no startup permission")
+                state.startup_spent = True
             state.opening += 1
     uncertain = False
     entered_driver = False
     registration_uncertain = False
     try:
+        if grant is not None:
+            grant.check_destination(path, destination)
+            grant.check_process()
         recorder = _RECORDER.get()
         if recorder is not None:
             if _RECORDING.get():
@@ -179,6 +318,10 @@ def sql_process_opening(
                 recorder.prepare(path, destination)
             finally:
                 _RECORDING.reset(token)
+        if grant is not None:
+            grant.check_worker()
+            grant.check_destination(path, destination)
+            grant.check_process()
         entered_driver = True
         yield
     except BaseException as failure:

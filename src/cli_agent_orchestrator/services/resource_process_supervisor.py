@@ -44,7 +44,21 @@ from cli_agent_orchestrator.models.sql_process_origin import (
 from cli_agent_orchestrator.models.sql_process_origin import (
     is_sql_process_application_name,
 )
-from cli_agent_orchestrator.utils.process_sql_origin import current_sql_application_name
+from cli_agent_orchestrator.models.sql_startup_permission import (
+    SQL_STARTUP_PERMISSION_ENV,
+    SQL_STARTUP_PERMISSION_VERSION,
+    SqlStartupPermissionRecord,
+    _approve_verified_sql_startup_permission,
+    _expire_verified_sql_startup_permission,
+    _issue_verified_sql_startup_permission,
+    sql_startup_binding_sha256,
+    sql_startup_destination_sha256,
+)
+from cli_agent_orchestrator.utils.process_sql_origin import (
+    _deny_sql_startup_permission,
+    _install_sql_startup_permission,
+    current_sql_application_name,
+)
 
 if TYPE_CHECKING:
     from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget
@@ -174,12 +188,23 @@ def _exit_ready(fd: int) -> bool | None:
         return None
 
 
-def publish_resource_binding(binding: ResourceBinding, *, timeout_s: float = 30) -> bool:
+def publish_resource_binding(
+    binding: ResourceBinding, *, timeout_s: float = 30, first_sql_grant: bool = False
+) -> bool:
     """Trusted child startup hook. Without the private inherited FD, do nothing.
 
     No SQL, file receipt, credentials or authority is created. The child waits
     for its parent's ACK before its caller proceeds to resource admission.
     """
+    if type(first_sql_grant) is not bool:
+        raise ValueError("SQL startup mode must be explicit")
+    if first_sql_grant or SQL_STARTUP_PERMISSION_ENV in os.environ:
+        if not first_sql_grant:
+            _deny_sql_startup_permission()
+            raise ResourceProcessUnproven(
+                "strict SQL startup cannot use an identity-only publisher"
+            )
+        return _publish_sql_startup_binding(binding, timeout_s=timeout_s)
     if BINDING_FD_ENV not in os.environ:
         return False
     # Latch before consuming the FD, including a child with no earlier SQL.
@@ -219,10 +244,147 @@ def publish_resource_binding(binding: ResourceBinding, *, timeout_s: float = 30)
     return True
 
 
+def _publish_sql_startup_binding(binding: ResourceBinding, *, timeout_s: float) -> bool:
+    """Accept only a bounded grant sent by the original live kernel parent."""
+    permission = None
+    try:
+        if os.environ.get(SQL_STARTUP_PERMISSION_ENV) != "1" or BINDING_FD_ENV not in os.environ:
+            raise ResourceProcessUnproven("SQL startup requires its original supervised channel")
+        label = current_sql_application_name()  # Latch pending mode before consuming the FD.
+        raw = os.environ.pop(BINDING_FD_ENV)
+        _timeout(timeout_s)
+        if not raw.isdecimal() or int(raw) < 3:
+            raise ResourceProcessUnproven("resource binding channel is invalid")
+        fd = int(raw)
+        os.set_inheritable(fd, False)
+        with socket.socket(fileno=fd) as channel:
+            active = True
+            try:
+                channel.settimeout(timeout_s)
+                if (
+                    channel.family != socket.AF_UNIX
+                    or channel.type != socket.SOCK_SEQPACKET
+                    or type(binding) is not ResourceBinding
+                    or binding.process_pid != os.getpid()
+                ):
+                    raise ResourceProcessUnproven("SQL startup channel or subject is invalid")
+                identity = _identity(os.getpid())
+                parent_pid = os.getppid()
+                parent = _identity(parent_pid)
+                peer = _CREDENTIALS.unpack(
+                    channel.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, _CREDENTIALS.size)
+                )
+                if (
+                    not _matches(binding, identity)
+                    or identity.parent_pid != parent_pid
+                    or peer[0] != parent_pid
+                    or peer[1] != os.getuid()
+                    or parent.uid != os.getuid()
+                ):
+                    raise ResourceProcessUnproven("SQL startup parent or subject is unproven")
+                channel.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
+                payload = json.dumps(
+                    dict(
+                        version=SQL_STARTUP_PERMISSION_VERSION,
+                        binding=asdict(binding),
+                        kernel=asdict(identity),
+                        sql_application_name=label,
+                    ),
+                    separators=(",", ":"),
+                    allow_nan=False,
+                ).encode()
+                if len(payload) > _MAX_PACKET_BYTES or channel.send(payload) != len(payload):
+                    raise ResourceProcessUnproven("SQL startup binding was not sent")
+                reply, ancillary, flags, _ = channel.recvmsg(
+                    _MAX_PACKET_BYTES + 1,
+                    socket.CMSG_SPACE(_CREDENTIALS.size) + socket.CMSG_SPACE(struct.calcsize("i")),
+                    socket.MSG_CMSG_CLOEXEC,
+                )
+                rights = False
+                for level, kind, data in ancillary:
+                    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                        rights = True
+                        size = struct.calcsize("i")
+                        for offset in range(0, len(data) - len(data) % size, size):
+                            try:
+                                os.close(struct.unpack_from("i", data, offset)[0])
+                            except OSError:
+                                pass
+                if (
+                    rights
+                    or flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC)
+                    or not reply
+                    or len(reply) > _MAX_PACKET_BYTES
+                    or len(ancillary) != 1
+                ):
+                    raise ResourceProcessUnproven("SQL startup reply is incomplete")
+                level, kind, credentials = ancillary[0]
+                if (
+                    level != socket.SOL_SOCKET
+                    or kind != socket.SCM_CREDENTIALS
+                    or len(credentials) != _CREDENTIALS.size
+                ):
+                    raise ResourceProcessUnproven("SQL startup reply sender is unproven")
+                sender, uid, _ = _CREDENTIALS.unpack(credentials)
+                if sender != parent_pid or uid != os.getuid():
+                    raise ResourceProcessUnproven(
+                        "SQL startup reply is not from the original parent"
+                    )
+                record = SqlStartupPermissionRecord.from_packet(
+                    json.loads(reply, object_pairs_hook=_unique_object)
+                )
+                if (
+                    record.subject_binding_sha256 != sql_startup_binding_sha256(binding)
+                    or record.sql_application_name != label
+                ):
+                    raise ResourceProcessUnproven("SQL startup reply belongs to another subject")
+
+                def validate_process() -> None:
+                    try:
+                        live_process = _identity(os.getpid())
+                    except (OSError, ValueError, psutil.Error):
+                        raise ResourceProcessUnproven(
+                            "original SQL startup process view is unavailable"
+                        ) from None
+                    if live_process != identity or not _matches(binding, live_process):
+                        raise ResourceProcessUnproven("original SQL startup process view changed")
+
+                def validate_live() -> None:
+                    if (
+                        not active
+                        or channel.fileno() < 0
+                        or os.getppid() != parent_pid
+                        or _identity(parent_pid) != parent
+                    ):
+                        raise ResourceProcessUnproven("original SQL startup issuer is unavailable")
+                    validate_process()
+
+                permission = _issue_verified_sql_startup_permission(
+                    record,
+                    binding,
+                    validate=validate_live,
+                    validate_process=validate_process,
+                )
+                _approve_verified_sql_startup_permission(permission)
+                _install_sql_startup_permission(permission)
+            finally:
+                active = False
+                if permission is not None:
+                    _expire_verified_sql_startup_permission(permission)
+        return True
+    except (OSError, ValueError, TypeError, RecursionError, psutil.Error):
+        _deny_sql_startup_permission()
+        raise ResourceProcessUnproven("SQL startup permission could not be authenticated") from None
+    except BaseException:
+        _deny_sql_startup_permission()
+        raise
+
+
 class ResourceProcessSupervisor:
     """Single PID/thread owner of one child, its IPC and its pinned kernel handle."""
 
     _owner_pid: int
+    _first_sql_grant: bool
     _owner_thread: threading.Thread
     _binding: ResourceBinding | None
     _sql_application_name: str | None
@@ -262,6 +424,7 @@ class ResourceProcessSupervisor:
         expected_store_id: str,
         expected_target_identity_sha256: str,
         env: Mapping[str, str] | None = None,
+        first_sql_grant: bool = False,
     ) -> ResourceProcessSupervisor:
         if (
             isinstance(argv, (str, bytes))
@@ -274,7 +437,15 @@ class ResourceProcessSupervisor:
             value not in "0123456789abcdef" for value in expected_target_identity_sha256
         ):
             raise ValueError("resource process requires a canonical target digest")
+        if type(first_sql_grant) is not bool:
+            raise ValueError("SQL startup mode must be explicit")
         environment = dict(os.environ if env is None else env)
+        if SQL_STARTUP_PERMISSION_ENV in environment:
+            raise ResourceProcessUnproven(
+                "resource process cannot inherit another SQL startup mode"
+            )
+        if first_sql_grant:
+            environment[SQL_STARTUP_PERMISSION_ENV] = "1"
         # The child's explicit diagnostic label is controlled here, not by an
         # inherited optional PGAPPNAME. Keep the parent's environment intact
         # and preserve all other strict libpq/profile validation.
@@ -285,6 +456,7 @@ class ResourceProcessSupervisor:
             raise ResourceProcessUnproven("resource process kernel support is unavailable")
         value = object.__new__(cls)
         value._owner_pid = os.getpid()
+        value._first_sql_grant = first_sql_grant
         value._owner_thread = threading.current_thread()
         value._child_sql_session_charge = None
         value._binding = None
@@ -380,7 +552,60 @@ class ResourceProcessSupervisor:
         timeout_s: float = 30,
         session_reservation: object | None = None,
     ) -> ChildSqlOpeningIntent:
-        """Explicit parent-funded registration; ACK still grants identity only."""
+        """B/C1 registration and optional prepayment; ACK is identity only."""
+        return self._receive_registered_binding(
+            channel=channel,
+            repository=repository,
+            journal_id=journal_id,
+            intent_id=intent_id,
+            destination=destination,
+            path=path,
+            timeout_s=timeout_s,
+            session_reservation=session_reservation,
+        )
+
+    def receive_binding_with_child_grant(
+        self,
+        *,
+        channel: Connection,
+        repository: SqlIntentRepository,
+        journal_id: str,
+        intent_id: str,
+        destination: DatabaseTarget,
+        session_reservation: object,
+        path: str = "native",
+        timeout_s: float = 30,
+    ) -> ChildSqlOpeningIntent:
+        """Explicit protocol3: confirmed C1 debit and B row precede one SQL permission."""
+        self._check_owner()
+        if session_reservation is None:
+            raise ValueError("SQL startup permission requires an original data reservation")
+        return self._receive_registered_binding(
+            channel=channel,
+            repository=repository,
+            journal_id=journal_id,
+            intent_id=intent_id,
+            destination=destination,
+            path=path,
+            timeout_s=timeout_s,
+            session_reservation=session_reservation,
+            first_sql_grant=True,
+        )
+
+    def _receive_registered_binding(
+        self,
+        *,
+        channel: Connection,
+        repository: SqlIntentRepository,
+        journal_id: str,
+        intent_id: str,
+        destination: DatabaseTarget,
+        path: str = "native",
+        timeout_s: float = 30,
+        session_reservation: object | None = None,
+        first_sql_grant: bool = False,
+    ) -> ChildSqlOpeningIntent:
+        """Shared paid registration; only explicit protocol3 can carry a SQL permission."""
         self._check_owner()
         from cli_agent_orchestrator.clients.sql_intent_repository import (
             SqlChildAckUnavailableAfterCommit,
@@ -392,9 +617,10 @@ class ResourceProcessSupervisor:
         if type(repository) is not SqlIntentRepository:
             raise ValueError("child registration requires the native intent repository")
         receipt: ChildSqlOpeningIntent | None = None
+        permission_packet: bytes | None = None
 
         def register(subject: VerifiedChildSqlSubject) -> None:
-            nonlocal receipt
+            nonlocal receipt, permission_packet
             if session_reservation is not None:
                 self._child_sql_session_charge = channel.reserve_child_sql_session(
                     reservation=session_reservation, subject=subject
@@ -412,9 +638,44 @@ class ResourceProcessSupervisor:
             receipt = result
             if self._child_sql_session_charge is not None:
                 self._child_sql_session_charge.check()
+            if first_sql_grant:
+                charge = self._child_sql_session_charge
+                if (
+                    charge is None
+                    or charge.subject is not subject.binding
+                    or result.journal_id != str(UUID(journal_id))
+                    or result.intent_id != str(UUID(intent_id))
+                    or result.path != path
+                    or result.destination_sha256 != sql_startup_destination_sha256(destination)
+                    or result.subject_sql_application_name != subject.sql_application_name
+                ):
+                    raise SqlIntentCommitUncertain(journal_id, intent_id)
+                record = SqlStartupPermissionRecord(
+                    session_id=charge.session_id,
+                    journal_id=result.journal_id,
+                    intent_id=result.intent_id,
+                    subject_binding_sha256=sql_startup_binding_sha256(subject.binding),
+                    sql_application_name=subject.sql_application_name,
+                    path=path,
+                    destination_sha256=result.destination_sha256,
+                    destination_scope=destination.scope,
+                )
+                permission_packet = json.dumps(
+                    record.to_packet(), separators=(",", ":"), allow_nan=False
+                ).encode()
+
+        def grant_reply() -> bytes:
+            if permission_packet is None or self._child_sql_session_charge is None:
+                raise ResourceProcessUnproven("SQL startup has no funded committed permission")
+            self._child_sql_session_charge.check()
+            return permission_packet
 
         try:
-            self._receive_binding(timeout_s=timeout_s, before_ack=register)
+            self._receive_binding(
+                timeout_s=timeout_s,
+                before_ack=register,
+                first_sql_reply=grant_reply if first_sql_grant else None,
+            )
         except BaseException as failure:
             charge = self._child_sql_session_charge
             if charge is None:
@@ -441,6 +702,7 @@ class ResourceProcessSupervisor:
         *,
         timeout_s: float = 30,
         before_ack: Callable[[VerifiedChildSqlSubject], object] | None = None,
+        first_sql_reply: Callable[[], bytes] | None = None,
     ) -> ResourceBinding:
         self._check_owner()
         _timeout(timeout_s)
@@ -453,6 +715,12 @@ class ResourceProcessSupervisor:
             if before_ack is not None:
                 raise ResourceProcessUnproven("an acknowledged child cannot be registered late")
             return self._binding
+        if self._first_sql_grant != (first_sql_reply is not None):
+            self._binding_failed = True
+            self._channel.close()
+            raise ResourceProcessUnproven(
+                "SQL startup protocol requires its explicit funded receiver"
+            )
         if before_ack is not None and not callable(before_ack):
             raise TypeError("resource process registration must be callable")
         self._receiving = True
@@ -505,7 +773,12 @@ class ResourceProcessSupervisor:
                 not isinstance(packet, dict)
                 or set(packet) != {"version", "binding", "kernel", "sql_application_name"}
                 or type(packet["version"]) is not int
-                or packet["version"] != BINDING_PROTOCOL_VERSION
+                or packet["version"]
+                != (
+                    SQL_STARTUP_PERMISSION_VERSION
+                    if self._first_sql_grant
+                    else BINDING_PROTOCOL_VERSION
+                )
                 or not is_sql_process_application_name(packet["sql_application_name"])
                 or not isinstance(packet["binding"], dict)
                 or set(packet["binding"]) != {f.name for f in fields(ResourceBinding)}
@@ -557,7 +830,10 @@ class ResourceProcessSupervisor:
                 if before_ack(subject) is not None:
                     raise ResourceProcessUnproven("child registration was not acknowledged")
                 subject.check()
-            if self._channel.send(b"1") != 1:
+            reply = b"1" if first_sql_reply is None else first_sql_reply()
+            if type(reply) is not bytes or not reply or len(reply) > _MAX_PACKET_BYTES:
+                raise ResourceProcessUnproven("resource binding acknowledgement is invalid")
+            if self._channel.send(reply) != len(reply):
                 raise ResourceProcessUnproven("resource binding acknowledgement failed")
             self._binding = binding
             self._sql_application_name = packet["sql_application_name"]

@@ -287,3 +287,17 @@ El intento y su sujeto se insertan atómicamente bajo la quota lógica/ordinal d
 Composición explícita: antes de registrar/acusar el hijo, el canal nativo original y financiado puede consumir una unidad ya reservada por una reserva de datos iniciada y con retención de retiro del mismo dueño. El permiso de control no genera capacidad de datos; no ampliar footprint ni volver a cobrar la unidad. En modo compartido se exige preparación activa confirmada de esa reserva, sin SQL recursivo ni transferencia a otro worker. La identidad positiva del hijo solo permite un cargo por handshake; datos/copias/fork/hilos ajenos no conceden autoridad.
 
 El préstamo queda retenido por su reserva original después de cierre de canal, fallo de registro/commit/ACK, expiración o muerte del hijo. Ningún timeout/GC/fin del padre devuelve esa unidad. Cargo opaco separado del recibo durable; no es permiso serializable del hijo ni prueba de ausencia. La vía sin cargo sigue siendo identidad/registro solamente. Este corte implementa el débito previo del padre; transporte de permiso de un arranque, enforcement del primer TCP del hijo, financiación raíz, broker y custodia permanecen pendientes.
+
+
+## T014.C2b.P2c.C2 — permiso del primer TCP del hijo (modo explícito)
+
+Un hijo propio puede optar a un protocolo3 distinto del ACK2 de identidad. Antes de recibir permiso, el gate físico común rechaza todo TCP SQL. El padre solo emite un paquete estructurado tras cargo C1, commit B confirmado y revalidación del sujeto/cargo originales. El hijo autentica al emisor real por credenciales kernel, valida esquema/versiones/identidad/IDs/destino/path y consume un permiso de una sola apertura antes del driver. El permiso limita el coste físico pagado; no fija un techo de agentes.
+
+No hay downgrade a b1 ni modo legacy después de error/agotar permiso; fork, copia, otro worker y otro destino/path no pueden apropiárselo. Un fallo de registro/driver consume el intento admitido y no devuelve el cargo. El fence terminal sigue siendo irreversible y las sesiones ya abiertas conservan uso. El inventario/ausencia/custodia no se deducen del permiso.
+
+Bridge no opta automáticamente a este modo: su arranque posterior necesita más aperturas financiadas. Un lanzamiento estricto que invoque el publisher de identidad se rechaza antes de SQL. El componente acepta un hijo mínimo con adaptadores reales; no acepta todo Bridge/proveedor, árbol de procesos, root, broker o activación global. La presencia del marcador reservado sin un canal/permiso válido nunca autoriza SQL.
+
+
+## Alcance comprobado del permiso — T014.C2b.P2c.C2
+
+La garantía corresponde al runtime confiable y al primer efecto pagado, no a código Python arbitrario. Se conserva modo estricto si se limpia el entorno después de importar el runtime; eliminar el marcador antes de importarlo o ejecutar con entorno limpio queda fuera. El permiso es de PID/Thread/task y linaje exec exactos. Emisión, aceptación y conexión física son hechos separados. Bridge completo y financiación/custodia global permanecen abiertos. [Validación](validation-t014-child-sql-permission.json).

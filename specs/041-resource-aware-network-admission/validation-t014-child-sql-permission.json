@@ -1,0 +1,249 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-02",
+  "component": "T014.C2b.P2c.C2",
+  "status": "validated-scoped-child-single-opening-permission",
+  "base_head": "b5382d169d654c9a2f9fc06fe8fc2cf4259d0506",
+  "behavior": "Explicit protocol3 carries a typed startup permission after original held C1 data prepayment and confirmed B commit; authenticated original kernel parent installs a process/thread/task-scoped capability consumed before one physical opening.",
+  "acceptance": {
+    "phase": "t014-child-sql-permission-final",
+    "selected_test_files": 96,
+    "passed": 1329,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous1271cases_preserved": true,
+    "new_distinct_cases": 58,
+    "seconds": 1116.808,
+    "available_mib": 12964,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 3,
+    "owned_python_archive_match": 6,
+    "archive_sha256": "e553f5774d91698116eb64b50c669c8452452abf942cdc79767983db181410d1",
+    "foreign_graphify_files_preserved": 12
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+      "sha256": "41be9b300fafe8d5b7a2e04a0f653282b96afdf0d69e47708a2d6457d3cbe7be"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+      "sha256": "7d5679e9e6a2e2bfc0c79b9cf2f2b1efb7883776cf85f4f3b322da3196625896"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+      "sha256": "e50380114333d403251340c607d6d2715fd74ce691a9525ba01c3ecd91d143d4"
+    },
+    {
+      "path": "test/utils/test_sql_startup_permission.py",
+      "sha256": "0bfc4c3aab5ad941511f0a1d1cee193abd8bd8a068e5b5ed0281f26ea14a2b76"
+    },
+    {
+      "path": "test/services/test_sql_startup_permission_protocol.py",
+      "sha256": "e83868edc1db0c9b7a553105bc9a3282bff5f00b4731012ca5f5ac24cc3ef3a8"
+    },
+    {
+      "path": "test/postgres/test_sql_startup_permission.py",
+      "sha256": "170d86a9630b9bd83f878c166560f81e3c932ea28cfeaa247649b9b6609efc15"
+    }
+  ],
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 6
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 6
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 3
+    }
+  ],
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 19,
+    "nodes": 720,
+    "edges": 2108,
+    "dangling": 173,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+        "sha256": "1f09648199c6abd473a1bf6ed62af89f7de4096002417c7ead327ec6d8c9b5ea"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "1c8a575a0216b11c8bbc645436478f1567b842d182d6bef84eaf9326bffc6a8f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_envelope.py",
+        "sha256": "2ede51fd1f9b70f47f6abb5da7ac074e53c7ec53a08c48fdcdee61b24f68553a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "a2cf6a1e9e830367faa71f61601bf01fc8ab5b01d0da7f1fb83e117e23a331d5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "e50380114333d403251340c607d6d2715fd74ce691a9525ba01c3ecd91d143d4"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "81f53cab803ef6b850ab921f2c2306068bb3b53ba08d724fd0445122806354e7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "f51904ae9a73643b8176978a671fc1cf9a82a5605292f07c425d3a541e6c2a87"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "dc8ae06cb109a7a02dd047e20114733199dbf4b2fbc06ce2b7c018daf66d89ac"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+        "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "4739724fd7ca40a201d69bdbaf19c9e7d5fec4420fd4f5ad82cd13a5c908c2b4"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "9f127d796e92f2b6bc132d2cda34a683db3654cfda1052ff7552af8c20630dfd"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "3ded7a78b75f0d5b22c0b2251ec5fef25c5ef7b4d84b62199d6661dd70ad18bd"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3bff8a5090a2e8ade13b1cf651aa82fa2a703b1caeaedc8354404da535550051"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "404b41f5f1fd385f3e6168ed3526c4d0c70c5de573161f29d630563236257829"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge_supervisor.py",
+        "sha256": "60b4582f5300f068c09c51d5424fd85f45966fe61700c030c4bb07a9eeb6f656"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "7d5679e9e6a2e2bfc0c79b9cf2f2b1efb7883776cf85f4f3b322da3196625896"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_process_origin.py",
+        "sha256": "c510eac2afbd0a6b67bd9120247d194ca0189827269ee9ed5b786b440868312f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+        "sha256": "41be9b300fafe8d5b7a2e04a0f653282b96afdf0d69e47708a2d6457d3cbe7be"
+      }
+    ]
+  },
+  "architecture": {
+    "files": 457,
+    "dependencies": 2057,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "warnings": {
+    "count": 17,
+    "note": "Warnings retained; focused regression coverage does not establish global coverage or complete product acceptance."
+  },
+  "peer_review": {
+    "mode": "read",
+    "rounds_completed": 3,
+    "final_code_verdict": "no blocking findings",
+    "test_bodies_reviewed_by": "Codex root",
+    "corrections": "Import-time strict latch, restrictive-first fork publication and typed process-view refusal reproduced and corrected."
+  },
+  "history": [
+    {
+      "phase": "t014-child-sql-permission-red",
+      "failed": 29,
+      "errors": 0,
+      "meaning": "Required permission contract absent; real product RED."
+    },
+    {
+      "phase": "t014-child-sql-permission-focused",
+      "passed": 139,
+      "failed": 1,
+      "meaning": "Wrong-destination fixture mutated role instead of user; fixture corrected and actual digest-change assertions added."
+    },
+    {
+      "phase": "t014-child-sql-permission-review-red",
+      "failed": 4,
+      "passed": 1,
+      "meaning": "Reproduced early environment-cleanup downgrade, two fork-publication gaps and untyped kernel-view error; corrected fixture control passes."
+    },
+    {
+      "phase": "t014-child-sql-permission-reviewed",
+      "passed": 148,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0,
+      "meaning": "Focused acceptance before reboot; all six Python files identical to full candidate."
+    }
+  ],
+  "environment_recovery": {
+    "same_container": true,
+    "same_image": true,
+    "server_version": "18.6",
+    "reason": "WSL/Docker Desktop restart removed disposable tmpfs cluster and temporary metadata. Restored only the exact test bind and metadata, reused the pinned container with a new server incarnation and verified a new live reuse keeper.",
+    "operator_or_claude_credentials_changed": false,
+    "full_acceptance_after_recovery": true
+  },
+  "invariants": [
+    "Typed record is descriptive; only authenticated live original parent handshake approves/install a weak-registered one-shot capability.",
+    "SCM_CREDENTIALS authenticates actual reply writer as well as SO_PEERCRED; bounded exact schema rejects duplicate keys, rights, truncation and version downgrade.",
+    "Original held prepaid data loan and confirmed child intent precede packet emission; no new quota, implicit SQL, DDL or admin credentials.",
+    "Import-time strict latch and restrictive-first publication preserve denial through environment cleanup after import and fork snapshots.",
+    "Exact PID/actual Thread/task/path/destination identity/user/TLS/scope; a foreign worker cannot consume the original grant.",
+    "Admitted attempt spends atomically before validation/recorder/driver, with no refund on refusal, failure, cancellation or MemoryError.",
+    "Fork successors retain denial and uncertainty without inheriting permission; terminal fence still wins and existing sessions remain usable.",
+    "Emission, child acceptance and actual physical opening are distinct facts; paid malformed reply may return a confirmed plan while child rejects before SQL.",
+    "Default protocol2/b1 semantics and SQL schema1/2/resource migrations1–7 remain unchanged; Bridge does not silently opt in."
+  ],
+  "limits": [
+    "Trusted application boundary: arbitrary Python/private-module mutation, raw drivers, clean-environment exec or marker removal before runtime import are outside enforcement.",
+    "Three real adapters are accepted with a controlled minimal owned child; this is not complete Bridge/provider/model acceptance.",
+    "A single paid opening bounds one effect, not agent count. Full Bridge startup needs financing for all subsequent physical sessions.",
+    "Direct exec wrappers preserve exact child lineage; nonexec descendants, other processes/threads/tasks cannot inherit permission.",
+    "Original whole funding lease remains held; no refund, absence proof, complete inventory or independent custody is implemented by this permission.",
+    "Root funding, persistent broker, complete startup integration, M1/M2/M3, SDK/UI and the original ten global gates remain open."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261102-child-sql-permission",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint": 0
+  },
+  "composition_report": "composition-t014-child-sql-permission.md",
+  "public_source_hashes_note": "Owned Python only; no operator data, credentials or credential-named hash maps."
+}
