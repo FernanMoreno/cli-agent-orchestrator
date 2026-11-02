@@ -1,0 +1,275 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-03",
+  "component": "T014.R.H1",
+  "status": "validated-controlled-original-control-ports",
+  "base_head": "3b616f3334d0b37dca83f2e94be8c93ee625a0eb",
+  "global_acceptance": false,
+  "production_cli_integrated": false,
+  "actor_implemented": false,
+  "shared_live_loan_activation": false,
+  "acceptance": {
+    "phase": "root-control-ports-final",
+    "passed": 1541,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 16,
+    "previous_cases": 1528,
+    "previous_case_ids_preserved": true,
+    "new_distinct_cases": 13,
+    "selected_test_files": 111,
+    "seconds": 1332.094,
+    "available_mib": 10890,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 3,
+    "owned_python_archive_match": 5,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+        "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "a0a6e20c8da48bd41bf74a43a2237b3ee7ad9ce16444c05d71d369805e01c2b6"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_postgres.py",
+        "sha256": "c435e62db3ed089ec8bfd1591e440c76a5ebbe5248714636e3e87c155f829cbe"
+      },
+      {
+        "path": "test/postgres/test_funded_control_session.py",
+        "sha256": "500d769f5f261e3d6425c2db092a6f762433b0a6bfe8070566b98026d15f9386"
+      },
+      {
+        "path": "test/postgres/test_root_control_ports.py",
+        "sha256": "33163abcc3b6aa7cc2b973e83834268efa1129acf79583eece109209a58160e3"
+      }
+    ],
+    "archive_sha256": "62d1b8424f849aaf41471f75205722cf598619a6db0492a41f91d7f8b7b9ddd4",
+    "foreign_graphify_files_preserved": 12
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+      "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+      "sha256": "a0a6e20c8da48bd41bf74a43a2237b3ee7ad9ce16444c05d71d369805e01c2b6"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_postgres.py",
+      "sha256": "c435e62db3ed089ec8bfd1591e440c76a5ebbe5248714636e3e87c155f829cbe"
+    },
+    {
+      "path": "test/postgres/test_funded_control_session.py",
+      "sha256": "500d769f5f261e3d6425c2db092a6f762433b0a6bfe8070566b98026d15f9386"
+    },
+    {
+      "path": "test/postgres/test_root_control_ports.py",
+      "sha256": "33163abcc3b6aa7cc2b973e83834268efa1129acf79583eece109209a58160e3"
+    }
+  ],
+  "architecture": {
+    "files": 461,
+    "dependencies": 2085,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "private": true,
+    "partial": true,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "a0a6e20c8da48bd41bf74a43a2237b3ee7ad9ce16444c05d71d369805e01c2b6"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+        "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_postgres.py",
+        "sha256": "c435e62db3ed089ec8bfd1591e440c76a5ebbe5248714636e3e87c155f829cbe"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "7dec0cbb77b6a5777c6268e3dee96b0fb7f242d596356bc7c724aa7c06a169b8"
+      },
+      {
+        "path": "test/postgres/test_funded_control_session.py",
+        "sha256": "500d769f5f261e3d6425c2db092a6f762433b0a6bfe8070566b98026d15f9386"
+      },
+      {
+        "path": "test/postgres/test_root_control_ports.py",
+        "sha256": "33163abcc3b6aa7cc2b973e83834268efa1129acf79583eece109209a58160e3"
+      },
+      {
+        "path": "test/postgres/test_root_sql_control.py",
+        "sha256": "a732700be8a83093227f95be9a3731189b05ce7760417652c5ec1f4dbf38c63e"
+      },
+      {
+        "path": "test/services/test_admission_postgres.py",
+        "sha256": "f4d86957213fdc361d06910a8d22cf60aea39f2c95ed741783a23848826a924b"
+      }
+    ],
+    "nodes": 416,
+    "edges": 1272,
+    "failed_sources": []
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "exit_code": 0
+      },
+      {
+        "name": "isort",
+        "exit_code": 0
+      }
+    ],
+    "compile_files": 5,
+    "cold_mypy": {
+      "source_files": 458,
+      "errors": 0,
+      "incremental": false,
+      "new_suppressions": false,
+      "configuration_changed": false
+    },
+    "migration_sources": {
+      "sql_versions_preserved": 5,
+      "resource_versions_preserved": 7,
+      "unchanged_guards_and_schema": [
+        {
+          "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+          "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+          "sha256": "4497693bb4164de446c123b267bc95219b90d820fdbf97dc3fa1a26befeacb00",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+          "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+          "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+          "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf",
+          "unchanged_from_base": true
+        }
+      ]
+    }
+  },
+  "behavior": {
+    "original_channel_identity_worker_scope": true,
+    "no_connect_close_reconnect_or_refund": true,
+    "external_funded_transactions_only": true,
+    "no_savepoint_acknowledgements": true,
+    "read_only_and_local_timeout": true,
+    "readonly_db_error_recovery_requires_verified_rollback": true,
+    "permanent_repository_binding_and_no_fallback": true,
+    "early_privileged_writer_denial": true,
+    "uncertain_commit_or_final_observation_poisons_wrapper": true,
+    "shared_commit_uncertain_preserved": true,
+    "live_loan_activation_stays_denied": true,
+    "original_debt_retained": true
+  },
+  "real_scope": {
+    "postgres": true,
+    "separate_root_process": true,
+    "driver_count": 1,
+    "same_backend_repeated_operations": true,
+    "verified_principal": "internal verified test factory, not live operator JWT login"
+  },
+  "history": [
+    {
+      "phase": "root-control-ports-red",
+      "failed": 3,
+      "classification": "missing_new_operational_ports"
+    },
+    {
+      "phase": "funded-control-session-red",
+      "failed": 8,
+      "classification": "missing_funded_session"
+    },
+    {
+      "phase": "root-control-ports-green",
+      "passed": 38,
+      "failed": 1,
+      "classification": "test_fixture_used_ledger_instead_of_storage_scope"
+    },
+    {
+      "phase": "root-control-postcheck-red",
+      "failed": 2,
+      "classification": "postcommit_check_incorrectly_classified_as_plain_refusal"
+    },
+    {
+      "phase": "root-control-ports-final-focused",
+      "passed": 41,
+      "warnings": 2
+    }
+  ],
+  "peer_review": {
+    "claude_read_jobs": [
+      "5134ab8ace2044498b20ad521161fa09",
+      "8842c0ed51094471871f657ce2d4b5c7",
+      "c97659550d1a4e029cca7bd8fec4cca0"
+    ],
+    "claude_final_job": "completed",
+    "peer_tests_executed": false,
+    "first_round_task_gap_claim": "refuted against existing scope.is_current and corrected by peer",
+    "final_postcommit_finding": "reproduced in two cases, corrected and verified by lead",
+    "luna_core_worker": "GPT-6 Luna Max private worktree, no tests executed",
+    "lead_verified": true
+  },
+  "limits": [
+    "Operational ports only: no actor/command queue or automatic recreation of poisoned wrappers.",
+    "Shared live-loan authorizer remains unchanged and still refuses activation over a live control channel.",
+    "ResourceEnvelopeRepository/Bootstrap and monitor/CLI production wiring remain pending.",
+    "No production deployment issuer, native provider/model, HTTP/WS, distributed network, physical custody, M1/M2/M3/SDK/UI acceptance.",
+    "Pinned modern Python; no full native Python3.10 acceptance.",
+    "Session closes only its wrapper; physical handle, loan and durable debt remain owned by the original caller.",
+    "No schema/checksum, global agent maximum, policy floor, deadline or coverage criteria changes."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261103-root-control-ports",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "composition_report": "composition-t014-root-control-ports.md"
+}

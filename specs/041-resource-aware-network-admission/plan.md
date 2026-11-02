@@ -567,3 +567,12 @@ G4.D: el error conserva además una única nota JSON canónica `caos.resource-bi
 G4.D compatibilidad: los atributos están disponibles en Python>=3.10; la nota de traceback se añade únicamente cuando el runtime dispone de `add_note` callable. Probar ambos modos sin cambiar el requisito de Python ni el rechazo original.
 
 G4.D2: reproducir y corregir las dos rutas de launch que invocaban add_note sin soporte; conservar la excepción original y, tras Popen, el owner exacto para join. Las notas opcionales nunca deben reemplazar el fallo primario. Dos negativos ejecutan ausencia de método y limpieza real del hijo, sin afirmar aceptación nativa completa de Python3.10.
+
+
+### T014.R.H1 — reutilización transaccional antes del actor
+
+Crear `clients/funded_control_session.py`: wrapper explícito del Connection nativo y scope de financiación original, sin propiedad del cierre; transacciones funded externas secuenciales, afinidad previa a locks/SQL y estado monotónico tras incertidumbre. `ResourceAdmissionRepository(..., control_session=...)` es opt-in permanente: todos sus runtime reads/transacciones usan la misma sesión, nunca fallback; ACL/binding se vuelven a comprobar y los writers privilegiados quedan separados. `PostgresPressureSampler.sample_control(session)` ejecuta una muestra read-only acotada sobre ese canal sin incorporarlo a su inventario de probes propios. No cambiar esquemas/checksums ni habilitar shared sobre live loans.
+
+TDD: RED de API ausente antes de integrar; PG real para commits/rollback/role/read-only y subprocess root para primer TCP y mismo backend. Congelar fuente/runtime tras formato real del hook y serializar pruebas con mínimo6144MiB y PostgreSQL existente verificado. Comparar regresión/casos y bytes exactos, ejecutar arquitectura/revisión/composición y actualizar recibos/documentos/Obsidian. La revisión read de Claude se contrasta contra código y pruebas centrales.
+
+H1.3 precisión de worker: `check_worker` valida el scope original incluso dentro de su transacción propia, sin SQL ni exigir IDLE; `check_target` añade IDLE/no-busy para iniciar una operación. La auditoría niega reentrada antes de adquirir sus locks; la configuración de sesión del repositorio es permanente, sin bind/unbind mutable ni fallback.

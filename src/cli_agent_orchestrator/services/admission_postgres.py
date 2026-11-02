@@ -7,9 +7,12 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, connect
 from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.clients.postgres.connection import DatabaseError, Record
+from cli_agent_orchestrator.clients.postgres.migrations import verify_runtime_role
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.services.admission_policy import validate_clock
 from cli_agent_orchestrator.services.admission_resources import StorageObservation
 
@@ -192,6 +195,38 @@ class PostgresPressureSampler:
                     self._uncertain = entered
             if self._open_cleanup_unconfirmed or self._uncertain is not None:
                 return _unknown(at, "probe_cleanup_unconfirmed")
+            return result
+        finally:
+            self._guard.release()
+
+    def sample_control(self, session: FundedControlSession) -> PostgresPressureSample:
+        """Read through an original funded channel, without owning or replacing it."""
+        if not self.process_current or type(session) is not FundedControlSession:
+            raise StorageAdmissionUnavailable()
+        session.check_target(session.target)  # Before inherited guards or target/config lookup.
+        at = self._clock()
+        validate_clock(at)
+        if not self._guard.acquire(blocking=False):
+            return _unknown(at, "probe_busy")
+        try:
+            if self._open_cleanup_unconfirmed:
+                return _unknown(at, "probe_cleanup_unconfirmed")
+            if self._uncertain is not None:
+                if not _closed(self._uncertain):
+                    return _unknown(at, "probe_cleanup_unconfirmed")
+                self._uncertain = None
+            try:
+                target = self._target_supplier()
+                session.check_target(target)
+                with session.transaction(readonly=True) as connection:
+                    timeout = self._policy.statement_timeout_ms
+                    connection.execute(f"SET LOCAL statement_timeout TO '{timeout}ms'")
+                    verify_runtime_role(connection)
+                    row = connection.execute(_PRESSURE_SQL).fetchone()
+                    result = self._inventory(row, target, at)
+            except (DatabaseError, OSError, ConfigurationError):
+                session.check_target(session.target)  # A failed rollback must propagate refusal.
+                return _unknown(at, "postgres_unavailable")
             return result
         finally:
             self._guard.release()

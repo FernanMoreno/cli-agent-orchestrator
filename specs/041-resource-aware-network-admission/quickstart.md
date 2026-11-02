@@ -139,3 +139,8 @@ Los recorridos del componente usan PostgreSQL real y un proceso raíz aislado co
 Para repetir diagnósticos intensivos, usar el lanzador cerrado vinculado a fuentes/runtime y verificar previamente contenedor/coordinador existentes y mínimo6144MiB. Serializar los procesos pytest por cobertura y ownership. El recibo final registra los módulos/casos exactos y el archivo ejecutado. No presentar este recorrido como arranque CLI productivo, aceptación de proveedores/modelos, activación shared completa, custodia, M1/M2/M3 ni SDK/UI.
 
 El principal de los recorridos de génesis procede de la factory interna verificada de pruebas. Estos casos no ejecutan el login ni la validación JWT en vivo del operador.
+
+
+### Alcance H1 de reutilización
+
+Los recorridos de `test_root_control_ports.py` conservan el arranque raíz firmado y prueban repetición de ledger/lecturas/auditoría/muestreo en el mismo backend con driver count1. Rollback/timeout readonly permiten una siguiente operación solo si el estado original se verifica; ACK o comprobación perdida tras commit conservan deuda y bloquean la sesión. El conjunto de pruebas también mantiene la negativa de activación shared sobre el préstamo vivo. Estos puertos no implementan aún el actor, ResourceBootstrap/EnvelopeRepository persistentes, monitor/CLI productivos ni custodia.

@@ -29,6 +29,7 @@ from cli_agent_orchestrator.clients.admission_schema import (
     RESOURCE_ADMISSION_MIGRATIONS,
     WITNESS_RELEASE_TABLES,
 )
+from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.postgres import (
     Connection,
     DatabaseError,
@@ -36,7 +37,10 @@ from cli_agent_orchestrator.clients.postgres import (
     Record,
     connect,
 )
-from cli_agent_orchestrator.clients.postgres.connection import ConnectionCursor
+from cli_agent_orchestrator.clients.postgres.connection import (
+    ConnectionCursor,
+    FundedSqlCommitUncertain,
+)
 from cli_agent_orchestrator.clients.postgres.migrations import (
     SchemaMismatch,
     verify_component,
@@ -174,7 +178,13 @@ def _credit(row: Record) -> MetadataCredit:
 
 
 class ResourceAdmissionRepository:
-    def __init__(self, target: DatabaseTarget, *, binding_supplier: Callable[[], ResourceBinding]):
+    def __init__(
+        self,
+        target: DatabaseTarget,
+        *,
+        binding_supplier: Callable[[], ResourceBinding],
+        control_session: FundedControlSession | None = None,
+    ):
         if not isinstance(target, DatabaseTarget) or target.scope != "main":
             raise ValueError("Shared admission requires one configured main coordinator")
         self.target = target
@@ -185,10 +195,21 @@ class ResourceAdmissionRepository:
         self._usage_guard = threading.Lock()
         self._usage_known = False
         self._usage_uncertain = True
+        self._control_session: FundedControlSession | None = None
+        self._control_binding: ResourceBinding | None = None
+        if control_session is not None:
+            if type(control_session) is not FundedControlSession:
+                raise SharedAdmissionDenied("Shared control requires an original funded session")
+            control_session.check_target(target)
+            binding = self.current_binding()
+            self._control_session = control_session
+            self._control_binding = binding
 
     def _check_pid(self) -> None:
         if os.getpid() != self._pid:
             raise SharedAdmissionDenied("Shared admission belongs to another process")
+        if self._control_session is not None:
+            self._control_session.check_worker()
 
     def current_binding(self) -> ResourceBinding:
         self._check_pid()
@@ -204,6 +225,8 @@ class ResourceAdmissionRepository:
             or value.target_identity_sha256 != target_hash
         ):
             raise SharedAdmissionDenied("Shared admission process binding is unavailable")
+        if self._control_binding is not None and value != self._control_binding:
+            raise SharedAdmissionDenied("Shared control belongs to its original process binding")
         return value
 
     def _query(
@@ -256,9 +279,51 @@ class ResourceAdmissionRepository:
             raise SchemaMismatch("Resource generation seals require append-only runtime privileges")
 
     @contextmanager
+    def _bound_transaction(self, *, readonly: bool) -> Iterator[Connection]:
+        session = self._control_session
+        if session is None:
+            raise SharedAdmissionDenied("Shared control session is unavailable")
+        session.check_target(self.target)
+        self.current_binding()
+        try:
+            with session.transaction(readonly=readonly) as connection:
+                self.current_binding()
+                yield connection
+                self.current_binding()
+        except FundedSqlCommitUncertain:
+            raise SharedCommitUncertain("Shared control commit requires reconciliation") from None
+        try:
+            self.current_binding()
+        except (SharedAdmissionDenied, StorageAdmissionUnavailable):
+            raise SharedCommitUncertain("Shared control binding changed after commit") from None
+
+    @contextmanager
+    def _runtime_transaction(self) -> Iterator[Connection]:
+        if self._control_session is None:
+            with connect(self.target) as connection, connection.transaction():
+                yield connection
+        else:
+            with self._bound_transaction(readonly=False) as connection:
+                yield connection
+
+    @contextmanager
+    def _reader(self, *, nested: bool = False) -> Iterator[Connection]:
+        self._check_pid()
+        if self._control_session is None:
+            with connect(self.target, readonly=True) as connection:
+                if nested:
+                    with connection.transaction():
+                        yield connection
+                else:
+                    yield connection
+        else:
+            with self._bound_transaction(readonly=True) as connection:
+                yield connection
+
+    @contextmanager
     def _runtime(self, *, require_usage: bool = False) -> Iterator[Connection]:
         self._check_pid()
-        with connect(self.target) as connection, connection.transaction():
+        with self._runtime_transaction() as connection:
             connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
             self._verify(connection)
             yield connection
@@ -274,6 +339,11 @@ class ResourceAdmissionRepository:
                     "Shared admission commit requires reconciliation"
                 ) from None
 
+    def _deny_bound_owner(self) -> None:
+        if self._control_session is not None:
+            self._check_pid()
+            raise SharedAdmissionDenied("Privileged writers cannot use a bound runtime session")
+
     @staticmethod
     def _check_provisioner(principal_id: str) -> None:
         if (
@@ -286,6 +356,8 @@ class ResourceAdmissionRepository:
     def _owner(self, principal_id: str, *, require_usage: bool = False):
         self._check_pid()
         self._check_provisioner(principal_id)
+        if self._control_session is not None:
+            raise SharedAdmissionDenied("Privileged writers cannot use a bound runtime session")
         with connect(self.target, readonly=True) as reader:
             self._verify(reader)
         with connect(self.target.migration_target()) as connection, connection.transaction():
@@ -504,6 +576,7 @@ class ResourceAdmissionRepository:
     def provision_domain(
         self, spec: DomainSpec, *, expected_revision: int, principal_id: str, active: bool = True
     ) -> DomainRecord:
+        self._deny_bound_owner()
         envelope_integer(expected_revision, minimum=0)
         if type(spec) is not DomainSpec or type(active) is not bool:
             raise ValueError("Invalid shared domain provision")
@@ -557,6 +630,7 @@ class ResourceAdmissionRepository:
         active: bool = True,
         metadata_credit_id: str | None = None,
     ) -> int:
+        self._deny_bound_owner()
         domain_id = canonical_id(domain_id)
         envelope_integer(expected_revision, minimum=0)
         if (
@@ -634,6 +708,7 @@ class ResourceAdmissionRepository:
         An exact retry acknowledges the existing credit without another charge.
         Membership revocation never releases it; there is no retirement here.
         """
+        self._deny_bound_owner()
         credit_id = canonical_id(credit_id)
         domain_id = canonical_id(domain_id)
         if type(binding) is not ResourceBinding or binding.store_id != self._coordinator_store_id:
@@ -745,7 +820,7 @@ class ResourceAdmissionRepository:
         """
         binding = self.current_binding()
         digest = binding_digest(binding)
-        with connect(self.target, readonly=True) as connection:
+        with self._reader() as connection:
             self._verify(connection)
             rows = self._query(
                 connection,
@@ -960,6 +1035,7 @@ class ResourceAdmissionRepository:
         action: _ReleaseAction,
     ) -> SharedReleaseReceipt:
         """One closed-policy transaction engine; no request-selected SQL/action."""
+        self._deny_bound_owner()
         if type(action) is not _ReleaseAction:
             raise ValueError("Unknown administrative release policy")
         operation_id, action_id = canonical_id(operation_id), canonical_id(action_id)
@@ -1146,7 +1222,7 @@ class ResourceAdmissionRepository:
             raise SharedAdmissionDenied("Custodian binding lacks its funded coverage")
         rank = -1 if after is None else (0 if after.kind == "metadata_credit" else 1)
         after_id = after.entry_id if after is not None else "00000000-0000-0000-0000-000000000000"
-        with connect(self.target, readonly=True) as connection, connection.transaction():
+        with self._reader(nested=True) as connection:
             self._verify(connection)
             rows = self._query(
                 connection,
@@ -1229,6 +1305,8 @@ class ResourceAdmissionRepository:
 
     def _audit_usage(self, *, initial: bool) -> tuple[UsageMismatch, ...]:
         self._check_pid()  # An inherited lock must never be acquired after fork.
+        if self._control_session is not None:
+            self._control_session.check_target(self.target)
         with self._audit_lock:
             with self._usage_guard:
                 if initial and self._usage_known:
@@ -1237,7 +1315,7 @@ class ResourceAdmissionRepository:
                 self._usage_uncertain = True
             # One SQL statement sees counter, state and allocations at the same
             # MVCC snapshot, including concurrent atomic reserve/release commits.
-            with connect(self.target, readonly=True) as connection:
+            with self._reader() as connection:
                 self._verify(connection)
                 rows = self._query(
                     connection,
@@ -1505,7 +1583,7 @@ class ResourceAdmissionRepository:
     def used(self, domain_id: str) -> int:
         domain_id = canonical_id(domain_id)
         self._check_pid()
-        with connect(self.target, readonly=True) as connection:
+        with self._reader() as connection:
             self._verify(connection)
             self._domain(connection, domain_id)
             return self._used(connection, domain_id)

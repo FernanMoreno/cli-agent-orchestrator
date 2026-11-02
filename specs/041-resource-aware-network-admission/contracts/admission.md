@@ -219,3 +219,12 @@ Un pane previo inexistente se descarta antes de operar sobre mapas con claves st
 - El rechazo genérico pre-subject conserva `failure_stage`/`failure_type` allowlisted; la nota opcional usa `caos.resource-binding-rejection.v1` y solo schema y esos dos códigos. No transporta payloads, IDs, secretos ni texto del fallo original.
 
 No se añade endpoint HTTP ni contrato externo SDK en este corte. La integración CLI/emisor productivo y la activación compartida mediante actor/canal persistente siguen pendientes.
+
+
+### T014.R.H1 — puertos internos sobre una conexión ya financiada
+
+- `with FundedControlSession(channel) as session`: valida financiación/worker originales, sin crear, adoptar ni cerrar handles. `check_worker()` permite validación local dentro de la transacción propia; `check_target(target)` exige además target exacto, IDLE y no reentrada. `transaction(readonly=False)` posee un commit funded externo; los fallos posteriores al commit son inciertos y bloquean esta sesión.
+- `ResourceAdmissionRepository(target, binding_supplier=..., control_session=session)`: opt-in permanente. Runtime ledger, auditoría, créditos, counters y descubrimiento usan el canal original, conservando ACL/schema/uso/binding y clase SharedCommitUncertain. Los writers owner/migración se rechazan sin auditoría/SQL; no hay fallback al quedar inválida la sesión.
+- `PostgresPressureSampler.sample_control(session)`: valida worker y target fresco, lee con presupuesto LOCAL readonly, no abre probes ni captura el canal en la propiedad de cierre del sampler. DB errors solo devuelven unknown después de revalidar rollback/session; incertidumbre o autoridad inválida se propagan.
+
+No son contratos externos de SDK/HTTP, no habilitan préstamos vivos para shared ni crean actor/cola/hilos. El camino legado sin sesión sigue separado y conserva sus transacciones/read-only/cierre.

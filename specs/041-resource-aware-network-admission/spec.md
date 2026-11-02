@@ -348,3 +348,12 @@ G4.D: el error conserva además una única nota JSON canónica `caos.resource-bi
 G4.D compatibilidad: los atributos están disponibles en Python>=3.10; la nota de traceback se añade únicamente cuando el runtime dispone de `add_note` callable. Probar ambos modos sin cambiar el requisito de Python ni el rechazo original.
 
 G4.D2: reproducir y corregir las dos rutas de launch que invocaban add_note sin soporte; conservar la excepción original y, tras Popen, el owner exacto para join. Las notas opcionales nunca deben reemplazar el fallo primario. Dos negativos ejecutan ausencia de método y limpieza real del hijo, sin afirmar aceptación nativa completa de Python3.10.
+
+
+### T014.R.H1 — puertos de control sobre el canal original
+
+El repositorio de admisión y el muestreador PostgreSQL deben poder usar una sesión de control explícita ya financiada, en el PID/thread/task/scope originales. La sesión no abre, adopta, cierra ni sustituye conexiones ni concede autoridad de activación. Cada operación comienza desde IDLE, posee su transacción externa real y confirma commit; no se admite reentrada/savepoint como confirmación, fallback a connect ni uso tras cierre/incertidumbre. El repositorio conserva binding, roles/ACL, auditoría y validación de uso; los escritores owner/migración se rechazan en este modo. Los reads mantienen aislamiento/read-only y el timeout LOCAL del muestreo no persiste fuera de su transacción. Un fallo de cuerpo con rollback confirmado puede permitir otra operación; commit incierto bloquea nuevas operaciones sin liberar deuda ni cerrar el handle del dueño. El camino legado sin sesión mantiene su comportamiento.
+
+Aceptación: proceso raíz/PG reales, driver count1 y backend estable para auditoría, créditos/cobertura, contador/deuda, reservas/transiciones y muestras sucesivas; permisos, binding, target, worker, scope, cierre, reentrada y ACK perdido se verifican. No introducir hilos ni un máximo global de agentes. Actor, cola/admisión de comandos, activación shared con préstamo vivo, monitor/CLI productivos y custodia siguen pendientes y no se acreditan por estos puertos.
+
+H1.3 precisión de worker: `check_worker` valida el scope original incluso dentro de su transacción propia, sin SQL ni exigir IDLE; `check_target` añade IDLE/no-busy para iniciar una operación. La auditoría niega reentrada antes de adquirir sus locks; la configuración de sesión del repositorio es permanente, sin bind/unbind mutable ni fallback.

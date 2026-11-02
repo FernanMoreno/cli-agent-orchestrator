@@ -165,3 +165,8 @@ unique_indexes declara dict[str,set[tuple[str|None,...]]] porque los índices de
 `ConfirmedRootSqlOpening` es una capacidad opaca, intransferible, ligada al canal/worker original, emitida solo después del commit confirmado y con un solo intento de firma. Leer la fila no reconstruye esa capacidad. `SignedRootSqlOpening` es certificado JSON canónico acotado16KiB, firma Ed25519 y key_id que referencia claves públicas confiables externas; no incluye claves públicas ni privadas. `RootSqlSubject` solo describe una petición.
 
 La instalación exige root pendiente sin SQL previamente admitido y certifica una sola apertura física. Tras el intento, error/cierre/fork no rearman el permiso ni devuelven crédito. La unidad de conexión no fija un número de agentes en la red.
+
+
+### T014.R.H1 — sesión operativa de control
+
+`FundedControlSession` referencia el Connection/raw/target/loan/funding y worker originales; no es un crédito, permiso de primera conexión ni prueba de activación. Su vida es única y no transferible: NEW → OPEN → CLOSED; BUSY existe solo durante una transacción externa; POISONED es monotónico ante commit incierto o rollback no verificable. Las consultas readonly usan REPEATABLE READ READ ONLY y las mutaciones del ledger conservan READ COMMITTED. Un rechazo anterior a efectos no consume recursos ni altera el contexto válido; una incertidumbre posterior al commit conserva deuda y se propaga como FundedSqlCommitUncertain/SharedCommitUncertain. Cerrar el wrapper no cierra ni libera el canal del dueño. No se recrean wrappers automáticamente para eludir la incertidumbre.
