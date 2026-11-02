@@ -18,6 +18,7 @@ from cli_agent_orchestrator.models.sql_process_origin import (
 )
 from cli_agent_orchestrator.models.sql_startup_permission import (
     SQL_BROKER_FD_ENV,
+    SQL_ROOT_GENESIS_ENV,
     SQL_STARTUP_PERMISSION_ENV,
     SqlBrokerPermissionRecord,
     SqlStartupPermissionRecord,
@@ -41,6 +42,8 @@ class _State:
     startup_failed: bool = False
     startup_spent: bool = False
     startup_grant: _StartupOpening | None = None
+    root_required: bool = False
+    ever_admitted: bool = False
     broker: _SqlBroker | None = None
     broker_installed: bool = False
     broker_failed: bool = False
@@ -122,6 +125,8 @@ def _successor(state: _State, pid: int) -> _State:
         startup_required=state.startup_required,
         startup_failed=state.startup_failed,
         startup_spent=state.startup_required,
+        root_required=state.root_required,
+        ever_admitted=state.ever_admitted,
     )
 
 
@@ -144,6 +149,17 @@ def _process_state() -> _State:
 
 
 def _latch_sql_mode(state: _State) -> None:
+    root = os.environ.get(SQL_ROOT_GENESIS_ENV)
+    if root is not None:
+        # Root configuration is restrictive only; it never issues a grant.
+        state.root_required = True
+        state.startup_required = True
+        if (
+            root != "1"
+            or SQL_STARTUP_PERMISSION_ENV in os.environ
+            or SQL_BROKER_FD_ENV in os.environ
+        ):
+            state.startup_failed = True
     marker = os.environ.get(SQL_STARTUP_PERMISSION_ENV)
     if marker is not None or SQL_BROKER_FD_ENV in os.environ:
         # Fork reads without the mutex. Publish the restrictive fact first.
@@ -347,6 +363,30 @@ def _deny_sql_startup_permission() -> None:
         state.enabled = True
 
 
+def _check_root_sql_startup_pending() -> None:
+    """Require a fresh root lifetime, never infer absence from this local flag."""
+    state = _process_state()
+    with state.guard:
+        _latch_sql_mode(state)
+        if (
+            not state.root_required
+            or state.startup_failed
+            or state.ever_admitted
+            or state.startup_spent
+            or state.startup_grant is not None
+            or state.broker_installed
+            or state.sealed
+        ):
+            raise SqlStartupPermissionUnavailable("root SQL startup is unavailable")
+
+
+def _install_root_sql_startup_permission(permission: VerifiedSqlStartupPermission) -> None:
+    if type(permission) is not VerifiedSqlStartupPermission:
+        raise SqlStartupPermissionUnavailable("root SQL requires an authenticated issuer")
+    _check_root_sql_startup_pending()
+    _install_sql_startup_permission(permission)
+
+
 def current_sql_application_name() -> str:
     """Latch opt-in; PID resolution always precedes an inherited mutex."""
     state = _process_state()
@@ -386,7 +426,11 @@ def sql_process_opening(
     state = _process_state()
     startup_task = (
         _recording_task()
-        if state.startup_required or SQL_STARTUP_PERMISSION_ENV in os.environ
+        if (
+            state.startup_required
+            or SQL_STARTUP_PERMISSION_ENV in os.environ
+            or SQL_ROOT_GENESIS_ENV in os.environ
+        )
         else None
     )
     grant = None
@@ -419,6 +463,9 @@ def sql_process_opening(
                         )
                     state.startup_spent = True
             state.opening += 1
+        # Legacy openings are tracked only as an irreversible eligibility fact.
+        # This neither inventories backends nor changes their ordinary lifetime.
+        state.ever_admitted = True
     uncertain = False
     entered_driver = False
     registration_uncertain = False

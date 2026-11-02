@@ -21,7 +21,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 import psutil
@@ -78,9 +78,56 @@ BINDING_PROTOCOL_VERSION = 2
 _MAX_PACKET_BYTES = 8192
 _CREDENTIALS = struct.Struct("3i")
 
+ResourceProcessFailureStage = Literal[
+    "channel_setup",
+    "recvmsg",
+    "ancillary",
+    "packet_frame",
+    "sender_credentials",
+    "packet_decode",
+    "packet_schema",
+    "binding_decode",
+    "kernel_validation",
+    "subject_issue",
+]
+ResourceProcessFailureType = Literal[
+    "os_error",
+    "value_error",
+    "type_error",
+    "index_error",
+    "key_error",
+    "process_error",
+    "protocol_error",
+]
+
 
 class ResourceProcessUnproven(RuntimeError):
     """The exact owned child's binding or exit could not be established."""
+
+    failure_stage: ResourceProcessFailureStage | None = None
+    failure_type: ResourceProcessFailureType | None = None
+
+
+def _add_failure_note(error: BaseException, note: str) -> None:
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+
+
+def _binding_failure_type(failure: Exception) -> ResourceProcessFailureType:
+    if isinstance(failure, OSError):
+        return "os_error"
+    if isinstance(failure, ValueError):
+        return "value_error"
+    if isinstance(failure, TypeError):
+        return "type_error"
+    if isinstance(failure, IndexError):
+        return "index_error"
+    if isinstance(failure, KeyError):
+        return "key_error"
+    if isinstance(failure, psutil.Error):
+        return "process_error"
+    return "protocol_error"
 
 
 def _timeout(value: float | None, *, optional: bool = False) -> float | None:
@@ -718,7 +765,9 @@ class ResourceProcessSupervisor:
             if value._broker_channel is not None:
                 value._broker_channel.close()
             # Losing the Popen handle does NOT establish no-start or cleanup.
-            error.add_note("Child start is unobserved; no resource exit proof was produced.")
+            _add_failure_note(
+                error, "Child start is unobserved; no resource exit proof was produced."
+            )
             raise
         finally:
             child.close()
@@ -752,7 +801,7 @@ class ResourceProcessSupervisor:
                 value._broker_channel.close()
             # Keep the first exception and the exact physical child owner.
             setattr(error, "resource_process_owner", value)
-            error.add_note("Resource child still requires its original owner's join.")
+            _add_failure_note(error, "Resource child still requires its original owner's join.")
             raise
         return value
 
@@ -1181,8 +1230,10 @@ class ResourceProcessSupervisor:
         self._receiving = True
         self._subject_token = object()
         subject = None
+        stage: ResourceProcessFailureStage = "channel_setup"
         try:
             self._channel.settimeout(timeout_s)
+            stage = "recvmsg"
             payload, ancillary, flags, _ = self._channel.recvmsg(
                 _MAX_PACKET_BYTES + 1,
                 socket.CMSG_SPACE(_CREDENTIALS.size) + socket.CMSG_SPACE(struct.calcsize("i")),
@@ -1190,6 +1241,7 @@ class ResourceProcessSupervisor:
             )
             # recvmsg installs SCM_RIGHTS descriptors before userspace validates
             # the packet, including a truncated/rejected ancillary envelope.
+            stage = "ancillary"
             received_rights = False
             for level, kind, raw in ancillary:
                 if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
@@ -1203,12 +1255,14 @@ class ResourceProcessSupervisor:
                             pass
             if received_rights:
                 raise ResourceProcessUnproven("resource binding cannot transfer descriptors")
+            stage = "packet_frame"
             if (
                 not payload
                 or len(payload) > _MAX_PACKET_BYTES
                 or flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC)
             ):
                 raise ResourceProcessUnproven("resource binding packet is incomplete")
+            stage = "sender_credentials"
             if len(ancillary) != 1:
                 raise ResourceProcessUnproven("resource binding sender is unproven")
             level, kind, raw = ancillary[0]
@@ -1223,7 +1277,9 @@ class ResourceProcessSupervisor:
                 raise ResourceProcessUnproven(
                     "resource binding sender differs from the owned child"
                 )
+            stage = "packet_decode"
             packet = json.loads(payload, object_pairs_hook=_unique_object)
+            stage = "packet_schema"
             if (
                 not isinstance(packet, dict)
                 or set(packet) != {"version", "binding", "kernel", "sql_application_name"}
@@ -1239,7 +1295,9 @@ class ResourceProcessSupervisor:
                 or set(packet["binding"]) != {f.name for f in fields(ResourceBinding)}
             ):
                 raise ResourceProcessUnproven("resource binding packet schema is invalid")
+            stage = "binding_decode"
             binding = ResourceBinding(**packet["binding"])
+            stage = "kernel_validation"
             live = _identity(self._process.pid)
             expected_kernel = json.loads(json.dumps(asdict(live)))
             if (
@@ -1271,6 +1329,7 @@ class ResourceProcessSupervisor:
                     ):
                         raise ResourceProcessUnproven("original child identity is no longer live")
 
+                stage = "subject_issue"
                 subject = _issue_verified_child_sql_subject(
                     binding,
                     sql_application_name=packet["sql_application_name"],
@@ -1301,13 +1360,26 @@ class ResourceProcessSupervisor:
             KeyError,
             psutil.Error,
             ResourceProcessUnproven,
-        ):
+        ) as failure:
             self._binding_failed = True
             if subject is not None:
                 raise
-            raise ResourceProcessUnproven(
-                "resource process binding could not be verified"
-            ) from None
+            rejected = ResourceProcessUnproven("resource process binding could not be verified")
+            rejected.failure_stage = stage
+            rejected.failure_type = _binding_failure_type(failure)
+            _add_failure_note(
+                rejected,
+                json.dumps(
+                    {
+                        "schema": "caos.resource-binding-rejection.v1",
+                        "failure_stage": stage,
+                        "failure_type": rejected.failure_type,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+            raise rejected from None
         except BaseException:
             self._binding_failed = True
             raise

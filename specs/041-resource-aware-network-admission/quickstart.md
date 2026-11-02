@@ -130,3 +130,12 @@ El operador debe provisionar el journal SQL4 y aportar un worker de control ya f
 ## Verificar tipos sin éxito aparente de caché — T021.T
 
 Ejecutar mypy src/ con un directorio de caché privado nuevo y repetir los dos entrypoints Bridge con otro directorio nuevo, manteniendo mypy.ini y las mismas opciones. Conservar logs/códigos de salida y comparar bytes de configuración con la base. Ejecutar los cuatro módulos de prueba listados en el recibo; no sumar casos solapados a ejecuciones previas ni interpretar este chequeo estático como aceptación nativa del proveedor. [Validación](validation-t021-typing.json).
+
+
+### Alcance del control raíz T014.R.G
+
+Los recorridos del componente usan PostgreSQL real y un proceso raíz aislado con claves efímeras de prueba: emisor propietario ya financiado, registro/commit SQL5, certificado, verificación local, un TCP raíz y journal propio ordinal2 en el mismo canal. Los negativos conservan cargos e impiden acceso al driver cuando firma o kernel difieren; pérdida de readback impide yield y fallo de claves tras commit mantiene el registro. Los tests unitarios con issuer controlado no sustituyen esos recorridos reales.
+
+Para repetir diagnósticos intensivos, usar el lanzador cerrado vinculado a fuentes/runtime y verificar previamente contenedor/coordinador existentes y mínimo6144MiB. Serializar los procesos pytest por cobertura y ownership. El recibo final registra los módulos/casos exactos y el archivo ejecutado. No presentar este recorrido como arranque CLI productivo, aceptación de proveedores/modelos, activación shared completa, custodia, M1/M2/M3 ni SDK/UI.
+
+El principal de los recorridos de génesis procede de la factory interna verificada de pruebas. Estos casos no ejecutan el login ni la validación JWT en vivo del operador.

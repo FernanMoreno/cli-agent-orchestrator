@@ -553,3 +553,17 @@ T021.T1: anotar unique_indexes como dict[str,set[tuple[str|None,...]]] según PR
 
 
 El único diagnóstico restante del chequeo completo, services/local_peer_service.py:_remote_task_not_found, se corrige asignando response.json() a object antes de comparar con la forma exacta. Sin cast/bool/ignore ni nuevo protocolo o replay. Conservar ValueError→False y ampliar a pruebas existentes de receipts peer. La fase t021-typing-regression quedó preparada pero NO ejecutada antes de esta ampliación; una fase fresca fijará la fuente final.
+
+
+## T014.R.G — asignación independiente antes del primer TCP root
+
+R.G1: modelo puro RootSqlOpeningIntent y recibo opaco confirmado, certificado JSON acotado y firma/verificación Ed25519 mediante cryptography ya instalada; no claves privadas en fixtures versionadas. R.G2: SQL5 aditiva roots/root-credit-links owner-only y registro/lectura en SqlIntentRepository; root usa ordinal/cuota/UUID compartidos pero no reclama backend del issuer. Conservar hashes SQL1–4/resource1–7. Revalidar cobertura completa root bajo locks canónicos y reservar cada crédito para un único control root. R.G3: servicio autorizado exige Principal JWT admin real antes de resolver claves o SQL; firma solo cap de commit confirmado. Contexto root verifica firma, kernel/binding/destino y ausencia de aperturas anteriores admitidas por gate; abre una única conexión dentro del scope original de StorageControlPermit y conserva deuda ante fallos. R.G4: TDD puro, PostgreSQL real y primer TCP real antes/después del certificado, fuente congelada/revisión/composición. Actor persistente/shared activation/custodia y CLI productiva permanecen separados hasta cablearlos; no otra conexión ni hilo por agente.
+
+
+T014.R.G4.D: el supervisor conserva sus decisiones; únicamente etiqueta la excepción genérica previa a emitir subject con failure_stage/failure_type. Verificar primero el grafo focalizado contra la fuente base; probar rechazos deterministas y ausencia de datos sensibles antes de la regresión común. El recibo anterior fallido se conserva y no se reclasifica como corregido.
+
+G4.D: el error conserva además una única nota JSON canónica `caos.resource-binding-rejection.v1` visible en traceback/JUnit, con únicamente `schema`, `failure_stage` y `failure_type`; `str`, args y decisiones permanecen iguales.
+
+G4.D compatibilidad: los atributos están disponibles en Python>=3.10; la nota de traceback se añade únicamente cuando el runtime dispone de `add_note` callable. Probar ambos modos sin cambiar el requisito de Python ni el rechazo original.
+
+G4.D2: reproducir y corregir las dos rutas de launch que invocaban add_note sin soporte; conservar la excepción original y, tras Popen, el owner exacto para join. Las notas opcionales nunca deben reemplazar el fallo primario. Dos negativos ejecutan ausencia de método y limpieza real del hijo, sin afirmar aceptación nativa completa de Python3.10.

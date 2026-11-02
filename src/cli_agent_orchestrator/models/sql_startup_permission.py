@@ -198,6 +198,7 @@ def _expire_verified_sql_startup_permission(value: VerifiedSqlStartupPermission)
 
 
 SQL_BROKER_FD_ENV = "CAO_INTERNAL_SQL_BROKER_FD"
+SQL_ROOT_GENESIS_ENV = "CAO_INTERNAL_ROOT_SQL_GENESIS"
 
 
 @dataclass(frozen=True)

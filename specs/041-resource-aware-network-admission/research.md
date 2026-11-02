@@ -164,3 +164,12 @@ El control HTTP/WS propio de Bridge arranca después del primer SQL y no puede f
 ## Alcance frío e inferencia de tipos — T021.T
 
 Mypy.ini es la configuración efectiva del repositorio; no se modificó. La revisión de dos entrypoints reproducía ocho diagnósticos importados; src/ completo sobre la base, mediante shadow-file de las fuentes originales, también daba ocho, con conjuntos distintos según resolución del ciclo WorkService/WorkOrigins. Tras las tres primeras correcciones el cono quedó limpio y src/ reveló un único retorno Any en local_peer_service; asignar el JSON a object conserva la comparación exacta. La comprobación final usa cachés nuevas en ambos alcances y obtiene cero errores. [Validación](validation-t021-typing.json).
+
+
+### T014.R.G — raíz externa y cierre del círculo SQL
+
+La primera conexión necesita un emisor de despliegue ya autorizado y financiado por su propio canal PostgreSQL. No existe aún integración productiva que cree ese emisor: una opción, un fichero o el login de un proveedor no son autoridad. El helper de emisión exige principal JWT administrador verificado antes de resolver target, claves o SQL. Firma exclusivamente un commit confirmado; ACK perdido, error de claves o pérdida posterior conservan fila/deuda y no permiten replay.
+
+El emisor y el destinatario son bindings distintos: la cuota/posición pertenecen al destinatario, mientras la capacidad de firma sigue ligada al worker original del emisor. El owner read usa el subject retenido y los créditos persistidos, sin convertir cambios de membresía activa en permiso nuevo ni impedir diagnóstico histórico. La raíz compara firma/kernel/binding/label/destino antes del TCP y confirma la fila en el mismo canal antes de cederlo.
+
+G4.D conserva la etapa/categoría de un rechazo pre-subject mediante campos estructurados y, si el runtime soporta add_note, una nota JSON segura visible en traceback. Esto corrige la pérdida de observabilidad, no demuestra la causa del rechazo histórico previo a commit_ack. Ningún guard, timeout o criterio se relaja.

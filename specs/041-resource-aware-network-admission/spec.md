@@ -334,3 +334,17 @@ El chequeo de tipos en frío debe dejar de emitir los ocho errores reproducidos 
 
 
 Ampliación T021.T: el chequeo completo src/ debe resolver también el retorno Any de la clasificación JSON de task_not_found. El error ya existe fuera del cono del chequeo de dos entrypoints; conservar la igualdad exacta y no convertir outages en ausencia.
+
+
+## T014.R.G — asignación independiente antes del primer TCP root
+
+Génesis requiere emisor independiente ya financiado y autorizado como administrador/dueño; el root no puede consultar PostgreSQL para pagarse su primer TCP. Registrar previamente una apertura de control de una unidad mediante los créditos metadata storage/postgres_session existentes del binding exacto, sin cobrar otra capacidad ni convertirlos en reserva de datos. Exigir conjunto completo de créditos de almacenamiento y su fingerprint, cuota/ordinal/UUID comunes, migración aditiva owner-only. Commit confirmado y fila real antes de firmar Ed25519; datos o lectura del recibo no bastan para firmar. Certificado acotado a kernel/binding/label/destino y un uso; verificación con claves de despliegue confiables antes del driver. Sin refund/TTL/rearm/fork. El origen real del provisionador es dependencia explícita, no se declara integrado por crear interfaces.
+
+
+T014.R.G4.D — diagnóstico de rechazo previo al subject: conservar en el error genérico una etapa y un tipo de excepción estructurados, con códigos fijos y sin payload, identificadores, entorno ni mensaje original. El diagnóstico no acredita una causa no observada ni modifica guards, ACK, cierre, deadlines o permisos. Motivación: fallo real de handshake previo a la inyección commit_ack; el wrapper anterior suprimía el primer límite.
+
+G4.D: el error conserva además una única nota JSON canónica `caos.resource-binding-rejection.v1` visible en traceback/JUnit, con únicamente `schema`, `failure_stage` y `failure_type`; `str`, args y decisiones permanecen iguales.
+
+G4.D compatibilidad: los atributos están disponibles en Python>=3.10; la nota de traceback se añade únicamente cuando el runtime dispone de `add_note` callable. Probar ambos modos sin cambiar el requisito de Python ni el rechazo original.
+
+G4.D2: reproducir y corregir las dos rutas de launch que invocaban add_note sin soporte; conservar la excepción original y, tras Popen, el owner exacto para join. Las notas opcionales nunca deben reemplazar el fallo primario. Dos negativos ejecutan ausencia de método y limpieza real del hijo, sin afirmar aceptación nativa completa de Python3.10.

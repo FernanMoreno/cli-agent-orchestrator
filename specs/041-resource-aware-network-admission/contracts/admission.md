@@ -208,3 +208,14 @@ launch_bridge(sql_broker=True) conserva argv fijo y solicita primer permiso más
 ## Contratos runtime preservados — T021.T
 
 Un pane previo inexistente se descarta antes de operar sobre mapas con claves str; registro inicial, reemplazo y owner exacto mantienen comportamiento. La clasificación peer solo acepta HTTP404 con el objeto task_not_found exacto; campos extra, JSON inválido, timeout, 403/503 y otros 404 conservan la semántica de outage/reconcile sin modificar recibos históricos. Esta corrección no cambia admisión o permisos. [Validación](../validation-t021-typing.json).
+
+
+### T014.R.G — helpers internos de control raíz
+
+- `current_root_sql_subject(bootstrap) -> RootSqlSubject`: captura dato real del proceso, requiere modo root pendiente; no abre SQL ni concede autoridad.
+- `issue_root_sql_certificate(bootstrap, channel, *, principal, journal_id, intent_id, session_id, subject, key_supplier)`: verifica administrador primero, usa el canal propietario ya financiado para SQL5, obtiene la clave de composición confiable después del commit y consume la capacidad de firma. `RootCertificateUnavailableAfterCommit` conserva record/journal/intent descriptivos, sin rearmado.
+- `root_sql_control_channel(bootstrap, owner, control, certificate, *, trusted_keys, clock)`: verifica firma y proceso actual antes de instalar grant, abre una conexión con el control original y lee el registro en ese mismo canal antes del yield. PID/thread/task y scope permanecen originales hasta el cierre. Nunca adopta un handle ajeno ni abre un segundo canal.
+- `CAO_INTERNAL_ROOT_SQL_GENESIS=1` es marcador reservado estricto opt-in, no permiso. Combinación con grant hijo/broker, SQL previo o rearmado se rechaza. Un canal de identidad sin grant SQL puede preceder al certificado.
+- El rechazo genérico pre-subject conserva `failure_stage`/`failure_type` allowlisted; la nota opcional usa `caos.resource-binding-rejection.v1` y solo schema y esos dos códigos. No transporta payloads, IDs, secretos ni texto del fallo original.
+
+No se añade endpoint HTTP ni contrato externo SDK en este corte. La integración CLI/emisor productivo y la activación compartida mediante actor/canal persistente siguen pendientes.

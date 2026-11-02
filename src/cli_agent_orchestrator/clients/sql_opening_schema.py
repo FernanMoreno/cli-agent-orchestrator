@@ -164,3 +164,60 @@ SQL_OPENING_MIGRATIONS += (
         tables=SQL_OPENING_ALL_TABLES,
     ),
 )
+
+
+# Version 5 adds the owner-issued root opening as a separate, read-only-to-runtime
+# journal entry. Keep the preceding migration sources and their frozen table
+# tuples unchanged: their checksums are already installed in existing stores.
+SQL_ROOT_OPENINGS = "_cao_sql_root_openings"
+SQL_ROOT_OPENING_CREDITS = "_cao_sql_root_opening_credits"
+SQL_OPENING_ALL_TABLES += (SQL_ROOT_OPENINGS, SQL_ROOT_OPENING_CREDITS)
+SQL_OPENING_MIGRATIONS += (
+    ComponentMigration(
+        component="sql_opening_intents",
+        scope="main",
+        version=5,
+        statements=(
+            """ALTER TABLE _cao_sql_opening_quotas
+                ADD CONSTRAINT _cao_sql_opening_quota_credit_key UNIQUE(journal_id,credit_id)""",
+            f"""CREATE TABLE {SQL_ROOT_OPENINGS} (
+                intent_id UUID PRIMARY KEY,
+                journal_id UUID NOT NULL,
+                ordinal BIGINT NOT NULL CHECK(ordinal=1),
+                credit_id UUID NOT NULL UNIQUE REFERENCES _cao_resource_metadata_credits(credit_id),
+                membership_sha256 TEXT NOT NULL CHECK(membership_sha256 ~ '^[0-9a-f]{{64}}$'),
+                session_id UUID NOT NULL UNIQUE,
+                subject_binding JSONB NOT NULL CHECK(jsonb_typeof(subject_binding)='object'),
+                subject_binding_sha256 TEXT NOT NULL CHECK(subject_binding_sha256 ~ '^[0-9a-f]{{64}}$'),
+                subject_sql_application_name TEXT NOT NULL UNIQUE CHECK(
+                    subject_sql_application_name ~ '^caos-sql-v1-[0-9a-f]{{12}}4[0-9a-f]{{3}}[89ab][0-9a-f]{{15}}$'),
+                boot_id UUID NOT NULL,
+                start_time_ticks BIGINT NOT NULL CHECK(start_time_ticks>0),
+                pid_namespace_device BIGINT NOT NULL CHECK(pid_namespace_device>0),
+                pid_namespace_inode BIGINT NOT NULL CHECK(pid_namespace_inode>0),
+                path TEXT NOT NULL CHECK(path='native'),
+                destination_sha256 TEXT NOT NULL CHECK(destination_sha256 ~ '^[0-9a-f]{{64}}$'),
+                destination_scope TEXT NOT NULL CHECK(destination_scope='main'),
+                issuer_principal_id TEXT NOT NULL CHECK(
+                    issuer_principal_id ~ '^principal-[0-9a-f]{{64}}$'),
+                slots SMALLINT NOT NULL CHECK(slots=1),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(intent_id,journal_id),
+                UNIQUE(journal_id,ordinal),
+                UNIQUE(journal_id),
+                FOREIGN KEY(journal_id,credit_id)
+                    REFERENCES _cao_sql_opening_quotas(journal_id,credit_id)
+            )""",
+            f"""CREATE TABLE {SQL_ROOT_OPENING_CREDITS} (
+                root_intent_id UUID NOT NULL,
+                journal_id UUID NOT NULL,
+                credit_id UUID NOT NULL UNIQUE REFERENCES _cao_resource_metadata_credits(credit_id),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(root_intent_id,credit_id),
+                FOREIGN KEY(root_intent_id,journal_id)
+                    REFERENCES {SQL_ROOT_OPENINGS}(intent_id,journal_id)
+            )""",
+        ),
+        tables=SQL_OPENING_ALL_TABLES,
+    ),
+)

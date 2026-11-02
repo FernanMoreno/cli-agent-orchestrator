@@ -16,6 +16,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from cli_agent_orchestrator.clients.admission_repository import (
+    _CREDIT_FAMILY,
     ResourceAdmissionRepository,
     binding_digest,
 )
@@ -40,6 +41,8 @@ from cli_agent_orchestrator.clients.sql_opening_schema import (
     SQL_OPENING_INTENTS,
     SQL_OPENING_MIGRATIONS,
     SQL_OPENING_QUOTAS,
+    SQL_ROOT_OPENING_CREDITS,
+    SQL_ROOT_OPENINGS,
 )
 from cli_agent_orchestrator.models.admission_domains import canonical_id
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding, envelope_integer
@@ -51,6 +54,11 @@ from cli_agent_orchestrator.models.sql_opening_intent import (
     SqlOpeningPreparationUncertain,
 )
 from cli_agent_orchestrator.models.sql_process_origin import is_sql_process_application_name
+from cli_agent_orchestrator.models.sql_root_genesis import (
+    ConfirmedRootSqlOpening,
+    RootSqlOpeningIntent,
+    _issue_confirmed_root_sql_opening,
+)
 from cli_agent_orchestrator.utils.process_sql_origin import (
     current_sql_application_name,
     sql_opening_recorder,
@@ -180,6 +188,38 @@ def _followup_receipt(row: Record, origin: ChildSqlOpeningIntent) -> ChildSqlFol
         raise SchemaMismatch("retained follow-up request is invalid") from failure
 
 
+def _root_opening(row: Record, credit_ids: tuple[str, ...]) -> RootSqlOpeningIntent:
+    try:
+        raw = row["subject_binding"]
+        if type(raw) is not dict or set(raw) != {f.name for f in fields(ResourceBinding)}:
+            raise ValueError("invalid subject shape")
+        subject = ResourceBinding(**raw)
+        if binding_digest(subject) != row["subject_binding_sha256"]:
+            raise ValueError("subject binding digest differs")
+        return RootSqlOpeningIntent(
+            intent_id=str(row["intent_id"]),
+            journal_id=str(row["journal_id"]),
+            ordinal=row["ordinal"],
+            credit_id=str(row["credit_id"]),
+            credit_ids=credit_ids,
+            membership_sha256=row["membership_sha256"],
+            session_id=str(row["session_id"]),
+            subject=subject,
+            subject_binding_sha256=row["subject_binding_sha256"],
+            subject_sql_application_name=row["subject_sql_application_name"],
+            boot_id=str(row["boot_id"]),
+            start_time_ticks=row["start_time_ticks"],
+            pid_namespace=(row["pid_namespace_device"], row["pid_namespace_inode"]),
+            path=row["path"],
+            destination_sha256=row["destination_sha256"],
+            destination_scope=row["destination_scope"],
+            issuer_principal_id=row["issuer_principal_id"],
+            slots=row["slots"],
+        )
+    except (ValueError, TypeError, KeyError) as failure:
+        raise SchemaMismatch("Retained root opening has an invalid projection") from failure
+
+
 class SqlIntentRepository:
     def __init__(self, target: DatabaseTarget, *, binding_supplier: Callable[[], ResourceBinding]):
         self.target = target
@@ -192,6 +232,8 @@ class SqlIntentRepository:
             "children": SQL_CHILD_OPENINGS,
             "followups": SQL_CHILD_FOLLOWUPS,
             "fundings": SQL_CHILD_FUNDINGS,
+            "roots": SQL_ROOT_OPENINGS,
+            "root_credits": SQL_ROOT_OPENING_CREDITS,
             "credits": "_cao_resource_metadata_credits",
             "domains": "_cao_resource_domains",
         }
@@ -218,7 +260,11 @@ class SqlIntentRepository:
 
     def _verify_acl(self, c: Connection) -> None:
         for name in SQL_OPENING_ALL_TABLES:
-            append = name != SQL_OPENING_QUOTAS
+            append = name not in {
+                SQL_OPENING_QUOTAS,
+                SQL_ROOT_OPENINGS,
+                SQL_ROOT_OPENING_CREDITS,
+            }
             row = c.execute(
                 """SELECT c.relkind IN ('r','p')
                 AND has_table_privilege(current_user,c.oid,'SELECT')
@@ -418,7 +464,13 @@ class SqlIntentRepository:
         return label, digest
 
     def _append_position(
-        self, c: Connection, journal: str, request: str, binding: ResourceBinding
+        self,
+        c: Connection,
+        journal: str,
+        request: str,
+        binding: ResourceBinding,
+        *,
+        claim_channel: bool = True,
     ) -> int:
         self._lock(c, "journal", journal)
         quota = self._quota(c, journal, binding)
@@ -429,8 +481,9 @@ class SqlIntentRepository:
             c,
             """SELECT intent_id FROM {intents} WHERE intent_id=%s
             UNION ALL SELECT intent_id FROM {children} WHERE intent_id=%s
-            UNION ALL SELECT intent_id FROM {followups} WHERE intent_id=%s LIMIT 1""",
-            (request, request, request),
+            UNION ALL SELECT intent_id FROM {followups} WHERE intent_id=%s
+            UNION ALL SELECT intent_id FROM {roots} WHERE intent_id=%s LIMIT 1""",
+            (request, request, request, request),
         ).fetchone():
             raise SqlIntentConflict("A retained SQL intent cannot grant another opening")
         last = self._q(
@@ -438,8 +491,9 @@ class SqlIntentRepository:
             """SELECT GREATEST(
             COALESCE((SELECT ordinal FROM {intents} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0),
             COALESCE((SELECT ordinal FROM {children} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0),
-            COALESCE((SELECT ordinal FROM {followups} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0))""",
-            (journal, journal, journal),
+            COALESCE((SELECT ordinal FROM {followups} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0),
+            COALESCE((SELECT ordinal FROM {roots} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0))""",
+            (journal, journal, journal, journal),
         ).fetchone()
         if last is None:
             raise SchemaMismatch("SQL journal position is unavailable")
@@ -449,7 +503,15 @@ class SqlIntentRepository:
         ordinal = previous + 1
         if ordinal > quota["max_records"]:
             raise SqlIntentCapacityUnavailable("SQL journal record capacity is exhausted")
-        self._claim_channel(c, journal, binding)
+        if claim_channel:
+            self._claim_channel(c, journal, binding)
+        else:
+            if ordinal != 1:
+                raise SqlIntentConflict("Root SQL opening must be journal ordinal one")
+            if self._q(
+                c, "SELECT journal_id FROM {channels} WHERE journal_id=%s", (journal,)
+            ).fetchone():
+                raise SqlIntentConflict("Root SQL opening cannot reuse a claimed journal channel")
         return ordinal
 
     def record(
@@ -489,6 +551,206 @@ class SqlIntentRepository:
                 raise SchemaMismatch("SQL intent was not persisted")
             receipt = _receipt(row)
         return receipt  # Only after the independent funded commit was acknowledged.
+
+    def record_root_opening(
+        self,
+        channel: Connection,
+        *,
+        journal_id: str,
+        intent_id: str,
+        session_id: str,
+        subject: ResourceBinding,
+        subject_sql_application_name: str,
+        boot_id: str,
+        start_time_ticks: int,
+        pid_namespace: tuple[int, int],
+        destination: DatabaseTarget,
+        principal_id: str,
+    ) -> ConfirmedRootSqlOpening:
+        """Persist one genesis record on the original funded migration channel.
+
+        The returned signing capability is minted only after ``funded_transaction``
+        has confirmed its commit. The persisted record and its readback stay data.
+        """
+        journal, request, session = map(canonical_id, (journal_id, intent_id, session_id))
+        if (
+            not isinstance(principal_id, str)
+            or re.fullmatch(r"principal-[0-9a-f]{64}", principal_id) is None
+        ):
+            raise ValueError("Invalid SQL root issuer principal")
+        if type(subject) is not ResourceBinding:
+            raise ValueError("root SQL opening requires an exact resource binding")
+        if type(destination) is not DatabaseTarget or destination.scope != "main":
+            raise ValueError("root SQL opening requires a configured main destination")
+        if self.target.scope != "main":
+            raise ValueError("root SQL opening requires the main coordinator")
+        if not is_sql_process_application_name(subject_sql_application_name):
+            raise ValueError("root SQL opening requires a supervised subject label")
+        boot = canonical_id(boot_id)
+        envelope_integer(start_time_ticks, minimum=1)
+        if type(pid_namespace) is not tuple or len(pid_namespace) != 2:
+            raise ValueError("root SQL opening requires a PID namespace pair")
+        envelope_integer(pid_namespace[0], minimum=1)
+        envelope_integer(pid_namespace[1], minimum=1)
+        destination_digest = hashlib.sha256(
+            json.dumps(
+                (destination.identity, destination.user, destination.sslmode),
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        target_digest = hashlib.sha256(
+            json.dumps(destination.identity, separators=(",", ":")).encode()
+        ).hexdigest()
+        if (
+            subject.store_id != canonical_id(destination.store_id)
+            or subject.target_identity_sha256 != target_digest
+        ):
+            raise SqlIntentUnavailable(
+                "root SQL destination differs from its exact subject binding"
+            )
+
+        with self._transaction(channel, journal, request, owner=True) as (c, issuer_binding):
+            quota_hint = self._q(
+                c, "SELECT credit_id FROM {quotas} WHERE journal_id=%s", (journal,)
+            ).fetchone()
+            if quota_hint is None:
+                raise SqlIntentUnavailable("SQL root journal quota is unavailable")
+            quota_credit_id = canonical_id(str(quota_hint["credit_id"]))
+
+            # Match the resource admission writer order: membership, all its
+            # metadata credits, member domains, then the SQL journal and intent.
+            self._identity._lock_membership(c, subject)
+            credit_rows = self._q(
+                c,
+                """SELECT credit_id FROM {credits} WHERE instance_id=%s
+                AND process_generation=%s ORDER BY domain_id""",
+                (subject.instance_id, subject.process_generation),
+            ).fetchall()
+            locked_credit_ids = tuple(sorted(str(row["credit_id"]) for row in credit_rows))
+            self._identity._lock(
+                c,
+                _CREDIT_FAMILY,
+                (*locked_credit_ids, quota_credit_id),
+            )
+            domains, membership_sha256 = self._identity._membership_basis(c, subject)
+            coverage = self._identity._metadata_coverage_locked(
+                c, subject, domains, membership_sha256
+            )
+            credit_ids = tuple(sorted(credit.credit_id for credit in coverage.credits))
+            if (
+                coverage.binding != subject
+                or credit_ids != locked_credit_ids
+                or not credit_ids
+                or quota_credit_id not in credit_ids
+            ):
+                raise SqlIntentUnavailable("root SQL metadata credit coverage is incomplete")
+            # The primary credit is the journal quota credit, constrained by
+            # the subject's complete metadata coverage above.
+            primary_credit_id = quota_credit_id
+            if primary_credit_id not in credit_ids:
+                raise SqlIntentUnavailable("root SQL quota credit is outside subject coverage")
+
+            ordinal = self._append_position(c, journal, request, subject, claim_channel=False)
+            if ordinal != 1:
+                raise SqlIntentConflict("Root SQL opening must be journal ordinal one")
+            self._lock(c, "intent", "root-session:" + session)
+            if self._q(
+                c, "SELECT intent_id FROM {roots} WHERE session_id=%s", (session,)
+            ).fetchone():
+                raise SqlIntentConflict("A root SQL session cannot receive another opening")
+            reused = self._q(
+                c,
+                "SELECT credit_id FROM {root_credits} WHERE credit_id=ANY(%s::uuid[]) LIMIT 1",
+                (list(credit_ids),),
+            ).fetchone()
+            if reused is not None:
+                raise SqlIntentConflict("A retained metadata credit already funds a root opening")
+
+            expected = RootSqlOpeningIntent(
+                intent_id=request,
+                journal_id=journal,
+                ordinal=ordinal,
+                credit_id=primary_credit_id,
+                credit_ids=credit_ids,
+                membership_sha256=coverage.membership_sha256,
+                session_id=session,
+                subject=subject,
+                subject_binding_sha256=binding_digest(subject),
+                subject_sql_application_name=subject_sql_application_name,
+                boot_id=boot,
+                start_time_ticks=start_time_ticks,
+                pid_namespace=pid_namespace,
+                path="native",
+                destination_sha256=destination_digest,
+                destination_scope=destination.scope,
+                issuer_principal_id=principal_id,
+                slots=1,
+            )
+            inserted = self._q(
+                c,
+                """INSERT INTO {roots}
+                (intent_id,journal_id,ordinal,credit_id,membership_sha256,session_id,
+                subject_binding,subject_binding_sha256,subject_sql_application_name,
+                boot_id,start_time_ticks,pid_namespace_device,pid_namespace_inode,path,
+                destination_sha256,destination_scope,issuer_principal_id,slots)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'native',%s,%s,%s,1)
+                RETURNING *""",
+                (
+                    request,
+                    journal,
+                    ordinal,
+                    primary_credit_id,
+                    coverage.membership_sha256,
+                    session,
+                    Jsonb(asdict(subject)),
+                    binding_digest(subject),
+                    subject_sql_application_name,
+                    boot,
+                    start_time_ticks,
+                    pid_namespace[0],
+                    pid_namespace[1],
+                    destination_digest,
+                    destination.scope,
+                    principal_id,
+                ),
+            ).fetchone()
+            if inserted is None or _root_opening(inserted, credit_ids) != expected:
+                raise SchemaMismatch("SQL root opening differs from its RETURNING projection")
+
+            for linked_credit in credit_ids:
+                linked = self._q(
+                    c,
+                    """INSERT INTO {root_credits}(root_intent_id,journal_id,credit_id)
+                    VALUES(%s,%s,%s) RETURNING root_intent_id,journal_id,credit_id""",
+                    (request, journal, linked_credit),
+                ).fetchone()
+                if linked is None or tuple(map(str, linked)) != (
+                    request,
+                    journal,
+                    linked_credit,
+                ):
+                    raise SchemaMismatch("SQL root metadata credit link was not persisted")
+
+            persisted_links = tuple(
+                str(row["credit_id"])
+                for row in self._q(
+                    c,
+                    """SELECT credit_id FROM {root_credits}
+                    WHERE root_intent_id=%s AND journal_id=%s ORDER BY credit_id""",
+                    (request, journal),
+                ).fetchall()
+            )
+            receipt = _root_opening(inserted, persisted_links)
+            if persisted_links != credit_ids or receipt != expected:
+                raise SchemaMismatch("SQL root metadata credit links differ from complete coverage")
+
+        def validate_issuer() -> None:
+            channel._check_funded_worker()
+            if self._identity.current_binding() != issuer_binding:
+                raise SqlIntentUnavailable("SQL root issuer binding changed after commit")
+
+        validate_issuer()
+        return _issue_confirmed_root_sql_opening(receipt, validate=validate_issuer)
 
     def record_child_opening(
         self,
@@ -818,6 +1080,49 @@ class SqlIntentRepository:
             ) != (binding_digest(binding), binding.process_pid, binding.process_started_at):
                 raise SchemaMismatch("SQL intent has a different original process binding")
             return None if row is None else _receipt(row)
+
+    def read_root_opening(
+        self,
+        channel: Connection,
+        *,
+        journal_id: str,
+        intent_id: str,
+        owner: bool = False,
+    ) -> RootSqlOpeningIntent | None:
+        """Read descriptive root data; readback never recreates signing authority."""
+        journal, request = canonical_id(journal_id), canonical_id(intent_id)
+        if type(owner) is not bool:
+            raise ValueError("owner must be an explicit boolean")
+        with self._transaction(channel, journal, owner=owner) as (c, binding):
+            if not owner:
+                self._quota(c, journal, binding)
+            row = self._q(
+                c,
+                "SELECT * FROM {roots} WHERE journal_id=%s AND intent_id=%s",
+                (journal, request),
+            ).fetchone()
+            if row is None:
+                return None
+            credit_ids = tuple(
+                str(link["credit_id"])
+                for link in self._q(
+                    c,
+                    """SELECT credit_id FROM {root_credits}
+                    WHERE root_intent_id=%s AND journal_id=%s ORDER BY credit_id""",
+                    (request, journal),
+                ).fetchall()
+            )
+            receipt = _root_opening(row, credit_ids)
+            if owner:
+                quota = self._quota(c, journal, receipt.subject)
+                if str(quota["credit_id"]) != receipt.credit_id:
+                    raise SchemaMismatch("SQL root primary credit differs from its journal quota")
+                for credit_id in receipt.credit_ids:
+                    self._credit(c, credit_id, receipt.subject)
+                return receipt
+            if receipt.subject_binding_sha256 != binding_digest(binding):
+                raise SqlIntentUnavailable("root SQL opening belongs to another process binding")
+            return receipt
 
     def fence(self, channel: Connection, *, journal_id: str) -> None:
         journal = canonical_id(journal_id)

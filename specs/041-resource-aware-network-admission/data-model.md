@@ -156,3 +156,12 @@ C3.C reutiliza supervisor, permisos/solicitudes v4, cargos C1 y asociaciones SQL
 ## Tipos estáticos sin esquema nuevo — T021.T
 
 unique_indexes declara dict[str,set[tuple[str|None,...]]] porque los índices de expresión pueden carecer de nombre de columna. WorkService.artifacts conserva WorkArtifactStore|None del parámetro. Ghost cleanup Herdr declara sets de str y mapa de owners opcionales. El payload JSON peer se trata como object hasta la igualdad exacta. Ninguna anotación crea autoridad, estado persistido o migración. [Validación](validation-t021-typing.json).
+
+
+### T014.R.G — registro de génesis y certificado de una apertura raíz
+
+`RootSqlOpeningIntent` es dato inmutable: UUID de journal/intent/sesión, ordinal1, binding exacto y digest, etiqueta SQL, boot/ticks/namespace PID, destino native/main, principal y conjunto completo ordenado de créditos metadata con huella de membresía. SQL5 añade fila root y links owner-only; runtime solo SELECT. Reutiliza créditos amount1 storage/postgres_session existentes; no concede otra capacidad ni convierte el crédito en reserva de datos. Comparte UUID, ordinal, fence y cuota lógica con el journal existente, sin fijarlo al backend del issuer.
+
+`ConfirmedRootSqlOpening` es una capacidad opaca, intransferible, ligada al canal/worker original, emitida solo después del commit confirmado y con un solo intento de firma. Leer la fila no reconstruye esa capacidad. `SignedRootSqlOpening` es certificado JSON canónico acotado16KiB, firma Ed25519 y key_id que referencia claves públicas confiables externas; no incluye claves públicas ni privadas. `RootSqlSubject` solo describe una petición.
+
+La instalación exige root pendiente sin SQL previamente admitido y certifica una sola apertura física. Tras el intento, error/cierre/fork no rearman el permiso ni devuelven crédito. La unidad de conexión no fija un número de agentes en la red.

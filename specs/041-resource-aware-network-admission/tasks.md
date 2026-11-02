@@ -235,3 +235,20 @@ T021.T — soporte de verificación tipada, validado por componente: T1 contrast
 
 
 T021.T (2026-11-02), deuda de tipos corregida por componente: anotaciones concretas en el lector nativo OpenCode v2 y artefactos Work, colecciones/clave opcional Herdr y frontera JSON de errores peer. Mypy en frío aprueba **454 archivos de src/** y los dos entrypoints Bridge, con la misma configuración, sin casts ni nuevas supresiones. Los ocho diagnósticos del cono inicial y los ocho de la base src/ son conjuntos distintos; tras corregir los tres primeros archivos, src/ dejó un retorno Any adicional, también resuelto. Regresión aplicable: **129 PASS**, 0 fallos/errores/omisiones y 5 advertencias; cuatro fuentes idénticas al archivo ejecutado. Registro/alias/owners, resultados Work e igualdad exacta task_not_found/outages conservados. Formato, arquitectura y limpieza PostgreSQL aprobados. No se suma esta selección a la regresión Bridge anterior ni se acepta root/custodia/M1/M2/M3/SDK/UI; los diez gates globales permanecen abiertos. [Validación](validation-t021-typing.json), [composición](composition-t021-typing.md).
+
+
+T014.R.G — génesis explícita de control, validada por componente: G1 contrato/modelos/certificado; G2 RED y registro SQL owner-only con contador común; G3 autorización del emisor y consumo pre-TCP de un uso; G4 pruebas reales de asignación/firma/primer TCP y negativos; G5 integración de ramas, composición/revisión/Graphify/recibos/main. La raíz externa y su integración completa no se infieren de una opción; los diez gates globales siguen abiertos.
+
+
+T014.R.G4.D, validado por componente: D1 contrato/plan/tareas y grafo focalizado del supervisor; D2 RED de etapas pre-subject; D3 códigos estructurados conservando guard/mensaje/cleanup; D4 negativos, compatibilidad, regresión, revisión y recibo. No atribuir el fallo histórico a un motivo que el recibo no conserva.
+
+G4.D: el error conserva además una única nota JSON canónica `caos.resource-binding-rejection.v1` visible en traceback/JUnit, con únicamente `schema`, `failure_stage` y `failure_type`; `str`, args y decisiones permanecen iguales.
+
+G4.D compatibilidad: los atributos están disponibles en Python>=3.10; la nota de traceback se añade únicamente cuando el runtime dispone de `add_note` callable. Probar ambos modos sin cambiar el requisito de Python ni el rechazo original.
+
+G4.D2: reproducir y corregir las dos rutas de launch que invocaban add_note sin soporte; conservar la excepción original y, tras Popen, el owner exacto para join. Las notas opcionales nunca deben reemplazar el fallo primario. Dos negativos ejecutan ausencia de método y limpieza real del hijo, sin afirmar aceptación nativa completa de Python3.10.
+
+
+T014.R.G (2026-11-02), génesis SQL raíz validada por componente: registro SQL5 owner-only sobre créditos metadata existentes, emisor/destinatario separados, firma Ed25519 solo tras commit confirmado y verificación del kernel/binding/destino antes de un único TCP de control. La raíz confirma el registro y usa su propio journal en el mismo canal; pérdidas posteriores conservan crédito/fila y no rearman autoridad. Diagnóstico de rechazo estructurado sin secretos y corrección de dos rutas que ocultaban error/owner al faltar add_note. Regresión: **1528 PASS**, sin fallos, errores ni omisiones; 16 advertencias, 109 módulos, conserva 1.423 casos y añade 105. Nueve fuentes/15 Python ejecutados exactos, tipos en 457 archivos en frío y formato/arquitectura aprobados; mismo PostgreSQL sin recursos de prueba pendientes. El rechazo histórico pre-subject conserva causa no demostrada. Emisor/CLI productivos, control persistente/activación compartida, custodia, proveedores nativos y M1/M2/M3/SDK/UI siguen pendientes; los diez gates permanecen abiertos. [Validación](validation-t014-root-sql-genesis.json), [composición](composition-t014-root-sql-genesis.md).
+
+T014.R.H — pendiente de especificación/implementación: reutilizar el canal raíz en control persistente, activación compartida, repositorios, monitor y sampler; no abrir una segunda conexión ni transferir el handle a otro worker. La propuesta privada no es código implementado.

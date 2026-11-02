@@ -1,0 +1,438 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-02",
+  "component": "T014.R.G",
+  "status": "validated-controlled-root-sql-genesis",
+  "base_head": "a64c9797f2a27f8186946e8ba0cfd485af48baf9",
+  "acceptance": {
+    "phase": "root-genesis-final",
+    "passed": 1528,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 16,
+    "previous_cases": 1423,
+    "previous_case_ids_preserved": true,
+    "new_distinct_cases": 105,
+    "selected_test_files": 109,
+    "seconds": 1336.273,
+    "available_mib": 10188,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 9,
+    "owned_python_archive_match": 15,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_root_genesis.py",
+        "sha256": "e690e07fc4fba8bc2eb851dea5ca98d91d34ae6b8c118dede8d5b862371e62b0"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/sql_root_genesis.py",
+        "sha256": "4f7e1feb19780e7d51144e8b8c9685f8fd83d2c8a3fe6aa4ab759762e9dca6a7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+        "sha256": "ba4511a2f7b499b1c1dbd6b773148b4bb42b59ad41a8308d325a0a1fcf753b6d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "7dec0cbb77b6a5777c6268e3dee96b0fb7f242d596356bc7c724aa7c06a169b8"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "4497693bb4164de446c123b267bc95219b90d820fdbf97dc3fa1a26befeacb00"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "0a2a4cbd62569f01182ff15910b72bcba597695d3a0b8f8573599f190c5a49ec"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "c8466823ea740895e8b1dd91b687899d9454615691cd512a82a9758eaf4a6e26"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "b6f8bd3881cba7c239898537d727561ee97c5da25dcadbd12a2777474bbdf05d"
+      },
+      {
+        "path": "test/utils/test_root_sql_startup.py",
+        "sha256": "f25e2495c1eba966ee7b64fbec1fc092720b9b7d32bc3fcfdbf0e0dda893ae9c"
+      },
+      {
+        "path": "test/utils/test_sql_root_genesis.py",
+        "sha256": "4c2a8b0f02bffc695d19ab691ba995dd51f4eba52e899b383b48c374dc076f4a"
+      },
+      {
+        "path": "test/postgres/test_sql_root_genesis.py",
+        "sha256": "3f4fb13117fdcc1ed0d143ccb1a68a37187a0507c5ced0e5b4c1b27c116bba60"
+      },
+      {
+        "path": "test/postgres/test_root_sql_control.py",
+        "sha256": "a732700be8a83093227f95be9a3731189b05ce7760417652c5ec1f4dbf38c63e"
+      },
+      {
+        "path": "test/services/test_root_sql_control.py",
+        "sha256": "0371c6999d47bb19d0bd4fcdddd66198e50a5abea063dd296c202b2d73f1af7c"
+      },
+      {
+        "path": "test/services/test_resource_handshake_diagnostics.py",
+        "sha256": "2b373cc9f719b2c4271c1a4ee1d6611550c3f0ec751e91127ea1777db89fdb2f"
+      }
+    ],
+    "archive_sha256": "8c3ebc361a69bf413419d0e60ff9b5d1dca6928e3e69ec9d2846f18177515511",
+    "foreign_graphify_files_preserved": 12
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/models/sql_root_genesis.py",
+      "sha256": "e690e07fc4fba8bc2eb851dea5ca98d91d34ae6b8c118dede8d5b862371e62b0"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/sql_root_genesis.py",
+      "sha256": "4f7e1feb19780e7d51144e8b8c9685f8fd83d2c8a3fe6aa4ab759762e9dca6a7"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+      "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+      "sha256": "ba4511a2f7b499b1c1dbd6b773148b4bb42b59ad41a8308d325a0a1fcf753b6d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+      "sha256": "7dec0cbb77b6a5777c6268e3dee96b0fb7f242d596356bc7c724aa7c06a169b8"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+      "sha256": "4497693bb4164de446c123b267bc95219b90d820fdbf97dc3fa1a26befeacb00"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+      "sha256": "0a2a4cbd62569f01182ff15910b72bcba597695d3a0b8f8573599f190c5a49ec"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+      "sha256": "c8466823ea740895e8b1dd91b687899d9454615691cd512a82a9758eaf4a6e26"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+      "sha256": "b6f8bd3881cba7c239898537d727561ee97c5da25dcadbd12a2777474bbdf05d"
+    },
+    {
+      "path": "test/utils/test_root_sql_startup.py",
+      "sha256": "f25e2495c1eba966ee7b64fbec1fc092720b9b7d32bc3fcfdbf0e0dda893ae9c"
+    },
+    {
+      "path": "test/utils/test_sql_root_genesis.py",
+      "sha256": "4c2a8b0f02bffc695d19ab691ba995dd51f4eba52e899b383b48c374dc076f4a"
+    },
+    {
+      "path": "test/postgres/test_sql_root_genesis.py",
+      "sha256": "3f4fb13117fdcc1ed0d143ccb1a68a37187a0507c5ced0e5b4c1b27c116bba60"
+    },
+    {
+      "path": "test/postgres/test_root_sql_control.py",
+      "sha256": "a732700be8a83093227f95be9a3731189b05ce7760417652c5ec1f4dbf38c63e"
+    },
+    {
+      "path": "test/services/test_root_sql_control.py",
+      "sha256": "0371c6999d47bb19d0bd4fcdddd66198e50a5abea063dd296c202b2d73f1af7c"
+    },
+    {
+      "path": "test/services/test_resource_handshake_diagnostics.py",
+      "sha256": "2b373cc9f719b2c4271c1a4ee1d6611550c3f0ec751e91127ea1777db89fdb2f"
+    }
+  ],
+  "architecture": {
+    "files": 460,
+    "dependencies": 2078,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "partial": true,
+    "private": true,
+    "snapshot": true,
+    "scope": "owned_production_and_source_verified_neighbours",
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "dc8ae06cb109a7a02dd047e20114733199dbf4b2fbc06ce2b7c018daf66d89ac"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "c8466823ea740895e8b1dd91b687899d9454615691cd512a82a9758eaf4a6e26"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "0a2a4cbd62569f01182ff15910b72bcba597695d3a0b8f8573599f190c5a49ec"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "4497693bb4164de446c123b267bc95219b90d820fdbf97dc3fa1a26befeacb00"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+        "sha256": "1f09648199c6abd473a1bf6ed62af89f7de4096002417c7ead327ec6d8c9b5ea"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "0fe01bdf4ef9cb13979fe0f4a7e30a574a1ef57bd720701442ba072837ae7e75"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_root_genesis.py",
+        "sha256": "e690e07fc4fba8bc2eb851dea5ca98d91d34ae6b8c118dede8d5b862371e62b0"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+        "sha256": "ba4511a2f7b499b1c1dbd6b773148b4bb42b59ad41a8308d325a0a1fcf753b6d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3bff8a5090a2e8ade13b1cf651aa82fa2a703b1caeaedc8354404da535550051"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "b6f8bd3881cba7c239898537d727561ee97c5da25dcadbd12a2777474bbdf05d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/sql_root_genesis.py",
+        "sha256": "4f7e1feb19780e7d51144e8b8c9685f8fd83d2c8a3fe6aa4ab759762e9dca6a7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "7dec0cbb77b6a5777c6268e3dee96b0fb7f242d596356bc7c724aa7c06a169b8"
+      },
+      {
+        "path": "test/services/test_resource_process_supervisor.py",
+        "sha256": "bdd524831271ae1c5ce6a63c9f15ad0c3bb556f2e00912441655c4389e6e478b"
+      }
+    ],
+    "nodes": 794,
+    "edges": 2367,
+    "failed_sources": []
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "exit_code": 0
+      },
+      {
+        "name": "isort",
+        "exit_code": 0
+      }
+    ],
+    "actual_hook_format": [
+      {
+        "name": "black",
+        "exit_code": 0
+      },
+      {
+        "name": "isort",
+        "exit_code": 0
+      }
+    ],
+    "cold_types": {
+      "source_files": 457,
+      "errors": 0,
+      "incremental": false,
+      "configuration_changed": false,
+      "new_suppressions": false
+    },
+    "migration_checksums": {
+      "SQL_OPENING_MIGRATIONS": {
+        "preserved_versions": 4,
+        "current_versions": 5,
+        "checksums": [
+          "71678a014d4780947d4c093152eee9d4e57e995fcfeaa2dfdd44d9945b82f7ed",
+          "c6e27af1094d494a3884e753e72210ea4dd22758d41db3c2fdccfbb56d65e2ad",
+          "21ee6e386ccd774c1171bcb17d82082bcce33f27de91dec6b69156619df00074",
+          "9fbbf8be7dffe1766253152229d42d6c3e2bd1544c321f7c1349d134a51621ee",
+          "8c834e13c19ecb66caf0fde6f5b464cd78f762f0e6980d1026d9a5ea9e179c5b"
+        ]
+      },
+      "RESOURCE_ADMISSION_MIGRATIONS": {
+        "preserved_versions": 7,
+        "current_versions": 7,
+        "checksums": [
+          "6d1c5b17a332de83c647c2498f757da432ac13b502b2cead06d4c3950f5ef49e",
+          "c183ecaffafcce3a3166fea88a0aea54bfd00d5820b20e9e5594105f1a2c8f40",
+          "e4881dd35a2c59659a6395d31dd342c8cd7b0b9e6946998e4419cdd04eff98af",
+          "1faa34ac79c790de65d8776a8a078360b9788cdf259d359ac12e0eefe85a01c1",
+          "9cb73d9762cb8c0d846bb2ecdee811744c6c72029b830d623c2452e43762f8aa",
+          "ee8f728301be19bc59c6574cefb69cb4df6819f8b943629bf30f289d3d1e7208",
+          "690e0f2bd29948d300cdbb04de945f61fdaa4a03be226621b4a82a3696418e2f"
+        ]
+      }
+    }
+  },
+  "behavior": {
+    "owner_only_sql5": true,
+    "complete_existing_metadata_credit_set": true,
+    "no_second_capacity_debit": true,
+    "subject_quota_and_original_issuer_worker": true,
+    "root_does_not_claim_issuer_backend": true,
+    "confirmed_commit_capability_only": true,
+    "ed25519_external_trusted_keys": true,
+    "strict_canonical_bounded_certificate": true,
+    "kernel_binding_target_label_before_tcp": true,
+    "one_control_connection_readback_before_yield": true,
+    "postcommit_key_failure_retains_record": true,
+    "readback_loss_refuses_yield": true,
+    "no_refund_or_rearm": true,
+    "pre_subject_rejection_diagnostic": "caos.resource-binding-rejection.v1",
+    "optional_note_preserves_primary_error_and_owner": true
+  },
+  "history": [
+    {
+      "phase": "root-genesis-gate-red",
+      "failed": 9,
+      "classification": "missing_root_gate"
+    },
+    {
+      "phase": "root-genesis-gate-green",
+      "passed": 94
+    },
+    {
+      "phase": "root-genesis-models-green",
+      "passed": 121
+    },
+    {
+      "phase": "root-genesis-repository-red",
+      "failed": 10,
+      "classification": "nine_missing_api_one_test_wrong_database_role"
+    },
+    {
+      "phase": "root-genesis-repository-focused",
+      "passed": 63,
+      "failed": 2,
+      "classification": "one_observer_uuid_text_test_bug_one_unproven_pre_subject_process_refusal"
+    },
+    {
+      "phase": "root-control-red",
+      "failed": 3,
+      "classification": "missing_control_composition"
+    },
+    {
+      "phase": "root-control-green",
+      "passed": 14
+    },
+    {
+      "phase": "root-control-reviewed",
+      "passed": 98
+    },
+    {
+      "phase": "root-handshake-diagnostic-red",
+      "failed": 3,
+      "classification": "missing_structured_diagnostic"
+    },
+    {
+      "phase": "root-handshake-diagnostic-green",
+      "passed": 58
+    },
+    {
+      "phase": "root-handshake-portable",
+      "passed": 44
+    },
+    {
+      "phase": "root-launch-note-red",
+      "failed": 2,
+      "classification": "direct_note_call_masks_original_error_and_owner_without_method_support"
+    },
+    {
+      "phase": "root-launch-note-green",
+      "passed": 46
+    }
+  ],
+  "peer_review": {
+    "reviewer_model": "GPT-6 Luna",
+    "reasoning_effort": "max",
+    "workers": [
+      "root_genesis_models",
+      "root_genesis_repository",
+      "root_control_contract_review"
+    ],
+    "private_worktrees": true,
+    "peer_tests_executed": false,
+    "lead_integrates_and_serializes_tests": true,
+    "g1_gate_integration_finding": "Corrected by root_sql_control_channel verifying certificate/kernel/binding/target before installing root permission; real process tests passed.",
+    "issuer_subject_quota_finding": "Corrected position/quota to subject; signing callback retains original issuer; cross-binding PostgreSQL test passed.",
+    "launch_note_finding": "Two preexisting direct add_note calls masked original errors without method support; tests-only RED reproduced two failures. Optional helper now preserves original error and exact owner. Peer source correction review found blocker resolved; final lead tests pending.",
+    "current_static_blockers": [],
+    "claude_review": {
+      "status": "quota_failed",
+      "job_id": "3019460974eb4bfb9536288450f4dcf2",
+      "retried": false
+    },
+    "limits": [
+      "No production deployment issuer or CLI integration",
+      "No full native Python3.10 acceptance; absent method simulated",
+      "Historical pre-subject handshake failure cause remains unproven",
+      "Shared activation/persistent control/physical custody/global gates not accepted"
+    ]
+  },
+  "limits": [
+    "External deployment issuer must already be authorized and funded; no production issuer/CLI call site is integrated.",
+    "Shared activation, persistent control actor/repository/sampler reuse and complete root CLI lifecycle remain pending.",
+    "No native model/provider/HTTP/WS/distributed-network/custody or global M1/M2/M3/SDK/UI acceptance.",
+    "Absent add_note is simulated under pinned modern Python; not full native Python3.10 acceptance.",
+    "Preexisting direct add_note calls in runtime_channel/bridge.py and bridge_supervisor.py remain outside this root-supervisor correction and need separate compatibility validation.",
+    "Original historical pre-subject handshake refusal has no proven cause. New stage/type diagnostics do not explain it retrospectively.",
+    "Trusted in-process runtime boundary; internal flags, private factory mutation, direct drivers or clean-env exec are not an arbitrary-Python sandbox.",
+    "A single root physical-control grant does not limit agents in the network. Membership/domain/node resource admission remains separate."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261102-root-sql-genesis",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "composition_report": "composition-t014-root-sql-genesis.md",
+  "global_acceptance": false,
+  "production_cli_integrated": false,
+  "external_deployment_issuer_integrated": false,
+  "real_scope": {
+    "postgresql": true,
+    "separate_root_process": true,
+    "actual_driver": true,
+    "verified_principal": "trusted internal test factory; not a live operator JWT authentication flow",
+    "deployment_issuer": "controlled already-funded parent",
+    "native_provider_model": false,
+    "http_ws": false,
+    "distributed_network": false
+  }
+}
