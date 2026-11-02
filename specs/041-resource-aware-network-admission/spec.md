@@ -326,3 +326,11 @@ La espera del servidor sin mensaje devuelve un estado Idle explícito distinto d
 ## T014.C2b.P2c.C3.C — Bridge con padre financiado
 
 El entrypoint Bridge supervisado debe seleccionar explícitamente el publisher de permiso cuando existe el marcador reservado, conservando rechazo de marcadores inválidos y el recorrido de identidad legado. El adaptador ofrece broker opt-in y un contexto funded_bridge con canal de control original ya financiado, repositorio/journal, UUID de intento y reserva de datos prepagada. Validar propiedad y destino canónico antes de Popen. Confirmar cargo/plan antes de permitir SQL inicial del Bridge real; atender aperturas posteriores con serve_child_sql_request desde el mismo worker, sin hilos, pools o límites de agentes nuevos. El contexto siempre une y cierra el hijo propio, preserva el error primario y nunca devuelve cargos por salida/EOF. No activa automáticamente el CLI de raíz no financiado: genesis, inventario y custodia siguen pendientes.
+
+
+## T021.T — errores de tipos preexistentes en la integración
+
+El chequeo de tipos en frío debe dejar de emitir los ocho errores reproducidos en las dependencias de Bridge, sin ignorar diagnósticos ni cambiar mypy.ini/opciones. Conservar lector OpenCode nativo, protocolo de artefactos Work y correspondencia de alias/owners Herdr. La ausencia de un pane previo no es una clave str y debe tratarse antes de consultar el mapa.
+
+
+Ampliación T021.T: el chequeo completo src/ debe resolver también el retorno Any de la clasificación JSON de task_not_found. El error ya existe fuera del cono del chequeo de dos entrypoints; conservar la igualdad exacta y no convertir outages en ausencia.

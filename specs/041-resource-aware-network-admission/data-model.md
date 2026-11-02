@@ -151,3 +151,8 @@ SqlBrokerRequest y SqlBrokerPermissionRecord usan versión 4 y kinds distintos, 
 ## Sin nuevos modelos de autoridad — T014.C2b.P2c.C3.C
 
 C3.C reutiliza supervisor, permisos/solicitudes v4, cargos C1 y asociaciones SQL4 existentes. No añade esquema, permiso por datos ni crédito genesis. El contexto retiene el supervisor exacto en resource_process_owner ante fallo y no transforma su observación de salida en cierre de sesiones. [Validación](validation-t014-funded-bridge-startup.json).
+
+
+## Tipos estáticos sin esquema nuevo — T021.T
+
+unique_indexes declara dict[str,set[tuple[str|None,...]]] porque los índices de expresión pueden carecer de nombre de columna. WorkService.artifacts conserva WorkArtifactStore|None del parámetro. Ghost cleanup Herdr declara sets de str y mapa de owners opcionales. El payload JSON peer se trata como object hasta la igualdad exacta. Ninguna anotación crea autoridad, estado persistido o migración. [Validación](validation-t021-typing.json).

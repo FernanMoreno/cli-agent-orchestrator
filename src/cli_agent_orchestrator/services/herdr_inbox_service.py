@@ -241,7 +241,11 @@ class HerdrInboxService:
         """
         with self._routing_guard:
             old_pane = self._terminal_to_pane.get(terminal_id)
-            if old_pane != pane_id and self._pane_to_terminal.get(old_pane) == terminal_id:
+            if (
+                old_pane is not None
+                and old_pane != pane_id
+                and self._pane_to_terminal.get(old_pane) == terminal_id
+            ):
                 self._pane_to_terminal.pop(old_pane, None)
             self._pane_to_terminal[pane_id] = terminal_id
             self._terminal_to_pane[terminal_id] = pane_id
@@ -362,8 +366,10 @@ class HerdrInboxService:
         from cli_agent_orchestrator.clients.database import list_terminals_by_session
         from cli_agent_orchestrator.services.session_lock import session_lifecycle_lock
 
-        deleted, deferred, visited = set(), set(), set()
-        routing_owners = {}
+        deleted: Set[str] = set()
+        deferred: Set[str] = set()
+        visited: Set[str] = set()
+        routing_owners: Dict[str, Optional[object]] = {}
         with session_lifecycle_lock(session_name):
             try:
                 rows = list_terminals_by_session(session_name)

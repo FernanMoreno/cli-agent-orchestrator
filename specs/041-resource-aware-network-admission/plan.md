@@ -545,3 +545,11 @@ El claim de un cargo puede permanecer sin fila después de rollback o rechazo pr
 ## T014.C2b.P2c.C3.C — Bridge con padre financiado
 
 Modificar runtime_channel/bridge.py para publisher estricto según presencia del marcador reservado, delegando validación al protocolo existente. Extender launch_bridge con sql_broker bool explícito conservando kwargs legados sin opt-in. Context manager funded_bridge valida Connection y SqlIntentRepository exactos, worker financiado, destino main canónico/repository/channel y UUIDs antes de lanzar; recibe el primer recibo y cede el ResourceProcessSupervisor al scheduler del llamante. Finally siempre signal/wait/close, incluidos errores post-Popen y before-yield; conservar cargo/error original. No crear servidor de root ni transferir Connection entre tasks. TDD de launcher/propiedad/cleanup y PG con argv Bridge real, init_runtime_db y RemoteOperationStore/restore reales hasta sentinel de runtime; negativos de presupuesto/configuración/canal y regresión de los recorridos Bridge/broker afectados.
+
+
+## T021.T — errores de tipos preexistentes en la integración
+
+T021.T1: anotar unique_indexes como dict[str,set[tuple[str|None,...]]] según PRAGMA de índices de expresión; anotar self.artifacts con el mismo WorkArtifactStore|None del parámetro para resolver inferencia circular. Declarar conjuntos/owners de ghost cleanup y estrechar old_pane no nulo antes de mapas str. No añadir casts/ignores ni cambiar configuración. TDD usa el diagnóstico frío de ocho fallos ya reproducido sobre bytes idénticos a main; pruebas existentes de lector/índices OpenCode, resultados Work y registro/reemplazo/cleanup Herdr, sin pruebas nuevas que reflejen anotaciones. Verificar en frío mismas opciones, ampliar a chequeo src/ si aparecen dudas, arquitectura/revisión/diff/recibos.
+
+
+El único diagnóstico restante del chequeo completo, services/local_peer_service.py:_remote_task_not_found, se corrige asignando response.json() a object antes de comparar con la forma exacta. Sin cast/bool/ignore ni nuevo protocolo o replay. Conservar ValueError→False y ampliar a pruebas existentes de receipts peer. La fase t021-typing-regression quedó preparada pero NO ejecutada antes de esta ampliación; una fase fresca fijará la fuente final.

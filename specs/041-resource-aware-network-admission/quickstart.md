@@ -125,3 +125,8 @@ Provisionar SQL4 por el dueño antes de runtime. Crear supervisor, Connection de
 ## Llamante original antes de lanzar Bridge — T014.C2b.P2c.C3.C
 
 El operador debe provisionar el journal SQL4 y aportar un worker de control ya financiado. Mantener activos permit.operation y connect alrededor de funded_bridge(channel=..., repository=..., journal_id=..., intent_id=..., session_reservation=...). En el cuerpo, atender solicitudes con serve_child_sql_request desde ese worker hasta cerrar/recoger el hijo; para apagado ordenado, servir también durante su cleanup financiado. No mover objetos a otro thread/task ni crear un hilo por agente. La raíz, su primer TCP y el driver persistente multinodo aún deben implementarse; invocar el CLI actual no activa este contexto automáticamente. [Validación](validation-t014-funded-bridge-startup.json).
+
+
+## Verificar tipos sin éxito aparente de caché — T021.T
+
+Ejecutar mypy src/ con un directorio de caché privado nuevo y repetir los dos entrypoints Bridge con otro directorio nuevo, manteniendo mypy.ini y las mismas opciones. Conservar logs/códigos de salida y comparar bytes de configuración con la base. Ejecutar los cuatro módulos de prueba listados en el recibo; no sumar casos solapados a ejecuciones previas ni interpretar este chequeo estático como aceptación nativa del proveedor. [Validación](validation-t021-typing.json).

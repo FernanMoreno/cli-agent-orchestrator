@@ -487,7 +487,7 @@ class WorkService:
             callable(getattr(artifacts, method, None)) for method in ("publish", "read")
         ):
             raise ValueError("workflow results require a durable artifact store")
-        self.artifacts = artifacts
+        self.artifacts: WorkArtifactStore | None = artifacts
         if origins is not None and artifacts is not None:
             origins._bind_result_service(self)
 

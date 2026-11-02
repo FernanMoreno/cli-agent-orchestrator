@@ -98,7 +98,10 @@ def _schema_matches(db: sqlite3.Connection, stop: float) -> bool:
     if session.get("id") != "TEXT":
         return False
 
-    unique_indexes = {"session_message": set(), "session_v2": set()}
+    unique_indexes: dict[str, set[tuple[str | None, ...]]] = {
+        "session_message": set(),
+        "session_v2": set(),
+    }
     for table in unique_indexes:
         _check_deadline(stop)
         for row in db.execute(f"PRAGMA index_list({table})"):

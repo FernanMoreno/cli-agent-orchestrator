@@ -203,3 +203,8 @@ launch(sql_broker=True, first_sql_grant=True) crea un FD reservado distinto del 
 ## Contexto de arranque Bridge — T014.C2b.P2c.C3.C
 
 launch_bridge(sql_broker=True) conserva argv fijo y solicita primer permiso más broker; el modo legado conserva kwargs previos. funded_bridge exige Connection/repository exactos, UUIDs canónicos, destino main del proceso y reserva no nula; comprueba worker financiado antes de Popen. Recibe el primer grant antes de yield. El scheduler llama a serve_child_sql_request en el mismo worker mientras permanece abierto el scope original. Una salida normal sin observación se rechaza sin descartar handle; fallo primario se conserva aunque falle cleanup. El env del hijo debe preservar destino; una desviación de realm se rechaza en el handshake; rol/TLS/path incompatibles se rechazan por el permiso antes del driver. [Validación](../validation-t014-funded-bridge-startup.json).
+
+
+## Contratos runtime preservados — T021.T
+
+Un pane previo inexistente se descarta antes de operar sobre mapas con claves str; registro inicial, reemplazo y owner exacto mantienen comportamiento. La clasificación peer solo acepta HTTP404 con el objeto task_not_found exacto; campos extra, JSON inválido, timeout, 403/503 y otros 404 conservan la semántica de outage/reconcile sin modificar recibos históricos. Esta corrección no cambia admisión o permisos. [Validación](../validation-t021-typing.json).

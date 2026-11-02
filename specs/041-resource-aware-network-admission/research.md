@@ -159,3 +159,8 @@ El timeout del primer recv del servidor no ha consumido un mensaje SEQPACKET y d
 ## Primera conexión, rechazo y testigo de salida — T014.C2b.P2c.C3.C
 
 El control HTTP/WS propio de Bridge arranca después del primer SQL y no puede financiarlo. Un contexto con canal ya financiado conecta una frontera real pero no resuelve genesis. La primera nativa rechazó correctamente un FD heredado de la fixture; otra ejecución rechazó la vista inicial antes del driver y su causa concreta no quedó capturada. No se relajó el guard: instrumentación posterior solo observa identidades. La revisión reprodujo una salida normal sin observación; ahora conserva handle/error. La fixture anterior de restore usaba async def dentro de asyncio.to_thread y se corrigió a función síncrona, conservando sus aserciones. [Validación](validation-t014-funded-bridge-startup.json).
+
+
+## Alcance frío e inferencia de tipos — T021.T
+
+Mypy.ini es la configuración efectiva del repositorio; no se modificó. La revisión de dos entrypoints reproducía ocho diagnósticos importados; src/ completo sobre la base, mediante shadow-file de las fuentes originales, también daba ocho, con conjuntos distintos según resolución del ciclo WorkService/WorkOrigins. Tras las tres primeras correcciones el cono quedó limpio y src/ reveló un único retorno Any en local_peer_service; asignar el JSON a object conserva la comparación exacta. La comprobación final usa cachés nuevas en ambos alcances y obtiene cero errores. [Validación](validation-t021-typing.json).

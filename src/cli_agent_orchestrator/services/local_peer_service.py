@@ -1316,7 +1316,8 @@ def _remote_task_not_found(error: Exception) -> bool:
     if response is None or response.status_code != 404:
         return False
     try:
-        return response.json() == {"detail": {"kind": "task_not_found"}}
+        payload: object = response.json()
+        return payload == {"detail": {"kind": "task_not_found"}}
     except ValueError:
         return False
 

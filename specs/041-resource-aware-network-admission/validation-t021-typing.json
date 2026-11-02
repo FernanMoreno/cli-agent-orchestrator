@@ -1,0 +1,150 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-02",
+  "component": "T021.T",
+  "status": "validated-existing-type-debt-corrections",
+  "base_head": "27c5a12bd57f79ba955064584c762bec530d1449",
+  "acceptance": {
+    "phase": "t021-typing-regression-checked",
+    "passed": 129,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 5,
+    "selected_test_files": 4,
+    "seconds": 171.714,
+    "available_mib": 9580,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "owned_python_archive_match": 4,
+    "mypy_src_files": 454,
+    "mypy_entrypoints_files": 2,
+    "mypy_final_errors": 0,
+    "cold_cache": true,
+    "unchanged_configuration": {
+      "mypy.ini": "e4c3628682fb9d3425ad860eebcad3c977239ab7e63f1bd727b90a1407cb5865",
+      "pyproject.toml": "716d3a13c74ce42c608e39f407abfb205d4025ff28fa101791d0d3cdc2c04159"
+    },
+    "candidate_archive_sha256": "51121fbdb83f2d9a3c38e640ed5baca4b87b4c7f9422cb7e420204b81d855cff"
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/utils/opencode_v2_store.py",
+      "sha256": "9e4bfd3e78b0149f44f7c8c56fc2f90a93026736c4f55735b97ec12cda8ca050"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/work_service.py",
+      "sha256": "79fd4f6835418405c39f5754f923242e994ecea76fc6dade8ec548fff335a52b"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/herdr_inbox_service.py",
+      "sha256": "3f8fcba67c9f5fe12691682d4a6b01f98f1e17d7ce4df6b754bb000083516ed1"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/local_peer_service.py",
+      "sha256": "addac60ec450e835e81a1e57689585c83f3f2186ae5b9aa3fcec9b4f63374501"
+    }
+  ],
+  "architecture": {
+    "files": 457,
+    "dependencies": 2062,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "partial": true,
+    "private": true,
+    "snapshot": true,
+    "files": 5,
+    "nodes": 368,
+    "edges": 936,
+    "dangling": 73,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/utils/opencode_v2_store.py",
+        "sha256": "9e4bfd3e78b0149f44f7c8c56fc2f90a93026736c4f55735b97ec12cda8ca050"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/work_service.py",
+        "sha256": "79fd4f6835418405c39f5754f923242e994ecea76fc6dade8ec548fff335a52b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/herdr_inbox_service.py",
+        "sha256": "3f8fcba67c9f5fe12691682d4a6b01f98f1e17d7ce4df6b754bb000083516ed1"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/work_origin.py",
+        "sha256": "125aa069544e727a53cecc5236a71c35ec92dc99719c03b2abdf3b798cb3ecc5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/local_peer_service.py",
+        "sha256": "addac60ec450e835e81a1e57689585c83f3f2186ae5b9aa3fcec9b4f63374501"
+      }
+    ]
+  },
+  "changes": [
+    "Concrete nullable column tuples in native OpenCode SQLite index inspection.",
+    "WorkService.artifacts annotated with its constructor WorkArtifactStore protocol, resolving imported-module inference.",
+    "Herdr cleanup collections typed and optional old pane narrowed before str-key map access.",
+    "Peer response.json result bound to object before unchanged exact comparison; no Any bool return."
+  ],
+  "reproduction": {
+    "entrypoint_cone_before_errors": 8,
+    "full_src_shadow_baseline_errors": 8,
+    "full_src_after_first_three_fixes_errors": 1,
+    "entrypoint_cone_after_first_three_fixes_errors": 0,
+    "full_src_final_errors": 0,
+    "full_src_checked_files": 454,
+    "entrypoint_final_errors": 0,
+    "entrypoint_checked_files": 2,
+    "baseline_cone_and_full_have_different_diagnostic_sets": true,
+    "cold_caches": true,
+    "configuration_changed": false,
+    "casts_or_new_ignores": false
+  },
+  "tests": [
+    "test/providers/test_opencode_v2_store.py",
+    "test/services/test_workflow_step_result.py",
+    "test/backends/test_herdr_inbox_service.py",
+    "test/services/test_local_peer_task_missing.py"
+  ],
+  "history": [
+    "t021-typing-regression was prepared for the first three files but never executed; source scope expanded before dispatch.",
+    "t021-typing-regression-checked executed all four applicable existing modules; no new mirrored tests or changed assertions.",
+    "The earlier Bridge full1423 regression belongs to its own executed source/receipt; it is not rerun or added to this129 count."
+  ],
+  "peer_review": {
+    "model": "GPT-6 Luna",
+    "reasoning": "Max",
+    "mode": "read",
+    "verdict": "no blocking findings",
+    "lead_reviewed_and_ran_checks": true,
+    "claude_used": false
+  },
+  "knowledge": {
+    "decision": "no-new-vault-mutation",
+    "reason": "The cold-cache validation lesson is already durably recorded by markdown-20261102-funded-bridge-startup. This patch only resolves typed source boundaries and routine check results; avoid copying code or raw logs to the vault.",
+    "consulted": [
+      "wiki/index.md",
+      "wiki/hot.md",
+      "wiki/concepts/Multiagent capacity evidence.md"
+    ],
+    "existing_operation": "markdown-20261102-funded-bridge-startup"
+  },
+  "limits": [
+    "Type-check success is under unchanged repository mypy.ini policy; existing untyped-body notes are not claimed as full annotation coverage.",
+    "This static-debt correction adds no native model run, network or scalability acceptance.",
+    "No schema, migration, credentials, login, historical task/reconcile state or worker/pool/admission limit changed.",
+    "Root genesis, production funded driver/custody, M1/M2/M3, SDK/UI and the ten original gates remain open."
+  ],
+  "composition_report": "composition-t021-typing.md"
+}
