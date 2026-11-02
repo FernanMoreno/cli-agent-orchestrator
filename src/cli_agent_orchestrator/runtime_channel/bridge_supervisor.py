@@ -11,16 +11,27 @@ import json
 import os
 import signal
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 from cli_agent_orchestrator.services.resource_process_supervisor import (
     ResourceProcessSupervisor,
     ResourceProcessUnproven,
 )
 
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.clients.postgres import Connection
+    from cli_agent_orchestrator.clients.sql_intent_repository import SqlIntentRepository
 
-def launch_bridge(*, env: Mapping[str, str] | None = None) -> ResourceProcessSupervisor:
+
+def launch_bridge(
+    *, env: Mapping[str, str] | None = None, sql_broker: bool = False
+) -> ResourceProcessSupervisor:
+    if type(sql_broker) is not bool:
+        raise ValueError("Bridge SQL broker mode must be explicit")
     environment = dict(os.environ if env is None else env)
     policy = environment.get("CAO_ADMISSION_POLICY_FILE", "")
     if (
@@ -39,7 +50,82 @@ def launch_bridge(*, env: Mapping[str, str] | None = None) -> ResourceProcessSup
             json.dumps(target.identity, separators=(",", ":")).encode()
         ).hexdigest(),
         env=environment,
+        **({"first_sql_grant": True, "sql_broker": True} if sql_broker else {}),
     )
+
+
+@contextmanager
+def funded_bridge(
+    *,
+    channel: Connection,
+    repository: SqlIntentRepository,
+    journal_id: str,
+    intent_id: str,
+    session_reservation: object,
+    env: Mapping[str, str] | None = None,
+) -> Iterator[ResourceProcessSupervisor]:
+    """Launch inside the caller's still-active original funding scope.
+
+    The caller schedules serve_child_sql_request on this same worker. This
+    context creates no thread, control connection, root credit or refund.
+    Exceptional startup retains the exact owner on the original exception.
+    The child environment must preserve the parent's canonical database target;
+    a different target is refused by the authenticated handshake, before SQL.
+    """
+    from cli_agent_orchestrator.clients.database import main_target
+    from cli_agent_orchestrator.clients.postgres import Connection
+    from cli_agent_orchestrator.clients.sql_intent_repository import SqlIntentRepository
+
+    if type(channel) is not Connection or type(repository) is not SqlIntentRepository:
+        raise TypeError("Bridge requires an original funded channel and journal")
+    if session_reservation is None:
+        raise ValueError("Bridge requires a prepaid child session reservation")
+    for value in (journal_id, intent_id):
+        if type(value) is not str or str(UUID(value)) != value:
+            raise ValueError("Bridge requires canonical journal and intent identities")
+    channel._check_funded_worker()
+    target = main_target()
+    if target.scope != "main" or channel.target != target or repository.target != target:
+        raise ValueError("Bridge funding requires the canonical main destination")
+    owner: ResourceProcessSupervisor | None = None
+    first_failure: BaseException | None = None
+    try:
+        owner = launch_bridge(env=env, sql_broker=True)
+        owner.receive_binding_with_child_grant(
+            channel=channel,
+            repository=repository,
+            journal_id=journal_id,
+            intent_id=intent_id,
+            destination=target,
+            session_reservation=session_reservation,
+        )
+        yield owner
+    except BaseException as failure:
+        if owner is None:
+            retained = getattr(failure, "resource_process_owner", None)
+            if type(retained) is ResourceProcessSupervisor:
+                owner = retained
+        if owner is not None:
+            setattr(failure, "resource_process_owner", owner)
+        first_failure = failure
+        raise
+    finally:
+        if owner is not None:
+            try:
+                try:
+                    owner.send_signal(signal.SIGTERM)
+                finally:
+                    observation = owner.wait()
+                    if observation is None and first_failure is None:
+                        raise ResourceProcessUnproven("Bridge exit observation is unavailable")
+                    owner.close()
+            except BaseException as cleanup_failure:
+                if first_failure is None:
+                    setattr(cleanup_failure, "resource_process_owner", owner)
+                    raise
+                first_failure.add_note(
+                    "Bridge child cleanup is unconfirmed; its owner and credits remain retained."
+                )
 
 
 def main() -> int:

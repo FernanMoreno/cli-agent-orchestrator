@@ -92,7 +92,7 @@ async def test_exact_bootstrap_is_reused_and_legacy_remains_lazy(
         async def drain(self):
             events.append("drain")
 
-    async def restore(*args):
+    def restore(*args):
         return "incarnation"
 
     monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda *args: None)

@@ -154,3 +154,8 @@ Crear una tabla no la integra automáticamente en la política central de ACL. L
 ## Esperas, incertidumbre y propiedad antes de consumir — T014.C2b.P2c.C3.B
 
 El timeout del primer recv del servidor no ha consumido un mensaje SEQPACKET y debe ser Idle, no EOF terminal. En cambio un timeout del cliente después de enviar conserva un UUID posiblemente confirmado y termina el canal. Un proveedor muerto instalado inventaba incertidumbre por cada rechazo posterior: se reproduce y corrige separando errores locales antes de enviar, desconexión del proveedor bajo guard y cierre fuera. También se reprodujo un poll desde task ajeno: ahora se verifica el canal/worker financiado antes de cualquier IPC. La prueba de paralelismo exige barrera dentro del driver y continuidad del mismo backend; esperar solo tras abrir no demuestra que el lock estuviera libre durante el driver. [Validación](validation-t014-sql-opening-broker.json).
+
+
+## Primera conexión, rechazo y testigo de salida — T014.C2b.P2c.C3.C
+
+El control HTTP/WS propio de Bridge arranca después del primer SQL y no puede financiarlo. Un contexto con canal ya financiado conecta una frontera real pero no resuelve genesis. La primera nativa rechazó correctamente un FD heredado de la fixture; otra ejecución rechazó la vista inicial antes del driver y su causa concreta no quedó capturada. No se relajó el guard: instrumentación posterior solo observa identidades. La revisión reprodujo una salida normal sin observación; ahora conserva handle/error. La fixture anterior de restore usaba async def dentro de asyncio.to_thread y se corrigió a función síncrona, conservando sus aserciones. [Validación](validation-t014-funded-bridge-startup.json).

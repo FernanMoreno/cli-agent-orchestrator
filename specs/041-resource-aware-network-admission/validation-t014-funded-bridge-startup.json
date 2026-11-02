@@ -1,0 +1,290 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-02",
+  "component": "T014.C2b.P2c.C3.C",
+  "status": "validated-controlled-funded-bridge-startup-with-preexisting-type-errors",
+  "base_head": "f1ff379f359a1f50a8939fcac37924dde454f177",
+  "acceptance": {
+    "phase": "t014-funded-bridge-final",
+    "selected_test_files": 103,
+    "passed": 1423,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 16,
+    "previous1405cases_preserved": true,
+    "new_distinct_cases": 18,
+    "seconds": 1341.857,
+    "available_mib": 11375,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 2,
+    "owned_python_archive_match": 5,
+    "archive_sha256": "9011c797d966c440324756b28583513eced2da7b8a44c2bd1a47dcb7fab765c2",
+    "foreign_graphify_files_preserved": 12
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+      "sha256": "5bf12b93f574200a910456eca217e60f1b1a398cdbdbdf8e434b81c939caf64e"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/bridge_supervisor.py",
+      "sha256": "cec8e82f36f7a13ddc563b74c47d47de651805b4c5ce3237e0cf0257ce482379"
+    },
+    {
+      "path": "test/runtime_channel/test_bridge_pre_sql_bootstrap.py",
+      "sha256": "738e696d31d9611b972f4ae35058a65ac66a2919f6af7353a9e26b402fdc86e9"
+    },
+    {
+      "path": "test/runtime_channel/test_bridge_funded_startup.py",
+      "sha256": "12683cfc56066d1d9c580af526e956b62b9960e4d3773b98e34dbfa3278bb23a"
+    },
+    {
+      "path": "test/postgres/test_bridge_funded_startup.py",
+      "sha256": "8b314de1f222cb3b5637b7ad4a950ac4dd37fd617ff6944672deb966a845dcec"
+    }
+  ],
+  "architecture": {
+    "files": 457,
+    "dependencies": 2062,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 19,
+    "nodes": 774,
+    "edges": 2332,
+    "dangling": 180,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+        "sha256": "1f09648199c6abd473a1bf6ed62af89f7de4096002417c7ead327ec6d8c9b5ea"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "0fe01bdf4ef9cb13979fe0f4a7e30a574a1ef57bd720701442ba072837ae7e75"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_envelope.py",
+        "sha256": "2ede51fd1f9b70f47f6abb5da7ac074e53c7ec53a08c48fdcdee61b24f68553a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "a2cf6a1e9e830367faa71f61601bf01fc8ab5b01d0da7f1fb83e117e23a331d5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "48a3adc0c5145d023a2ba2ee662cdb05b5dd68645de70922ce4aa5e83ca2008d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "daca7c9849a00966a17fed0b35969b37935f310ea76d2d14c1c11fee0c9d0cf7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "15baa64bd5890033fba4d8e361ec4bb3cc674f41c8d52d7ba20342ab6956893a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "dc8ae06cb109a7a02dd047e20114733199dbf4b2fbc06ce2b7c018daf66d89ac"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+        "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "55a06ad1988d094941026a34a33a21f476450f7bf2b21646b4a75382ecc502e3"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3bff8a5090a2e8ade13b1cf651aa82fa2a703b1caeaedc8354404da535550051"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "5bf12b93f574200a910456eca217e60f1b1a398cdbdbdf8e434b81c939caf64e"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge_supervisor.py",
+        "sha256": "cec8e82f36f7a13ddc563b74c47d47de651805b4c5ce3237e0cf0257ce482379"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "7915dec7cd1afcfaca47df9f67f9d1152387dcca7f2a943cd3740be13f76a363"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_process_origin.py",
+        "sha256": "c510eac2afbd0a6b67bd9120247d194ca0189827269ee9ed5b786b440868312f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_startup_permission.py",
+        "sha256": "ccebe031dd53e9cad43be19ce190d245b3f569248834c6ef17afd56f38604a22"
+      }
+    ]
+  },
+  "behavior": "Opt-in Bridge publisher accepts the authenticated first permission. funded_bridge validates original funded worker, exact canonical destination, typed journal and prepaid reservation before launch; confirms startup before yielding and retains owner/error/debt through teardown. No threads or root connection are created.",
+  "checks": {
+    "actual_commands": [
+      {
+        "name": "isort",
+        "exit_code": 0,
+        "files": 5,
+        "log": "isort-final-check.log"
+      },
+      {
+        "name": "black",
+        "exit_code": 0,
+        "files": 5,
+        "log": "black-final-check.log"
+      },
+      {
+        "name": "mypy",
+        "exit_code": 1,
+        "files": 2,
+        "log": "mypy-final-cold.log",
+        "preexisting_imported_errors": 8,
+        "same_baseline_diagnostics": true,
+        "passed": false,
+        "cached_followup_reported_zero_diagnostics": true,
+        "cold_cache_recheck": true
+      }
+    ],
+    "format_python_files": 5,
+    "format": "passed",
+    "mypy": "failed-with-same-eight-imported-dependency-errors-as-base",
+    "mypy_baseline": {
+      "unchanged_errors": 8,
+      "errors": [
+        "src/cli_agent_orchestrator/utils/opencode_v2_store.py:101: error: Need type annotation for \"unique_indexes\"  [var-annotated]",
+        "src/cli_agent_orchestrator/services/work_origin.py:578: error: Cannot determine type of \"artifacts\"  [has-type]",
+        "src/cli_agent_orchestrator/services/herdr_inbox_service.py:244: error: Argument 1 to \"get\" of \"dict\" has incompatible type \"str | None\"; expected \"str\"  [arg-type]",
+        "src/cli_agent_orchestrator/services/herdr_inbox_service.py:245: error: Argument 1 to \"pop\" of \"dict\" has incompatible type \"str | None\"; expected \"str\"  [arg-type]",
+        "src/cli_agent_orchestrator/services/herdr_inbox_service.py:365: error: Need type annotation for \"deleted\" (hint: \"deleted: set[<type>] = ...\")  [var-annotated]",
+        "src/cli_agent_orchestrator/services/herdr_inbox_service.py:365: error: Need type annotation for \"deferred\" (hint: \"deferred: set[<type>] = ...\")  [var-annotated]",
+        "src/cli_agent_orchestrator/services/herdr_inbox_service.py:365: error: Need type annotation for \"visited\" (hint: \"visited: set[<type>] = ...\")  [var-annotated]",
+        "src/cli_agent_orchestrator/services/herdr_inbox_service.py:366: error: Need type annotation for \"routing_owners\" (hint: \"routing_owners: dict[<type>, <type>] = ...\")  [var-annotated]"
+      ],
+      "baseline": "f1ff379f359a1f50a8939fcac37924dde454f177",
+      "same_flags": true,
+      "diagnostics_suppressed": false,
+      "final_cold_cache_errors_verified": true,
+      "cached_followup_zero_not_counted_as_global_pass": true
+    }
+  },
+  "history": [
+    {
+      "phase": "t014-funded-bridge-red",
+      "failed": 11,
+      "meaning": "Missing strict publisher/launcher/context APIs."
+    },
+    {
+      "phase": "t014-funded-bridge-offline",
+      "passed": 28,
+      "meaning": "Adapter and legacy Bridge tests before native fixture and cleanup refinements."
+    },
+    {
+      "phase": "t014-funded-bridge-native",
+      "passed": 29,
+      "failed": 2,
+      "meaning": "Fixture copied a reserved parent FD into child environment; corrected only the fixture, preserving product refusal."
+    },
+    {
+      "phase": "t014-funded-bridge-native-checked",
+      "passed": 32,
+      "failed": 1,
+      "meaning": "Strict initial process-view check refused before any driver call. Concrete historical cause not recorded; no check weakened or product fix claimed. Later read-only identity instrumentation observed stable views."
+    },
+    {
+      "phase": "t014-funded-bridge-reviewed",
+      "passed": 34,
+      "meaning": "Strengthened negative waits for natural child exit and observes exactly one driver/no later funding."
+    },
+    {
+      "phase": "t014-funded-bridge-exit-red",
+      "failed": 1,
+      "meaning": "Normal context could succeed/discard handle without an authenticated exit observation."
+    },
+    {
+      "phase": "t014-funded-bridge-final-focused",
+      "passed": 35,
+      "meaning": "Final exit guard and complete focused native/legacy/adapter selection; not added to full count as distinct tests."
+    }
+  ],
+  "invariants": [
+    "The legacy identity-only path retains its original launcher arguments and publisher call.",
+    "Only the reserved strict startup marker selects the authenticated grant publisher; the low-level protocol still validates marker and original parent.",
+    "Exact Connection and SqlIntentRepository, canonical UUIDs, original worker/live control scope and canonical target are checked before Popen. Missing reservation refuses before launch.",
+    "A changed canonical realm in the child environment is refused at binding; mismatched role/TLS/path is refused by the opening guard before the driver.",
+    "Startup funding/commit precedes yield; subsequent requests use existing original-owner broker and held data budget. No thread, executor or global agent count introduced.",
+    "Failures after launch attach exact supervisor to the original exception; cleanup failures do not replace the primary exception.",
+    "A normal exit with no authenticated observation raises and retains the pinned handle instead of reporting success. Already-failing startup still joins/closes its unbound owned child when possible.",
+    "Process exit/EOF/context closure never refund held SQL charges or prove server backend absence."
+  ],
+  "real_scope": {
+    "fixed_bridge_module_argv": true,
+    "postgres_runtime_role_and_component_checks": true,
+    "actual_init_runtime_db": true,
+    "actual_remote_store_and_restore": true,
+    "stops_at_admission_composition": true,
+    "positive_driver_calls": 3,
+    "positive_followup_grants": 2,
+    "exhausted_driver_calls": 1,
+    "exhausted_followup_grants": 0,
+    "independent_commit_observer": true,
+    "model_or_provider_agents": false
+  },
+  "peer_review": {
+    "codex_model": "GPT-6 Luna",
+    "reasoning": "Max",
+    "mode": "read",
+    "rounds": 3,
+    "last_actionable_finding": "Missing exit observation; reproduced RED, fixed and checked by lead.",
+    "claude_status": "session-quota failure before diagnosis; no completed Claude review claimed"
+  },
+  "limits": [
+    "Caller must already own the live funded control scope, channel, prepared held data reservation and provisioned SQL4 journal; this does not establish root genesis or fund the first control TCP.",
+    "bridge_supervisor.main remains identity-only until an actual funded root/driver is provided. This is a controlled startup integration, not deployed CLI/global activation.",
+    "Caller scheduler must serve requests on the same original worker. Do not transfer Connection/supervisor to transient control callbacks or another executor; multiple children need readiness multiplexing, not per-agent threads.",
+    "Orderly shutdown must keep the caller broker service available while child cleanup needs SQL. The context fallback joins/signals its own child and preserves debt; it does not establish funded custody or successful generation sealing.",
+    "Private test instrumentation stops at runtime admission construction and substitutes native backend construction. No real HTTP/WebSocket/provider/model/network acceptance is claimed.",
+    "The historical early process-view refusal had zero driver calls; its precise transient cause was not captured. Stable-view final tests do not retrospectively explain it.",
+    "Mypy has eight preexisting imported-file errors under unchanged flags; baseline shadow-file check produced identical diagnostics. No global type-check PASS or suppressed diagnostics.",
+    "All ten original gates, root funding, complete inventory, independently funded custody, M1/M2/M3, quotas, SDK and UI remain open."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261102-funded-bridge-startup",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "composition_report": "composition-t014-funded-bridge-startup.md"
+}

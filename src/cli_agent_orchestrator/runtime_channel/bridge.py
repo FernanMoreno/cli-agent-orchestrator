@@ -950,6 +950,7 @@ def restore_incarnation(runtime_id, store, backend):
 
 def _resource_process_bootstrap(runtime_id: str):
     """Publish only to an explicitly inherited supervisor, before admission."""
+    from cli_agent_orchestrator.models.sql_startup_permission import SQL_STARTUP_PERMISSION_ENV
     from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
     from cli_agent_orchestrator.services.resource_process_supervisor import (
         BINDING_FD_ENV,
@@ -958,7 +959,11 @@ def _resource_process_bootstrap(runtime_id: str):
 
     bootstrap = scoped_process_bootstrap("bridge-resource/" + runtime_id, terminal_generation=True)
     if BINDING_FD_ENV in os.environ:
-        publish_resource_binding(bootstrap.shared_repository().current_binding())
+        binding = bootstrap.shared_repository().current_binding()
+        if SQL_STARTUP_PERMISSION_ENV in os.environ:
+            publish_resource_binding(binding, first_sql_grant=True)
+        else:
+            publish_resource_binding(binding)
     return bootstrap
 
 
