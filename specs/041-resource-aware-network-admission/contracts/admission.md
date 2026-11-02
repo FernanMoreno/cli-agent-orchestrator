@@ -173,3 +173,8 @@ SqlIntentRepository recibe canal financiado original, no crea conexión. provisi
 ## T014.C2b.P2c.A — orden del bootstrap supervisado
 
 Bridge supervisado exige publicación/ACK antes de init_runtime_db, limpieza/restauración y backend. Error de publicación bloquea esa frontera. El ACK acredita identidad; no promete admisión activa, presupuesto, genesis o ausencia. La validación de políticas compartidas sigue posterior y fuera del componente; no usar esta corrección como autorización para abrir sin financiación completa. [Validación](../validation-t014-pre-sql-bootstrap.json).
+
+
+## T014.C2b.P2c.B — registro explícito previo al acuse
+
+receive_binding_with_child_intent requiere repo nativo y Connection original ya financiada del padre; autentica hijo, registra/commitea, revalida y acusa identidad. No-hook/protocolo2 conserva identidad solamente. Error posterior a commit no pierde recibo; ACK/TCP puede haber ocurrido, así que jamás autoriza retry o liberar crédito. DDL2 por dueño es prerrequisito antes de runtime; no hay fallback DDL/TCP ni quota automática del hijo. Los emisores privados son código confiable, no permisos concedidos por campos del modelo. [Validación](../validation-t014-child-sql-intent.json).

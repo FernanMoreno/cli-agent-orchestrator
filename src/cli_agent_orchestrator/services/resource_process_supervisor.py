@@ -18,9 +18,10 @@ import struct
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import psutil
@@ -31,6 +32,12 @@ from cli_agent_orchestrator.models.resource_generation import (
     _issue_process_exit_observation,
     is_process_exit_observation,
 )
+from cli_agent_orchestrator.models.sql_child_subject import (
+    VerifiedChildSqlSubject,
+    _approve_verified_child_sql_subject,
+    _expire_verified_child_sql_subject,
+    _issue_verified_child_sql_subject,
+)
 from cli_agent_orchestrator.models.sql_process_origin import (
     RESOURCE_BINDING_FD_ENV as BINDING_FD_ENV,
 )
@@ -38,6 +45,11 @@ from cli_agent_orchestrator.models.sql_process_origin import (
     is_sql_process_application_name,
 )
 from cli_agent_orchestrator.utils.process_sql_origin import current_sql_application_name
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget
+    from cli_agent_orchestrator.clients.sql_intent_repository import SqlIntentRepository
+    from cli_agent_orchestrator.models.sql_opening_intent import ChildSqlOpeningIntent
 
 BINDING_PROTOCOL_VERSION = 2
 _MAX_PACKET_BYTES = 8192
@@ -220,6 +232,9 @@ class ResourceProcessSupervisor:
     _exited: bool
     _wait_status: tuple[int, int] | None
     _binding_failed: bool
+    _receiving: bool
+    _issued_subjects: set[VerifiedChildSqlSubject]
+    _subject_token: object | None
     _store: str
     _target_digest: str
     _channel: socket.socket
@@ -278,6 +293,9 @@ class ResourceProcessSupervisor:
         value._exited = False
         value._wait_status = None
         value._binding_failed = False
+        value._receiving = False
+        value._issued_subjects = set()
+        value._subject_token = None
         value._store = store
         value._target_digest = expected_target_identity_sha256
         parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -339,12 +357,82 @@ class ResourceProcessSupervisor:
         return self._sql_application_name
 
     def receive_binding(self, *, timeout_s: float = 30) -> ResourceBinding:
+        return self._receive_binding(timeout_s=timeout_s)
+
+    def receive_binding_with_child_intent(
+        self,
+        *,
+        channel: Connection,
+        repository: SqlIntentRepository,
+        journal_id: str,
+        intent_id: str,
+        destination: DatabaseTarget,
+        path: str = "native",
+        timeout_s: float = 30,
+    ) -> ChildSqlOpeningIntent:
+        """Explicit parent-funded registration; ACK still grants identity only."""
+        self._check_owner()
+        from cli_agent_orchestrator.clients.sql_intent_repository import (
+            SqlChildAckUnavailableAfterCommit,
+            SqlIntentCommitUncertain,
+            SqlIntentRepository,
+        )
+        from cli_agent_orchestrator.models.sql_opening_intent import ChildSqlOpeningIntent
+
+        if type(repository) is not SqlIntentRepository:
+            raise ValueError("child registration requires the native intent repository")
+        receipt: ChildSqlOpeningIntent | None = None
+
+        def register(subject: VerifiedChildSqlSubject) -> None:
+            nonlocal receipt
+            result = repository.record_child_opening(
+                channel,
+                journal_id=journal_id,
+                intent_id=intent_id,
+                subject=subject,
+                path=path,
+                destination=destination,
+            )
+            if type(result) is not ChildSqlOpeningIntent or result.subject is not subject.binding:
+                raise SqlIntentCommitUncertain(journal_id, intent_id)
+            receipt = result
+
+        try:
+            self._receive_binding(timeout_s=timeout_s, before_ack=register)
+        except BaseException as failure:
+            if receipt is not None:
+                self._binding_failed = True
+                if not isinstance(
+                    failure, (SqlChildAckUnavailableAfterCommit, SqlIntentCommitUncertain)
+                ):
+                    raise SqlChildAckUnavailableAfterCommit(receipt) from failure
+            raise
+        if receipt is None:
+            raise ResourceProcessUnproven("child registration has no acknowledged receipt")
+        return receipt
+
+    def _receive_binding(
+        self,
+        *,
+        timeout_s: float = 30,
+        before_ack: Callable[[VerifiedChildSqlSubject], object] | None = None,
+    ) -> ResourceBinding:
         self._check_owner()
         _timeout(timeout_s)
+        if self._receiving:
+            self._binding_failed = True
+            raise ResourceProcessUnproven("resource process handshake is already active")
         if self._closed or self._binding_failed:
             raise ResourceProcessUnproven("resource process binding is unavailable")
         if self._binding is not None:
+            if before_ack is not None:
+                raise ResourceProcessUnproven("an acknowledged child cannot be registered late")
             return self._binding
+        if before_ack is not None and not callable(before_ack):
+            raise TypeError("resource process registration must be callable")
+        self._receiving = True
+        self._subject_token = object()
+        subject = None
         try:
             self._channel.settimeout(timeout_s)
             payload, ancillary, flags, _ = self._channel.recvmsg(
@@ -413,6 +501,37 @@ class ResourceProcessSupervisor:
                 or _exit_ready(self._pidfd) is not False
             ):
                 raise ResourceProcessUnproven("resource binding differs from the original child")
+            if before_ack is not None:
+
+                def revalidate(value: VerifiedChildSqlSubject) -> None:
+                    self._check_owner()
+                    if (
+                        self._closed
+                        or self._exited
+                        or self._binding_failed
+                        or not self._receiving
+                        or value not in self._issued_subjects
+                        or value._handshake_token is not self._subject_token
+                        or self._pidfd is None
+                        or _exit_ready(self._pidfd) is not False
+                        or _identity(self._process.pid) != live
+                    ):
+                        raise ResourceProcessUnproven("original child identity is no longer live")
+
+                subject = _issue_verified_child_sql_subject(
+                    binding,
+                    sql_application_name=packet["sql_application_name"],
+                    boot_id=live.boot_id,
+                    start_time_ticks=live.ticks,
+                    pid_namespace=live.pid_ns,
+                    validate=revalidate,
+                    handshake_token=self._subject_token,
+                )
+                self._issued_subjects.add(subject)
+                _approve_verified_child_sql_subject(subject)
+                if before_ack(subject) is not None:
+                    raise ResourceProcessUnproven("child registration was not acknowledged")
+                subject.check()
             if self._channel.send(b"1") != 1:
                 raise ResourceProcessUnproven("resource binding acknowledgement failed")
             self._binding = binding
@@ -428,11 +547,23 @@ class ResourceProcessSupervisor:
             ResourceProcessUnproven,
         ):
             self._binding_failed = True
+            if subject is not None:
+                raise
             raise ResourceProcessUnproven(
                 "resource process binding could not be verified"
             ) from None
+        except BaseException:
+            self._binding_failed = True
+            raise
         finally:
-            self._channel.close()
+            try:
+                if subject is not None:
+                    _expire_verified_child_sql_subject(subject)
+            finally:
+                self._issued_subjects.clear()
+                self._subject_token = None
+                self._receiving = False
+                self._channel.close()
 
     def send_signal(self, signum: int) -> None:
         self._check_owner()

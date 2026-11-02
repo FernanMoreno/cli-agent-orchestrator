@@ -1,0 +1,260 @@
+{
+  "schema": "caos.spec041.t014-child-sql-intent.v1",
+  "date": "2026-11-02",
+  "base_head": "a27139bfbc170785d263a1ca49bd6f09bd2f3bb5",
+  "scope": "T014.C2b.P2c.B explicit parent-funded durable child startup registration before identity ACK",
+  "parent_funded_registration_acceptance": true,
+  "child_session_funding_acceptance": false,
+  "root_bootstrap_acceptance": false,
+  "global_acceptance": false,
+  "physical_m1_m2_m3_acceptance": false,
+  "regression": {
+    "phase": "t014-child-sql-intent-final",
+    "selected_test_files": 90,
+    "passed": 1237,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous1188cases_preserved": true,
+    "previous_pre_sql256cases_preserved": true,
+    "previous_distinct_baseline": 1197,
+    "new_distinct_cases": 40,
+    "seconds": 1135.754,
+    "available_mib": 12363,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 6,
+    "owned_python_archive_match": 8,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+        "sha256": "8bf6781b8e6ca921309ce746dbd345ff16f191cf1866ff0c5e24be2737bd2071"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "1c8a575a0216b11c8bbc645436478f1567b842d182d6bef84eaf9326bffc6a8f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "b58d1d2f2a735a1760f5b9082e1e1cad3529b8810d191f7b408534382f7eb9ab"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "f51904ae9a73643b8176978a671fc1cf9a82a5605292f07c425d3a541e6c2a87"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "81f53cab803ef6b850ab921f2c2306068bb3b53ba08d724fd0445122806354e7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "4739724fd7ca40a201d69bdbaf19c9e7d5fec4420fd4f5ad82cd13a5c908c2b4"
+      },
+      {
+        "path": "test/services/test_child_sql_subject.py",
+        "sha256": "1421571e349a2ca30acf6400b44a5bb01d60890819a1928eb7481c41d0e925cf"
+      },
+      {
+        "path": "test/postgres/test_child_sql_opening.py",
+        "sha256": "9631f039aece2ed933768af8ba44184845c2140fb7c95b5d3060c68e692263a1"
+      }
+    ],
+    "archive_sha256": "910aa4d78bd7c4f1daa167cbd450b59154e8f421512a6c0b6aa9c4edf931e42b",
+    "foreign_graphify_files_preserved": 12
+  },
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 8
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 8
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 6
+    }
+  ],
+  "architecture": {
+    "files": 456,
+    "dependencies": 2048,
+    "kept": 5,
+    "broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 16,
+    "nodes": 594,
+    "edges": 1718,
+    "dangling": 153,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "knowledge": {
+    "operation_id": "markdown-20261102-child-sql-intent",
+    "paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "review": {
+    "claude_read_jobs": [
+      "283dff4c4fdd4cb8ad2d0a496b85c8e8",
+      "ad14a31bb7d64a29ad06abc513381194",
+      "532b61a7efab4ac7ab5140c334a84c64"
+    ],
+    "final_scope": "Final peer found no safety blockers; public receipt-preservation issue subsequently reproduced RED2 and fixed/retested by root.",
+    "root_final_diff_review": true
+  },
+  "frozen_migrations": {
+    "sql_opening_v1": "71678a014d4780947d4c093152eee9d4e57e995fcfeaa2dfdd44d9945b82f7ed",
+    "resource_1_7": [
+      "6d1c5b17a332de83c647c2498f757da432ac13b502b2cead06d4c3950f5ef49e",
+      "c183ecaffafcce3a3166fea88a0aea54bfd00d5820b20e9e5594105f1a2c8f40",
+      "e4881dd35a2c59659a6395d31dd342c8cd7b0b9e6946998e4419cdd04eff98af",
+      "1faa34ac79c790de65d8776a8a078360b9788cdf259d359ac12e0eefe85a01c1",
+      "9cb73d9762cb8c0d846bb2ecdee811744c6c72029b830d623c2452e43762f8aa",
+      "ee8f728301be19bc59c6574cefb69cb4df6819f8b943629bf30f289d3d1e7208",
+      "690e0f2bd29948d300cdbb04de945f61fdaa4a03be226621b4a82a3696418e2f"
+    ]
+  },
+  "implemented": [
+    "Explicit receive_binding_with_child_intent accepts a caller-provided original funded Connection and actual repository; no automatic connection, actor adoption or global activation.",
+    "Verified child subject is approved only inside the owned kernel-authenticated handshake; weak approval registry plus supervisor set/token, PID/Thread and live pidfd/proc identity checks; single claim, unconditional expiry and exception-safe channel close.",
+    "SQL journal migration2 adds an independent append-only child-opening table with structured binding and global binding/generation/kernel/label uniqueness; migration1 and resource1-7 source checksums unchanged.",
+    "Local and child records share journal lock, indexed ordinal/quota, cross-kind UUID rejection and original parent backend pin; actor and child subject remain distinct.",
+    "Registration commits before ACK, then child identity is revalidated. Unknown commit retains request IDs; confirmed commit with unavailable ACK retains a descriptive receipt throughout repository and supervisor API. Neither outcome grants retry or metadata return."
+  ],
+  "evidence_boundaries": [
+    "One final1237case execution, not a sum: every1188 prior case plus9pre-SQL cases retained,40new distinct cases.",
+    "Real owned child executes Bridge._amain and publisher; controlled init_runtime_db callback opens one real locally-paid native PostgreSQL connection after ACK. Independent PostgreSQL observer sees committed registration before ACK and actual child TCP; this is not a full provider/model or globally funded Bridge deployment.",
+    "Child record on parent journal is refused without its own quota; parent metadata credit count stays unchanged. Descriptor receipts never act as issuer capabilities or session grants.",
+    "Two independently paid worker channels racing for one journal yield one accepted writer and one refusal (quota1 or original-backend pin at quota4). This is lock/accounting evidence, not multi-node/host capacity acceptance.",
+    "Strict v1 runtime rejection is intentional until owner migration2; actual upgrade preserves existing rows and ordinals. Registrator never performs automatic DDL or opens a migration connection.",
+    "Private approval/issuer primitives belong to trusted application code. Public/descriptive values and an inert factory candidate cannot authorize SQL; arbitrary Python/raw SQL in that trusted process is outside this capability boundary.",
+    "Commit ACK loss leaves a retained row with uncertain commit outcome; confirmed row plus subject/ACK completion failure raises SqlChildAckUnavailableAfterCommit with its receipt. In production that error does not prove ACK/TCP absence: no retry or credit return.",
+    "Actual column/PUBLIC drift, raw uniqueness violations, corrupted JSON binding, cross-parent generation, cross-kind IDs, wrong target/copied channel, fork/thread/copy/expiry/revival/non-None callback and registry MemoryError controls fail closed.",
+    "No-hook protocol2 ACK still proves identity only. Default CLI is not automatically switched to funded registration; child/root first-session funding, persistent broker, full inventory and audited custody remain pending.",
+    "Same PostgreSQL container/image reused, reuse custodian retained, final0/0/0; no operator or Claude credentials changed, no historical RECONCILE_REQUIRED replay/closure.",
+    "An unused early green descriptor became stale during pre-execution type fixes and was never activated; an unpinned read-only import failed before its checksum check, then the pinned invocation passed. These are not product RED or native acceptance."
+  ],
+  "history": [
+    {
+      "phase": "t014-child-sql-intent-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 14,
+        "failure": 14,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 69.667,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-child-sql-intent-checked-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 83,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 104.515,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-child-sql-intent-issuer-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 3,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 57.699,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-child-sql-intent-reviewed-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 108,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 165.127,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-child-sql-intent-public-red",
+      "exit_code": 1,
+      "cases": {
+        "total": 2,
+        "failure": 2,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 55.934,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    },
+    {
+      "phase": "t014-child-sql-intent-public-green",
+      "exit_code": 0,
+      "cases": {
+        "total": 2,
+        "failure": 0,
+        "error": 0,
+        "skipped": 0
+      },
+      "seconds": 57.216,
+      "source_preserved": true,
+      "support_preserved": true,
+      "descriptor_closed": true
+    }
+  ],
+  "remaining": [
+    "Explicit root/child initial session funding and trusted production composition, no implicit bootstrap exception.",
+    "Persistent worker/broker and complete original attempt/session/native inventory before audited metadata custody/retirement.",
+    "Original10tasks, quotas/distribution, M1/M2/M3, SDK/UI/global acceptance."
+  ],
+  "unchecked_tasks": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021",
+    "T022",
+    "T023"
+  ]
+}

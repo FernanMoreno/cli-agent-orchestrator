@@ -8,10 +8,12 @@ import hashlib
 import json
 import re
 from contextlib import contextmanager
+from dataclasses import asdict, fields, replace
 from typing import Callable, Iterator, Sequence
 from uuid import uuid4
 
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 from cli_agent_orchestrator.clients.admission_repository import (
     ResourceAdmissionRepository,
@@ -29,16 +31,19 @@ from cli_agent_orchestrator.clients.postgres.migrations import (
     verify_runtime_role,
 )
 from cli_agent_orchestrator.clients.sql_opening_schema import (
+    SQL_CHILD_OPENINGS,
+    SQL_OPENING_ALL_TABLES,
     SQL_OPENING_CHANNELS,
     SQL_OPENING_FENCES,
     SQL_OPENING_INTENTS,
     SQL_OPENING_MIGRATIONS,
     SQL_OPENING_QUOTAS,
-    SQL_OPENING_TABLES,
 )
 from cli_agent_orchestrator.models.admission_domains import canonical_id
 from cli_agent_orchestrator.models.resource_envelope import ResourceBinding, envelope_integer
+from cli_agent_orchestrator.models.sql_child_subject import VerifiedChildSqlSubject
 from cli_agent_orchestrator.models.sql_opening_intent import (
+    ChildSqlOpeningIntent,
     SqlOpeningIntent,
     SqlOpeningPreparationUncertain,
 )
@@ -72,6 +77,16 @@ class SqlIntentCommitUncertain(SqlIntentUnavailable, SqlOpeningPreparationUncert
         self.intent_id = intent_id
 
 
+class SqlChildAckUnavailableAfterCommit(SqlIntentUnavailable):
+    """The row committed; subject verification or ACK completion is unavailable."""
+
+    def __init__(self, receipt: ChildSqlOpeningIntent):
+        super().__init__("Child acknowledgement unavailable after confirmed commit")
+        self.receipt = receipt
+        self.journal_id = receipt.journal_id
+        self.intent_id = receipt.intent_id
+
+
 def _receipt(row: Record) -> SqlOpeningIntent:
     return SqlOpeningIntent(
         str(row["intent_id"]),
@@ -83,6 +98,48 @@ def _receipt(row: Record) -> SqlOpeningIntent:
     )
 
 
+def _child_receipt(row: Record) -> ChildSqlOpeningIntent:
+    try:
+        raw = row["subject_binding"]
+        if type(raw) is not dict or set(raw) != {f.name for f in fields(ResourceBinding)}:
+            raise ValueError("invalid subject shape")
+        subject = ResourceBinding(**raw)
+        if (
+            binding_digest(subject),
+            subject.instance_id,
+            subject.process_generation,
+            subject.process_pid,
+            subject.process_started_at,
+            subject.store_id,
+        ) != (
+            row["subject_binding_sha256"],
+            str(row["subject_instance_id"]),
+            str(row["subject_process_generation"]),
+            row["subject_process_pid"],
+            row["subject_process_started_at"],
+            str(row["destination_store_id"]),
+        ):
+            raise ValueError("subject projection differs")
+        return ChildSqlOpeningIntent(
+            intent_id=str(row["intent_id"]),
+            journal_id=str(row["journal_id"]),
+            ordinal=row["ordinal"],
+            path=row["path"],
+            destination_sha256=row["destination_sha256"],
+            parent_binding_sha256=row["parent_binding_sha256"],
+            parent_process_pid=row["parent_process_pid"],
+            parent_process_started_at=row["parent_process_started_at"],
+            parent_sql_application_name=row["parent_sql_application_name"],
+            subject=subject,
+            subject_sql_application_name=row["subject_sql_application_name"],
+            boot_id=str(row["boot_id"]),
+            start_time_ticks=row["start_time_ticks"],
+            pid_namespace=(row["pid_namespace_device"], row["pid_namespace_inode"]),
+        )
+    except (ValueError, TypeError, KeyError) as failure:
+        raise SchemaMismatch("Retained child opening has an invalid subject") from failure
+
+
 class SqlIntentRepository:
     def __init__(self, target: DatabaseTarget, *, binding_supplier: Callable[[], ResourceBinding]):
         self.target = target
@@ -92,6 +149,7 @@ class SqlIntentRepository:
             "channels": SQL_OPENING_CHANNELS,
             "intents": SQL_OPENING_INTENTS,
             "fences": SQL_OPENING_FENCES,
+            "children": SQL_CHILD_OPENINGS,
             "credits": "_cao_resource_metadata_credits",
             "domains": "_cao_resource_domains",
         }
@@ -117,7 +175,7 @@ class SqlIntentRepository:
         )
 
     def _verify_acl(self, c: Connection) -> None:
-        for name in SQL_OPENING_TABLES:
+        for name in SQL_OPENING_ALL_TABLES:
             append = name != SQL_OPENING_QUOTAS
             row = c.execute(
                 """SELECT c.relkind IN ('r','p')
@@ -165,7 +223,11 @@ class SqlIntentRepository:
                         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
                         JOIN pg_catalog.pg_roles r ON r.rolname=current_user
                         WHERE n.nspname=%s AND c.relname=ANY(%s)""",
-                        (len(SQL_OPENING_TABLES), self.target.schema, list(SQL_OPENING_TABLES)),
+                        (
+                            len(SQL_OPENING_ALL_TABLES),
+                            self.target.schema,
+                            list(SQL_OPENING_ALL_TABLES),
+                        ),
                     ).fetchone()
                     if owned is None or owned[0] is not True:
                         raise SqlIntentUnavailable("SQL journal provisioner must own its schema")
@@ -293,16 +355,8 @@ class SqlIntentRepository:
         ):
             raise SqlIntentConflict("SQL journal belongs to its original control backend")
 
-    def record(
-        self,
-        channel: Connection,
-        *,
-        journal_id: str,
-        intent_id: str,
-        path: str,
-        destination: DatabaseTarget,
-    ) -> SqlOpeningIntent:
-        journal, request = canonical_id(journal_id), canonical_id(intent_id)
+    @staticmethod
+    def _opening_payload(path: str, destination: DatabaseTarget) -> tuple[str, str]:
         if type(path) is not str or path not in {"native", "orm", "audit"}:
             raise ValueError("Unsupported SQL opening path")
         if (
@@ -319,28 +373,54 @@ class SqlIntentRepository:
                 (destination.identity, destination.user, destination.sslmode), separators=(",", ":")
             ).encode()
         ).hexdigest()
+        return label, digest
+
+    def _append_position(
+        self, c: Connection, journal: str, request: str, binding: ResourceBinding
+    ) -> int:
+        self._lock(c, "journal", journal)
+        quota = self._quota(c, journal, binding)
+        if self._q(c, "SELECT journal_id FROM {fences} WHERE journal_id=%s", (journal,)).fetchone():
+            raise SqlIntentRegistrationSealed("SQL journal registration is sealed")
+        self._lock(c, "intent", request)
+        if self._q(
+            c,
+            """SELECT intent_id FROM {intents} WHERE intent_id=%s
+            UNION ALL SELECT intent_id FROM {children} WHERE intent_id=%s LIMIT 1""",
+            (request, request),
+        ).fetchone():
+            raise SqlIntentConflict("A retained SQL intent cannot grant another opening")
+        last = self._q(
+            c,
+            """SELECT GREATEST(
+            COALESCE((SELECT ordinal FROM {intents} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0),
+            COALESCE((SELECT ordinal FROM {children} WHERE journal_id=%s ORDER BY ordinal DESC LIMIT 1),0))""",
+            (journal, journal),
+        ).fetchone()
+        if last is None:
+            raise SchemaMismatch("SQL journal position is unavailable")
+        previous = last[0]
+        if type(previous) is not int or previous < 0:
+            raise SchemaMismatch("SQL journal position is invalid")
+        ordinal = previous + 1
+        if ordinal > quota["max_records"]:
+            raise SqlIntentCapacityUnavailable("SQL journal record capacity is exhausted")
+        self._claim_channel(c, journal, binding)
+        return ordinal
+
+    def record(
+        self,
+        channel: Connection,
+        *,
+        journal_id: str,
+        intent_id: str,
+        path: str,
+        destination: DatabaseTarget,
+    ) -> SqlOpeningIntent:
+        journal, request = canonical_id(journal_id), canonical_id(intent_id)
+        label, digest = self._opening_payload(path, destination)
         with self._transaction(channel, journal, request) as (c, binding):
-            self._lock(c, "journal", journal)
-            quota = self._quota(c, journal, binding)
-            if self._q(
-                c, "SELECT journal_id FROM {fences} WHERE journal_id=%s", (journal,)
-            ).fetchone():
-                raise SqlIntentRegistrationSealed("SQL journal registration is sealed")
-            self._lock(c, "intent", request)
-            if self._q(
-                c, "SELECT intent_id FROM {intents} WHERE intent_id=%s", (request,)
-            ).fetchone():
-                raise SqlIntentConflict("A retained SQL intent cannot grant another opening")
-            last = self._q(
-                c,
-                """SELECT ordinal FROM {intents} WHERE journal_id=%s
-                ORDER BY ordinal DESC LIMIT 1""",
-                (journal,),
-            ).fetchone()
-            ordinal = 1 if last is None else last[0] + 1
-            if ordinal > quota["max_records"]:
-                raise SqlIntentCapacityUnavailable("SQL journal record capacity is exhausted")
-            self._claim_channel(c, journal, binding)
+            ordinal = self._append_position(c, journal, request, binding)
             row = self._q(
                 c,
                 """INSERT INTO {intents} (intent_id,journal_id,ordinal,
@@ -365,6 +445,142 @@ class SqlIntentRepository:
                 raise SchemaMismatch("SQL intent was not persisted")
             receipt = _receipt(row)
         return receipt  # Only after the independent funded commit was acknowledged.
+
+    def record_child_opening(
+        self,
+        channel: Connection,
+        *,
+        journal_id: str,
+        intent_id: str,
+        subject: VerifiedChildSqlSubject,
+        destination: DatabaseTarget,
+        path: str = "native",
+    ) -> ChildSqlOpeningIntent:
+        journal, request = canonical_id(journal_id), canonical_id(intent_id)
+        if type(subject) is not VerifiedChildSqlSubject:
+            raise ValueError("child opening requires an authenticated live subject")
+        subject.claim()
+        label, digest = self._opening_payload(path, destination)
+        target_digest = hashlib.sha256(
+            json.dumps(destination.identity, separators=(",", ":")).encode()
+        ).hexdigest()
+        bound = subject.binding
+        if (
+            bound.store_id != canonical_id(destination.store_id)
+            or bound.target_identity_sha256 != target_digest
+        ):
+            raise SqlIntentUnavailable(
+                "child opening destination differs from its verified binding"
+            )
+        physical = json.dumps(
+            (subject.boot_id, subject.pid_namespace, bound.process_pid, subject.start_time_ticks),
+            separators=(",", ":"),
+        )
+        with self._transaction(channel, journal, request) as (c, actor):
+            if actor.process_pid == bound.process_pid or (
+                actor.instance_id,
+                actor.process_generation,
+            ) == (bound.instance_id, bound.process_generation):
+                raise SqlIntentUnavailable("child opening cannot adopt its parent identity")
+            ordinal = self._append_position(c, journal, request, actor)
+            # All global subject keys use one stable order across journals.
+            for key in sorted(
+                {
+                    "binding:" + binding_digest(bound),
+                    "generation:" + bound.instance_id + ":" + bound.process_generation,
+                    "physical:" + physical,
+                    "label:" + subject.sql_application_name,
+                }
+            ):
+                self._lock(c, "child", key)
+            if self._q(
+                c,
+                """SELECT intent_id FROM {children}
+                WHERE subject_binding_sha256=%s OR (subject_instance_id=%s AND subject_process_generation=%s)
+                OR (boot_id=%s AND pid_namespace_device=%s AND pid_namespace_inode=%s
+                    AND subject_process_pid=%s AND start_time_ticks=%s)
+                OR subject_sql_application_name=%s LIMIT 1""",
+                (
+                    binding_digest(bound),
+                    bound.instance_id,
+                    bound.process_generation,
+                    subject.boot_id,
+                    subject.pid_namespace[0],
+                    subject.pid_namespace[1],
+                    bound.process_pid,
+                    subject.start_time_ticks,
+                    subject.sql_application_name,
+                ),
+            ).fetchone():
+                raise SqlIntentConflict("A retained child startup cannot grant another opening")
+            subject.check()
+            row = self._q(
+                c,
+                """INSERT INTO {children}
+                (intent_id,journal_id,ordinal,parent_binding_sha256,parent_process_pid,
+                parent_process_started_at,parent_sql_application_name,
+                subject_binding,subject_binding_sha256,subject_instance_id,subject_process_generation,
+                subject_process_pid,subject_process_started_at,subject_sql_application_name,
+                boot_id,start_time_ticks,pid_namespace_device,pid_namespace_inode,
+                path,destination_store_id,destination_scope,destination_sha256)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
+                (
+                    request,
+                    journal,
+                    ordinal,
+                    binding_digest(actor),
+                    actor.process_pid,
+                    actor.process_started_at,
+                    label,
+                    Jsonb(asdict(bound)),
+                    binding_digest(bound),
+                    bound.instance_id,
+                    bound.process_generation,
+                    bound.process_pid,
+                    bound.process_started_at,
+                    subject.sql_application_name,
+                    subject.boot_id,
+                    subject.start_time_ticks,
+                    subject.pid_namespace[0],
+                    subject.pid_namespace[1],
+                    path,
+                    canonical_id(destination.store_id),
+                    destination.scope,
+                    digest,
+                ),
+            ).fetchone()
+            if row is None:
+                raise SchemaMismatch("Child SQL opening was not persisted")
+            receipt = _child_receipt(row)
+            if receipt.subject != bound:
+                raise SchemaMismatch("Child SQL opening did not retain its original binding")
+            subject.check()
+        try:
+            subject.check()
+        except BaseException as failure:
+            raise SqlChildAckUnavailableAfterCommit(receipt) from failure
+        return replace(receipt, subject=bound)
+
+    def read_child_opening(
+        self, channel: Connection, *, journal_id: str, intent_id: str
+    ) -> ChildSqlOpeningIntent | None:
+        journal, request = canonical_id(journal_id), canonical_id(intent_id)
+        with self._transaction(channel, journal) as (c, binding):
+            self._quota(c, journal, binding)
+            row = self._q(
+                c,
+                "SELECT * FROM {children} WHERE journal_id=%s AND intent_id=%s",
+                (journal, request),
+            ).fetchone()
+            if row is None:
+                return None
+            if (
+                row["parent_binding_sha256"],
+                row["parent_process_pid"],
+                row["parent_process_started_at"],
+            ) != (binding_digest(binding), binding.process_pid, binding.process_started_at):
+                raise SchemaMismatch("Child SQL opening has another original parent")
+            return _child_receipt(row)
 
     def read(
         self, channel: Connection, *, journal_id: str, intent_id: str

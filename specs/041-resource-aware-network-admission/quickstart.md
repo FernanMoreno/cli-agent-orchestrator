@@ -95,3 +95,8 @@ No hay activación global ni nuevo flag público. El componente trusted usa un C
 ## T014.C2b.P2c.A — orden del bootstrap supervisado
 
 El lanzador supervisado existente conserva comando/protocolo/configuración. Ahora su handshake ocurre antes del SQL inicial y el bootstrap original se reutiliza más tarde. Sin supervisor, el factory conserva el orden perezoso. No hay activación nueva de intents globales, permiso de bootstrap ni devolución de créditos. [Validación](validation-t014-pre-sql-bootstrap.json).
+
+
+## T014.C2b.P2c.B — registro explícito previo al acuse
+
+Composición programática confiable: usar owner.receive_binding_with_child_intent(channel=canal_original_pagado, repository=repo, journal_id=..., intent_id=..., destination=target) dentro del worker/scope original. Antes, el dueño aplica la migración2 mediante el mecanismo existente y provisiona quota del padre. No crear otro canal dentro del registro, no transferirlo de hilo y no interpretar el recibo como permiso de sesión. CLI por defecto sigue identidad-only; activación global/root/broker/custodio requieren trabajo adicional. [Validación](validation-t014-child-sql-intent.json).

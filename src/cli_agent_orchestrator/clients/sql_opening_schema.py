@@ -13,7 +13,7 @@ SQL_OPENING_TABLES = (
     SQL_OPENING_FENCES,
 )
 
-SQL_OPENING_MIGRATIONS = (
+SQL_OPENING_MIGRATIONS: tuple[ComponentMigration, ...] = (
     ComponentMigration(
         component="sql_opening_intents",
         scope="main",
@@ -59,5 +59,54 @@ SQL_OPENING_MIGRATIONS = (
             )""",
         ),
         tables=SQL_OPENING_TABLES,
+    ),
+)
+
+# Keep the original four-table tuple above frozen: it is part of version1's
+# checksum. Version2 adds a distinct planned child opening, never a fake local
+# driver call in the original intents table.
+SQL_CHILD_OPENINGS = "_cao_sql_child_openings"
+SQL_OPENING_ALL_TABLES = SQL_OPENING_TABLES + (SQL_CHILD_OPENINGS,)
+SQL_OPENING_MIGRATIONS += (
+    ComponentMigration(
+        component="sql_opening_intents",
+        scope="main",
+        version=2,
+        statements=(
+            """CREATE TABLE _cao_sql_child_openings (
+                intent_id UUID PRIMARY KEY,
+                journal_id UUID NOT NULL REFERENCES _cao_sql_opening_quotas(journal_id),
+                ordinal BIGINT NOT NULL CHECK(ordinal>0),
+                parent_binding_sha256 TEXT NOT NULL CHECK(parent_binding_sha256 ~ '^[0-9a-f]{64}$'),
+                parent_process_pid BIGINT NOT NULL CHECK(parent_process_pid>0),
+                parent_process_started_at DOUBLE PRECISION NOT NULL CHECK(
+                    parent_process_started_at>0 AND parent_process_started_at<'Infinity'::double precision),
+                parent_sql_application_name TEXT NOT NULL CHECK(
+                    parent_sql_application_name ~ '^caos-sql-v1-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$'),
+                subject_binding JSONB NOT NULL CHECK(jsonb_typeof(subject_binding)='object'),
+                subject_binding_sha256 TEXT NOT NULL UNIQUE CHECK(subject_binding_sha256 ~ '^[0-9a-f]{64}$'),
+                subject_instance_id UUID NOT NULL,
+                subject_process_generation UUID NOT NULL,
+                subject_process_pid BIGINT NOT NULL CHECK(subject_process_pid>0 AND subject_process_pid<>parent_process_pid),
+                subject_process_started_at DOUBLE PRECISION NOT NULL CHECK(
+                    subject_process_started_at>0 AND subject_process_started_at<'Infinity'::double precision),
+                subject_sql_application_name TEXT NOT NULL UNIQUE CHECK(
+                    subject_sql_application_name ~ '^caos-sql-v1-[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$'
+                    AND subject_sql_application_name<>parent_sql_application_name),
+                boot_id UUID NOT NULL,
+                start_time_ticks BIGINT NOT NULL CHECK(start_time_ticks>0),
+                pid_namespace_device BIGINT NOT NULL CHECK(pid_namespace_device>=0),
+                pid_namespace_inode BIGINT NOT NULL CHECK(pid_namespace_inode>=0),
+                path TEXT NOT NULL CHECK(path IN ('native','orm','audit')),
+                destination_store_id UUID NOT NULL,
+                destination_scope TEXT NOT NULL CHECK(length(destination_scope) BETWEEN 1 AND 128),
+                destination_sha256 TEXT NOT NULL CHECK(destination_sha256 ~ '^[0-9a-f]{64}$'),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(journal_id,ordinal),
+                UNIQUE(subject_instance_id,subject_process_generation),
+                UNIQUE(boot_id,pid_namespace_device,pid_namespace_inode,subject_process_pid,start_time_ticks)
+            )""",
+        ),
+        tables=SQL_OPENING_ALL_TABLES,
     ),
 )

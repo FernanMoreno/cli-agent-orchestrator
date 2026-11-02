@@ -129,3 +129,8 @@ La financiación del registro no puede obtener otro TCP sin recursión: usa el r
 ## T014.C2b.P2c.A — orden del bootstrap supervisado
 
 Probar que el helper de publicación no usa SQL no prueba el orden del entrypoint: _amain ejecutaba init_runtime_db antes de invocarlo. La corrección adelanta solo el bootstrap supervisado y reutiliza la misma instancia tras consumir FD. En la prueba negativa, cerrar un seqpacket con datos sin leer puede causar reset; consumir el paquete y enviar NACK explícito hace determinista el rechazo sin relajar la ausencia de SQL ni el join. [Validación](validation-t014-pre-sql-bootstrap.json).
+
+
+## T014.C2b.P2c.B — registro explícito previo al acuse
+
+La inscripción de sujeto debe tener tabla propia para no falsificar el significado de una apertura local. Cuota y UUID se comparten bajo lock de journal usando máximos de dos índices, sin scans crecientes. Una fábrica de candidato/no-op no basta: aprobación débil más set/token del supervisor, con expiración real, distingue dato de capacidad. Distinguir commit sin ACK de commit confirmado con ACK posterior no completado; preservar el recibo al atravesar cada capa pública. La prueba real de upgrade acredita compatibilidad de filas, no autoriza runtime anterior sin migración. [Validación](validation-t014-child-sql-intent.json).
