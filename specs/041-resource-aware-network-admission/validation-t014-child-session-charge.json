@@ -1,0 +1,235 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-02",
+  "component": "T014.C2b.P2c.C1",
+  "status": "validated-scoped-parent-prepayment",
+  "base_head": "650c7270f7e59901613e8c7c210037225b2e4c45",
+  "behavior": "Original funded parent channel borrows one prepaid unit from its same-owner started held data reservation before child startup registration and identity ACK. Shared mode requires exact already-active preparation without recursive SQL.",
+  "acceptance": {
+    "phase": "t014-child-session-final",
+    "selected_test_files": 93,
+    "passed": 1271,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "previous1237cases_preserved": true,
+    "new_distinct_cases": 34,
+    "seconds": 1261.957,
+    "available_mib": 12318,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "production_archive_match": 6,
+    "owned_python_archive_match": 9,
+    "archive_sha256": "bdb95693323f19637a7ed082716fe42b8decd81ac2e161a850e224bd3d85d9be",
+    "foreign_graphify_files_preserved": 12
+  },
+  "owned_python_files": [
+    {
+      "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+      "sha256": "1f09648199c6abd473a1bf6ed62af89f7de4096002417c7ead327ec6d8c9b5ea"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+      "sha256": "3ded7a78b75f0d5b22c0b2251ec5fef25c5ef7b4d84b62199d6661dd70ad18bd"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "sha256": "3bff8a5090a2e8ade13b1cf651aa82fa2a703b1caeaedc8354404da535550051"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+      "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+      "sha256": "9f127d796e92f2b6bc132d2cda34a683db3654cfda1052ff7552af8c20630dfd"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+      "sha256": "3db8ef03cdf85a62475c4f9459870b486979ed3f4b16ea6a5996b8f2c1c760ab"
+    },
+    {
+      "path": "test/services/test_child_sql_session_charge.py",
+      "sha256": "76a106c7cba3d4d230fdd7fa3e26d3d29d6173108d3b1d5a4ce8394ab6fa0a35"
+    },
+    {
+      "path": "test/services/test_shared_child_sql_session_charge.py",
+      "sha256": "eec674a8ef8eb3161851c17d1a8936712f6fe01eb2aa1d25ebb65159b899c600"
+    },
+    {
+      "path": "test/postgres/test_child_sql_session_charge.py",
+      "sha256": "3089c755406091db93a029beb69436c185cc0e9c511e238e3aa6726bbd280791"
+    }
+  ],
+  "checks": [
+    {
+      "name": "isort",
+      "exit_code": 0,
+      "files": 9
+    },
+    {
+      "name": "black",
+      "exit_code": 0,
+      "files": 9
+    },
+    {
+      "name": "mypy",
+      "exit_code": 0,
+      "files": 6
+    }
+  ],
+  "baseline_warnings": {
+    "count": 17,
+    "prior1237_count": 17,
+    "legacy_unawaited_test_coroutine_present_in_both": true
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "files": 17,
+    "nodes": 683,
+    "edges": 1964,
+    "dangling": 169,
+    "partial": true,
+    "private": true,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_child_subject.py",
+        "sha256": "1f09648199c6abd473a1bf6ed62af89f7de4096002417c7ead327ec6d8c9b5ea"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_opening_intent.py",
+        "sha256": "1c8a575a0216b11c8bbc645436478f1567b842d182d6bef84eaf9326bffc6a8f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_envelope.py",
+        "sha256": "2ede51fd1f9b70f47f6abb5da7ac074e53c7ec53a08c48fdcdee61b24f68553a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "a2cf6a1e9e830367faa71f61601bf01fc8ab5b01d0da7f1fb83e117e23a331d5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "3db8ef03cdf85a62475c4f9459870b486979ed3f4b16ea6a5996b8f2c1c760ab"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "81f53cab803ef6b850ab921f2c2306068bb3b53ba08d724fd0445122806354e7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+        "sha256": "f51904ae9a73643b8176978a671fc1cf9a82a5605292f07c425d3a541e6c2a87"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_repository.py",
+        "sha256": "dc8ae06cb109a7a02dd047e20114733199dbf4b2fbc06ce2b7c018daf66d89ac"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+        "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+        "sha256": "4739724fd7ca40a201d69bdbaf19c9e7d5fec4420fd4f5ad82cd13a5c908c2b4"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+        "sha256": "9f127d796e92f2b6bc132d2cda34a683db3654cfda1052ff7552af8c20630dfd"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "3ded7a78b75f0d5b22c0b2251ec5fef25c5ef7b4d84b62199d6661dd70ad18bd"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3bff8a5090a2e8ade13b1cf651aa82fa2a703b1caeaedc8354404da535550051"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+        "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge.py",
+        "sha256": "404b41f5f1fd385f3e6168ed3526c4d0c70c5de573161f29d630563236257829"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/bridge_supervisor.py",
+        "sha256": "60b4582f5300f068c09c51d5424fd85f45966fe61700c030c4bb07a9eeb6f656"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "c8095f36c1f4437903de35e517362236969feeb21649f2d17b55b98dfc246a58"
+      }
+    ]
+  },
+  "peer_review": {
+    "mode": "read",
+    "rounds_completed": 3,
+    "final_code_verdict": "no blocking findings",
+    "test_bodies_reviewed_by": "Codex root",
+    "unheld_finalizer_bug": "reproduced and corrected with prior retirement hold"
+  },
+  "history": [
+    {
+      "phase": "t014-child-session-red-checked",
+      "failed": 14,
+      "errors": 0,
+      "meaning": "Required new API absent; source/support closed"
+    },
+    {
+      "phase": "t014-child-session-focused",
+      "passed": 20,
+      "meaning": "Before held-lifecycle correction; superseded for final acceptance"
+    },
+    {
+      "phase": "t014-child-session-finalizer-red",
+      "failed": 1,
+      "meaning": "Real RuntimeError from ordinary worker finish after unheld debit"
+    },
+    {
+      "phase": "t014-child-session-reviewed",
+      "passed": 33,
+      "failed": 1,
+      "meaning": "Fixture incorrectly dereferenced an authenticated observation after rejected binding; preserved exact CLD_EXITED24 assertion instead. Product source unchanged by correction"
+    }
+  ],
+  "invariants": [
+    "Exact original live channel/raw/target/loan, process, actual Thread and task scope; no implicit connection.",
+    "Positive ephemeral child subject and separate one-shot session claim; nontransferable retained charge.",
+    "Prior retirement hold is mandatory; ordinary finish hands off without releasing or raising.",
+    "No extra commitment, additional loan growth, control-credit conversion or duplicate prepaid unit.",
+    "Shared preparation checked without SQL or inverse lock order; retained original operation stays charged.",
+    "Whole funding lease, including receiver and CPU/memory/other storage quantities, remains pinned until custody.",
+    "Charge/receipt retained across preinsert refusal, commit uncertainty, confirmed commit/failed ACK and channel close.",
+    "Protocol2 identity ACK, default registration and SQL schema1/2 plus resource migrations1–7 unchanged."
+  ],
+  "limits": [
+    "This is parent prepayment only, not a child driver grant, one-TCP enforcement or global CLI activation.",
+    "No automatic refund, including proved preinsert refusal; failed session claim is consumed and does not authorize retry.",
+    "Use dedicated storage reservations when possible; a charged normal delivery also retains its full receiver/CPU/memory footprint.",
+    "Native child startup uses a controlled first-SQL callback, not full provider/model acceptance.",
+    "Actual shared PG negative-gate fixture retires only its source-bound unused loan after exact exit24 and no SQL callback. This is fixture cleanup, not product custody.",
+    "Root funding, child permission/enforcement, broker, complete inventory, metadata retirement, M1/M2/M3, SDK/UI and original ten gates remain open."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261102-child-session-charge",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint": 0
+  },
+  "composition_report": "composition-t014-child-session-charge.md",
+  "public_source_hashes_note": "Owned Python only; no operator data, credentials or credential-named hash maps."
+}

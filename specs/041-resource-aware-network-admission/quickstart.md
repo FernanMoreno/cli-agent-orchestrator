@@ -100,3 +100,8 @@ El lanzador supervisado existente conserva comando/protocolo/configuración. Aho
 ## T014.C2b.P2c.B — registro explícito previo al acuse
 
 Composición programática confiable: usar owner.receive_binding_with_child_intent(channel=canal_original_pagado, repository=repo, journal_id=..., intent_id=..., destination=target) dentro del worker/scope original. Antes, el dueño aplica la migración2 mediante el mecanismo existente y provisiona quota del padre. No crear otro canal dentro del registro, no transferirlo de hilo y no interpretar el recibo como permiso de sesión. CLI por defecto sigue identidad-only; activación global/root/broker/custodio requieren trabajo adicional. [Validación](validation-t014-child-sql-intent.json).
+
+
+## Composición explícita del cargo del padre — T014.C2b.P2c.C1
+
+En el worker confiable, reservar e iniciar una reserva de almacenamiento dedicada antes de entrar en el lane de control. En modo compartido, coordinator.prepare(lease) debe confirmar la operación y crear hold; en local, lease.hold_retirement() debe preceder al débito. Dentro del scope original de control ya financiado, pasar session_reservation=lease a receive_binding_with_child_intent. Conservar supervisor.child_sql_session_charge y todo recibo/error; el finally ordinario usa lease.finish() y deja el cargo retenido. No abrir otra conexión para registrar este cargo ni copiar el canal/scope a un broker. Este ejemplo no activa CLI, concede permiso al hijo ni implementa custodia. [Validación](validation-t014-child-session-charge.json).

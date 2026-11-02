@@ -36,6 +36,8 @@ class SharedStorageCoordinator(Protocol):
 
     def prepare(self, lease: "DeliveryReservation") -> None: ...
 
+    def owns_prepared_storage(self, lease: object) -> bool: ...
+
 
 @dataclass(frozen=True)
 class AdmissionAttempt:
@@ -645,6 +647,65 @@ class _StorageControlReservation(StorageReservation):
             self._storage_connections.add(loan)
             owner._storage_connection_loans += 1
             return loan
+
+    def reserve_child_sql_session(
+        self, reservation: object, *, now: float
+    ) -> StorageConnectionReservation:
+        """Borrow only a prepaid data unit, never the control lane's credit."""
+        validate_clock(now)
+        owner = self._owner
+        if not self.storage_process_current:
+            raise StorageAdmissionUnavailable()
+        # Coordinator checks take coordinator -> owner locks, as prepare does.
+        # Never invoke that boundary while holding the owner guard.
+        coordinator = owner._shared_coordinator
+        if owner._shared_required and (
+            coordinator is None or not coordinator.owns_prepared_storage(reservation)
+        ):
+            raise StorageAdmissionUnavailable()
+        with owner._guard:
+            if type(reservation) not in (StorageReservation, DeliveryReservation) or not isinstance(
+                reservation, DeliveryReservation
+            ):
+                raise StorageAdmissionUnavailable()
+            if (
+                not self.storage_control_current
+                or self._retirement_requested
+                or not owner._accepting
+                or not owner.owns_normal_storage(reservation)
+                or reservation._retirement_hold is None
+                or reservation._storage_stage is not None
+                or reservation._remaining.storage_slots <= len(reservation._storage_connections)
+            ):
+                raise StorageAdmissionUnavailable()
+            decision = owner._current_decision(now)
+            if (
+                decision.reason not in ("capacity_available", "resource_exhausted")
+                or decision.resource_debt.storage_slots
+            ):
+                raise StorageAdmissionUnavailable()
+            loan = StorageConnectionReservation(reservation, False)
+            reservation._storage_connections.add(loan)
+            owner._storage_connection_loans += 1
+        return loan
+
+    def owns_child_sql_session(self, reservation: object, loan: object) -> bool:
+        owner = self._owner
+        if not self.storage_process_current:
+            return False
+        coordinator = owner._shared_coordinator
+        if owner._shared_required and (
+            coordinator is None or not coordinator.owns_prepared_storage(reservation)
+        ):
+            return False
+        with owner._guard:
+            return (
+                self.storage_control_current
+                and owner._accepting
+                and owner.owns_normal_storage(reservation)
+                and isinstance(reservation, DeliveryReservation)
+                and reservation.owns_storage_connection(loan)
+            )
 
     def take_storage_stage(self, *, now: float) -> StorageStageReservation | None:
         validate_clock(now)

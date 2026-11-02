@@ -178,3 +178,8 @@ Bridge supervisado exige publicación/ACK antes de init_runtime_db, limpieza/res
 ## T014.C2b.P2c.B — registro explícito previo al acuse
 
 receive_binding_with_child_intent requiere repo nativo y Connection original ya financiada del padre; autentica hijo, registra/commitea, revalida y acusa identidad. No-hook/protocolo2 conserva identidad solamente. Error posterior a commit no pierde recibo; ACK/TCP puede haber ocurrido, así que jamás autoriza retry o liberar crédito. DDL2 por dueño es prerrequisito antes de runtime; no hay fallback DDL/TCP ni quota automática del hijo. Los emisores privados son código confiable, no permisos concedidos por campos del modelo. [Validación](../validation-t014-child-sql-intent.json).
+
+
+## Cargo opcional antes del ACK de identidad — T014.C2b.P2c.C1
+
+receive_binding_with_child_intent(session_reservation=lease) requiere reserva normal exacta, iniciada, con hold previo y misma raíz que el canal financiado original; en modo compartido, preparación activa ya confirmada. Consume un préstamo prepagado sin ampliar costes ni usar el crédito de control. child_sql_session_charge conserva cargo y las excepciones lo adjuntan incluso al envolver un commit confirmado. No-hook/sin session_reservation conserva el contrato anterior; b1 sigue identidad solamente. Toda la reserva queda retenida hasta custodia, sin refund ni retry automático. [Validación](../validation-t014-child-session-charge.json).

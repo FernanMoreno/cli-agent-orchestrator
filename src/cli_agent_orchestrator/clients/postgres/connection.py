@@ -1,5 +1,7 @@
 """Native psycopg connections and named/ordinal records. SQL is never rewritten."""
 
+import hashlib
+import json
 import os
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -11,6 +13,7 @@ from psycopg import sql
 from psycopg.pq import TransactionStatus
 
 from cli_agent_orchestrator.clients.storage_admission import (
+    ChildSqlSessionCharge,
     StorageAdmissionUnavailable,
     StorageConnectionLoan,
     acquire_storage_connection,
@@ -20,6 +23,7 @@ from cli_agent_orchestrator.clients.storage_admission import (
     storage_close_tracks_handle,
     storage_scope_present,
 )
+from cli_agent_orchestrator.models.sql_child_subject import VerifiedChildSqlSubject
 from cli_agent_orchestrator.models.sql_opening_intent import SqlOpeningPreparationUncertain
 from cli_agent_orchestrator.utils.process_sql_origin import sql_process_opening
 
@@ -293,6 +297,37 @@ class Connection:
                     closed=lambda: getattr(self.raw, "closed", False) is True,
                     loan=loan,
                 )
+
+    def reserve_child_sql_session(
+        self, *, reservation: object, subject: VerifiedChildSqlSubject
+    ) -> ChildSqlSessionCharge:
+        """Explicit original-channel prepayment; performs no SQL or new TCP."""
+        funding = self._control_sql_funding
+        if funding is None or not self._owns_raw:
+            raise StorageAdmissionUnavailable()
+        funding.check(self, self._storage_loan)
+        self._check_live()
+        if (
+            self.raw is not self._funded_raw
+            or self.target is not self._funded_target
+            or getattr(self.raw, "closed", None) is not False
+            or self.in_transaction
+        ):
+            raise StorageAdmissionUnavailable()
+        if type(subject) is not VerifiedChildSqlSubject:
+            raise StorageAdmissionUnavailable()
+        subject.check()
+        target_digest = hashlib.sha256(
+            json.dumps(self.target.identity, separators=(",", ":")).encode()
+        ).hexdigest()
+        if (
+            subject.binding.store_id != self.target.store_id
+            or subject.binding.target_identity_sha256 != target_digest
+        ):
+            raise StorageAdmissionUnavailable()
+        return funding.reserve_child_sql_session(
+            self, self._storage_loan, reservation=reservation, subject=subject
+        )
 
     @contextmanager
     def funded_transaction(self) -> Iterator["Connection"]:

@@ -412,6 +412,20 @@ class SharedDeliveryCoordinator:
 
     # -- preparation ---------------------------------------------------------
 
+    def owns_prepared_storage(self, lease: object) -> bool:
+        """Positive exact-lease confirmation without SQL, waits or new admission."""
+        with self._checked():
+            attempt = self._attempts.get(id(lease))
+            prepared = (
+                self._accepting
+                and attempt is not None
+                and attempt.lease is lease
+                and attempt.authorized
+                and attempt.stage == "active"
+                and attempt.hold is getattr(lease, "_retirement_hold", None)
+            )
+        return prepared and self._owner.owns_normal_storage(lease)
+
     def prepare(self, lease: DeliveryReservation) -> None:
         """Synchronous physical worker only; never call on an event loop."""
         owner = self._owner

@@ -126,3 +126,8 @@ El bootstrap supervisado se retiene como la misma instancia efímera entre publi
 ## T014.C2b.P2c.B — registro explícito previo al acuse
 
 sql_opening_intents2 añade _cao_sql_child_openings append-only: actor padre, binding JSONB/sujeto tipado, etiqueta y boot/ticks/pidns, destino, ordinal compartido y unicidad binding/generación/físico/etiqueta. Quota1 y tablas1 conservadas. VerifiedChildSqlSubject es efímero aprobado/scoped, no serializable; ChildSqlOpeningIntent es solo descriptivo. SqlChildAckUnavailableAfterCommit contiene fila confirmada; SqlIntentCommitUncertain contiene IDs para reconciliar resultado desconocido. Ninguno es presupuesto de sesión ni testigo de ausencia. [Validación](validation-t014-child-sql-intent.json).
+
+
+## ChildSqlSessionCharge scoped — T014.C2b.P2c.C1
+
+Objeto opaco no serializable: UUID de sesión y ResourceBinding descriptivos, funding original, referencia de canal y préstamos de control/datos exactos. No es fila durable nueva, permiso TCP o testigo de cierre. El sujeto mantiene claim de sesión separado del claim de registro. Reserva/hold originales retienen toda la huella; SharedDeliveryCoordinator confirma lease/hold/estado activo exactos sin SQL. El recibo durable ChildSqlOpeningIntent mantiene su significado anterior. [Validación](validation-t014-child-session-charge.json).

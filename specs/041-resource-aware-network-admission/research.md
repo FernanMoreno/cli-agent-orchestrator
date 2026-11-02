@@ -134,3 +134,8 @@ Probar que el helper de publicación no usa SQL no prueba el orden del entrypoin
 ## T014.C2b.P2c.B — registro explícito previo al acuse
 
 La inscripción de sujeto debe tener tabla propia para no falsificar el significado de una apertura local. Cuota y UUID se comparten bajo lock de journal usando máximos de dos índices, sin scans crecientes. Una fábrica de candidato/no-op no basta: aprobación débil más set/token del supervisor, con expiración real, distingue dato de capacidad. Distinguir commit sin ACK de commit confirmado con ACK posterior no completado; preservar el recibo al atravesar cada capa pública. La prueba real de upgrade acredita compatibilidad de filas, no autoriza runtime anterior sin migración. [Validación](validation-t014-child-sql-intent.json).
+
+
+## Retención antes de prestar la unidad del hijo — T014.C2b.P2c.C1
+
+El crédito de control no es capacidad de datos; sumar una unidad local bajo ese lane podría saltarse el mapeo compartido. Reutilizar una reserva previamente iniciada/preparada y su unidad original, sin SQL recursivo. Se reprodujo RuntimeError en finish con préstamo externo pero sin hold: exigir hold antes del cargo conserva el finally normal. Rechazar binding no permite emitir ProcessExitObservation autenticada; las fixtures negativas exigen waitid estructurado y marcador negativo, sin inferir que None equivale a proceso vivo. [Validación](validation-t014-child-session-charge.json).

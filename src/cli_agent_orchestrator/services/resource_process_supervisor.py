@@ -49,6 +49,7 @@ from cli_agent_orchestrator.utils.process_sql_origin import current_sql_applicat
 if TYPE_CHECKING:
     from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget
     from cli_agent_orchestrator.clients.sql_intent_repository import SqlIntentRepository
+    from cli_agent_orchestrator.clients.storage_admission import ChildSqlSessionCharge
     from cli_agent_orchestrator.models.sql_opening_intent import ChildSqlOpeningIntent
 
 BINDING_PROTOCOL_VERSION = 2
@@ -231,6 +232,7 @@ class ResourceProcessSupervisor:
     _closed: bool
     _exited: bool
     _wait_status: tuple[int, int] | None
+    _child_sql_session_charge: ChildSqlSessionCharge | None
     _binding_failed: bool
     _receiving: bool
     _issued_subjects: set[VerifiedChildSqlSubject]
@@ -284,6 +286,7 @@ class ResourceProcessSupervisor:
         value = object.__new__(cls)
         value._owner_pid = os.getpid()
         value._owner_thread = threading.current_thread()
+        value._child_sql_session_charge = None
         value._binding = None
         value._sql_application_name = None
         value._observation = None
@@ -356,6 +359,12 @@ class ResourceProcessSupervisor:
         self._check_owner()
         return self._sql_application_name
 
+    @property
+    def child_sql_session_charge(self) -> ChildSqlSessionCharge | None:
+        """Retained parent debit only; never permission for another child open."""
+        self._check_owner()
+        return self._child_sql_session_charge
+
     def receive_binding(self, *, timeout_s: float = 30) -> ResourceBinding:
         return self._receive_binding(timeout_s=timeout_s)
 
@@ -369,6 +378,7 @@ class ResourceProcessSupervisor:
         destination: DatabaseTarget,
         path: str = "native",
         timeout_s: float = 30,
+        session_reservation: object | None = None,
     ) -> ChildSqlOpeningIntent:
         """Explicit parent-funded registration; ACK still grants identity only."""
         self._check_owner()
@@ -385,6 +395,10 @@ class ResourceProcessSupervisor:
 
         def register(subject: VerifiedChildSqlSubject) -> None:
             nonlocal receipt
+            if session_reservation is not None:
+                self._child_sql_session_charge = channel.reserve_child_sql_session(
+                    reservation=session_reservation, subject=subject
+                )
             result = repository.record_child_opening(
                 channel,
                 journal_id=journal_id,
@@ -396,16 +410,27 @@ class ResourceProcessSupervisor:
             if type(result) is not ChildSqlOpeningIntent or result.subject is not subject.binding:
                 raise SqlIntentCommitUncertain(journal_id, intent_id)
             receipt = result
+            if self._child_sql_session_charge is not None:
+                self._child_sql_session_charge.check()
 
         try:
             self._receive_binding(timeout_s=timeout_s, before_ack=register)
         except BaseException as failure:
+            charge = self._child_sql_session_charge
+            if charge is None:
+                charge = getattr(failure, "child_sql_session_charge", None)
+                self._child_sql_session_charge = charge
+            if charge is not None:
+                setattr(failure, "child_sql_session_charge", charge)
             if receipt is not None:
                 self._binding_failed = True
                 if not isinstance(
                     failure, (SqlChildAckUnavailableAfterCommit, SqlIntentCommitUncertain)
                 ):
-                    raise SqlChildAckUnavailableAfterCommit(receipt) from failure
+                    unavailable = SqlChildAckUnavailableAfterCommit(receipt)
+                    if charge is not None:
+                        setattr(unavailable, "child_sql_session_charge", charge)
+                    raise unavailable from failure
             raise
         if receipt is None:
             raise ResourceProcessUnproven("child registration has no acknowledged receipt")

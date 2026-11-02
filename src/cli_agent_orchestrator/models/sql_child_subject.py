@@ -29,6 +29,7 @@ class VerifiedChildSqlSubject:
     _handshake_token: object
     _active: bool
     _claimed: bool
+    _session_claimed: bool
     _factory: object
 
     def __init__(self):
@@ -62,6 +63,13 @@ class VerifiedChildSqlSubject:
         if self._claimed:
             raise ValueError("child subject registration is single use")
         object.__setattr__(self, "_claimed", True)
+
+    def claim_session(self) -> None:
+        """Separate one-shot parent debit; never a grant to the child driver."""
+        self.check()
+        if self._session_claimed:
+            raise ValueError("child session prepayment is single use")
+        object.__setattr__(self, "_session_claimed", True)
 
 
 def _issue_verified_child_sql_subject(
@@ -100,6 +108,7 @@ def _issue_verified_child_sql_subject(
         ("_handshake_token", handshake_token if handshake_token is not None else object()),
         ("_active", True),
         ("_claimed", False),
+        ("_session_claimed", False),
         ("_factory", _FACTORY),
     ):
         object.__setattr__(value, name, field)

@@ -9,6 +9,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Protocol, TypeVar
+from uuid import uuid4
+
+from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
+from cli_agent_orchestrator.models.sql_child_subject import VerifiedChildSqlSubject
 
 _WorkerResult = TypeVar("_WorkerResult")
 
@@ -159,6 +163,94 @@ class _ControlSqlFunding:
             yield
         finally:
             _CURRENT.reset(token)
+
+    def reserve_child_sql_session(
+        self,
+        connection: object,
+        loan: StorageConnectionLoan | None,
+        *,
+        reservation: object,
+        subject: VerifiedChildSqlSubject,
+    ) -> "ChildSqlSessionCharge":
+        self.check(connection, loan)
+        if type(subject) is not VerifiedChildSqlSubject:
+            raise StorageAdmissionUnavailable()
+        subject.claim_session()
+        reserve = getattr(self.scope.owner, "reserve_child_sql_session", None)
+        if not callable(reserve):
+            raise StorageAdmissionUnavailable()
+        # Allocate the descriptor before obtaining a retained loan. If a later
+        # check fails, the original data lease still owns the loan and debt.
+        charge = object.__new__(ChildSqlSessionCharge)
+        for name, value in (
+            ("session_id", str(uuid4())),
+            ("subject", subject.binding),
+            ("_funding", self),
+            ("_connection", weakref.ref(connection)),
+            ("_control_loan", loan),
+            ("_reservation", reservation),
+            ("_loan", None),
+            ("_factory", _FUNDING_FACTORY),
+        ):
+            object.__setattr__(charge, name, value)
+        try:
+            retained = reserve(reservation, now=self.scope.clock())
+            object.__setattr__(charge, "_loan", retained)
+            subject.check()
+            charge.check()
+        except BaseException as failure:
+            # Diagnostic only. Never return a loan through an exception path.
+            if charge._loan is not None:
+                setattr(failure, "child_sql_session_charge", charge)
+            raise
+        return charge
+
+
+@dataclass(frozen=True, eq=False, init=False, repr=False)
+class ChildSqlSessionCharge:
+    """Opaque retained parent debit, neither a child TCP nor close capability.
+
+    No finish/release API: a future independently funded custodian must prove
+    the original physical obligation retired. A closed parent channel, failed
+    ACK, child exit or garbage collection is not that proof.
+    """
+
+    session_id: str
+    subject: ResourceBinding
+    _funding: _ControlSqlFunding
+    _connection: weakref.ReferenceType[object]
+    _control_loan: StorageConnectionLoan | None
+    _reservation: object
+    _loan: StorageConnectionLoan | None
+    _factory: object
+
+    def __init__(self):
+        raise TypeError("child session charges require an original funded channel")
+
+    def __copy__(self):
+        raise TypeError("child session charges are not transferable")
+
+    def __deepcopy__(self, memo):
+        raise TypeError("child session charges are not transferable")
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError("child session charges are not serializable")
+
+    def check(self) -> None:
+        if type(self) is not ChildSqlSessionCharge or self._factory is not _FUNDING_FACTORY:
+            raise StorageAdmissionUnavailable()
+        connection = self._connection()
+        if connection is None:
+            raise StorageAdmissionUnavailable()
+        # Includes PID/actual Thread/scope checks before any owner mutex.
+        self._funding.check(connection, self._control_loan)
+        owns = getattr(self._funding.scope.owner, "owns_child_sql_session", None)
+        if (
+            self._loan is None
+            or not callable(owns)
+            or owns(self._reservation, self._loan) is not True
+        ):
+            raise StorageAdmissionUnavailable()
 
 
 def capture_control_sql_funding(
