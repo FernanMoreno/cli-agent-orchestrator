@@ -210,6 +210,52 @@ class AdmissionOperationDiagnostics(StrictControlModel):
         return self
 
 
+class CommandOperationDiagnostics(StrictControlModel):
+    inflight: StrictInt = Field(ge=0)
+    started: StrictInt = Field(ge=0)
+
+    @model_validator(mode="after")
+    def consistent_counts(self) -> "CommandOperationDiagnostics":
+        if self.started > self.inflight:
+            raise ValueError("inconsistent command operation counters")
+        return self
+
+
+class AdmissionOperationDiagnosticsV2(StrictControlModel):
+    inflight_operations: StrictInt = Field(ge=0)
+    reserved_operations: StrictInt = Field(ge=0)
+    started_operations: StrictInt = Field(ge=0)
+    inflight_deliveries: StrictInt = Field(ge=0)
+    started_deliveries: StrictInt = Field(ge=0)
+    inflight_storage_only: StrictInt = Field(ge=0)
+    started_storage_only: StrictInt = Field(ge=0)
+    commands: CommandOperationDiagnostics
+    storage_connection_loans: StrictInt = Field(ge=0)
+    storage_completion_credits: StrictInt = Field(ge=0)
+    storage_retirement_pending: StrictInt = Field(ge=0)
+    control_storage_slots: StrictInt = Field(default=0, ge=0, le=1)
+    control_inflight: StrictInt = Field(default=0, ge=0, le=1)
+    control_connection_loans: StrictInt = Field(default=0, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def consistent_counts(self) -> "AdmissionOperationDiagnosticsV2":
+        if (
+            self.inflight_operations
+            != self.inflight_deliveries + self.inflight_storage_only + self.commands.inflight
+            or self.started_operations
+            != self.started_deliveries + self.started_storage_only + self.commands.started
+            or self.reserved_operations != self.inflight_operations - self.started_operations
+            or self.started_deliveries > self.inflight_deliveries
+            or self.started_storage_only > self.inflight_storage_only
+            or self.control_inflight > self.control_storage_slots
+            or self.control_inflight > self.started_storage_only
+            or self.control_connection_loans > self.control_inflight
+            or self.control_connection_loans > self.storage_connection_loans
+        ):
+            raise ValueError("inconsistent admission operation counters")
+        return self
+
+
 class MonitorDiagnostics(StrictControlModel):
     stopping: StrictBool
     sampling: StrictBool
@@ -240,6 +286,46 @@ class AdmissionDiagnostics(StrictControlModel):
     monitor: MonitorDiagnostics
     postgres: PostgresProbeDiagnostics | None
     resource_probe: LocalResourceProbeDiagnostics | None
+
+
+class AdmissionDiagnosticsV2(StrictControlModel):
+    version: Literal[2] = 2
+    scope: Literal["process_local"] = "process_local"
+    distributed_observed: Literal[False] = False
+    generation: StrictInt = Field(ge=0)
+    accepting: StrictBool
+    reason: AdmissionDiagnosticReason
+    policy: AdmissionPolicyDiagnostics
+    sampling_policy: SamplingPolicyDiagnostics | None
+    applied_budget: ResourceQuantities | None
+    sample: ResourceSampleDiagnostics | None
+    capacity: ResourceQuantities | None
+    remaining: ResourceQuantities | None
+    committed: ResourceQuantities
+    debt: ResourceQuantities
+    recovery_ceiling: ResourceQuantities | None
+    operations: AdmissionOperationDiagnosticsV2
+    monitor: MonitorDiagnostics
+    postgres: PostgresProbeDiagnostics | None
+    resource_probe: LocalResourceProbeDiagnostics | None
+
+
+class AdmissionDiagnosticsQueryError(StrictControlModel):
+    code: Literal["invalid_diagnostics_query"] = "invalid_diagnostics_query"
+
+
+class AdmissionDiagnosticsQueryErrorResponse(StrictControlModel):
+    detail: AdmissionDiagnosticsQueryError
+
+
+class AdmissionDiagnosticsVersionRequired(StrictControlModel):
+    code: Literal["diagnostics_version_required"] = "diagnostics_version_required"
+    required_version: Literal[2] = 2
+    supported_versions: tuple[Literal[1], Literal[2]] = (1, 2)
+
+
+class AdmissionDiagnosticsVersionRequiredResponse(StrictControlModel):
+    detail: AdmissionDiagnosticsVersionRequired
 
 
 class SharedActionIdentity(StrictControlModel):

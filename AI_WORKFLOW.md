@@ -105,6 +105,8 @@ For bugs, failing tests, integration failures, or unexpected behavior:
 
 Prefer test-driven development for new behavior and regressions when practical.
 
+When adding an optional factory/adapter/version parameter, trace its callers and test doubles before the broad freeze. Preserve the previous call shape for the default/unbound path (for example omit a new keyword when its value is None or the default wire version). Include consumer contract tests early; a permissive new constructor does not prove compatibility with existing factories. Do not update a strict test double just to accept an unnecessary keyword.
+
 Before freezing source hashes or launching a broad regression, run the commit hook's applicable format/import/lint checks on the changed files. Fix those checks first; a later formatter mutation invalidates the frozen source evidence and must not be relabeled as the tested bytes.
 
 Before freezing a new test module that imports fixtures, trace their non-global fixture dependencies and import or register that closure explicitly. Importing one fixture does not register every fixture in its original module. Inspect helper return types before composing native fixtures (for example DomainSpec versus DomainRecord), and assert the normalized shape before SQL. Fixture-resolution/setup failures are not product RED evidence.

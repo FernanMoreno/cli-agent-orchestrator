@@ -8,10 +8,12 @@ import weakref
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from heapq import merge
 from itertools import count
-from typing import Literal, Protocol
+from typing import Literal, NoReturn, Protocol, SupportsIndex
 
 from cli_agent_orchestrator.clients.storage_admission import (
+    _CURRENT,
     StorageAdmissionUnavailable,
     check_storage_admission,
     physical_storage_scope,
@@ -31,6 +33,13 @@ AdmissionReason = CapacityReason | Literal["receiver_busy", "stopping"]
 ReservationState = Literal["reserved", "started", "released"]
 
 
+def _current_async_task() -> object | None:
+    try:
+        return asyncio.current_task()
+    except RuntimeError:
+        return None
+
+
 class SharedStorageCoordinator(Protocol):
     _owner: "DeliveryAdmission"
 
@@ -48,6 +57,12 @@ class AdmissionAttempt:
 @dataclass(frozen=True)
 class StorageAdmissionAttempt:
     reservation: "StorageReservation | None"
+    reason: AdmissionReason
+
+
+@dataclass(frozen=True, eq=False)
+class CommandAdmissionAttempt:
+    reservation: "CommandReservation | None"
     reason: AdmissionReason
 
 
@@ -74,14 +89,120 @@ class AdmissionSnapshot:
     control_storage_slots: int = 0
     control_inflight: int = 0
     control_connection_loans: int = 0
+    command_inflight: int = 0
+    command_started: int = 0
 
     @property
     def delivery_inflight(self) -> int:
-        return self.inflight - self.storage_only_inflight
+        return self.inflight - self.storage_only_inflight - self.command_inflight
 
     @property
     def delivery_started(self) -> int:
-        return self.started - self.storage_only_started
+        return self.started - self.storage_only_started - self.command_started
+
+
+@dataclass(frozen=True, eq=False, init=False, repr=False)
+class CommandReservation:
+    """One exact RAM/CPU charge for a server-selected command worker."""
+
+    _owner: "DeliveryAdmission"
+    _key: int
+    _generation: int
+    _footprint: ResourceAmounts
+    _state: ReservationState
+    _start_pid: int | None
+    _start_thread: threading.Thread | None
+    _start_task: object | None
+
+    def __init__(
+        self,
+        owner: "DeliveryAdmission",
+        key: int,
+        generation: int,
+        footprint: ResourceAmounts,
+    ) -> None:
+        object.__setattr__(self, "_owner", owner)
+        object.__setattr__(self, "_key", key)
+        object.__setattr__(self, "_generation", generation)
+        object.__setattr__(self, "_footprint", footprint)
+        object.__setattr__(self, "_state", "reserved")
+        object.__setattr__(self, "_start_pid", None)
+        object.__setattr__(self, "_start_thread", None)
+        object.__setattr__(self, "_start_task", None)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("command reservation is not transferable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        raise TypeError("command reservation is not transferable")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("command reservation is not serializable")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("command reservation is not serializable")
+
+    @property
+    def footprint(self) -> ResourceAmounts:
+        return self._footprint
+
+    @property
+    def state(self) -> ReservationState:
+        with self._owner._guard:
+            return self._state
+
+    def start(self, *, now: float) -> bool:
+        validate_clock(now)
+        owner = self._owner
+        if owner._pid != os.getpid():
+            return False
+        with owner._guard:
+            if (
+                self._state != "reserved"
+                or not owner._accepting
+                or self._generation != owner._generation
+                or owner._commands.get(self._key) is not self
+                or owner._pending_commands.get(self._key) is not self
+            ):
+                return False
+            decision = owner._current_decision(now, charged=False)
+            if decision.reason not in {"capacity_available", "resource_exhausted"}:
+                return False
+            other_committed = owner._committed - self._footprint
+            remaining = decision.resource_capacity.excess_over(other_committed)
+            if not owner._command_fits(self._footprint, remaining):
+                return False
+            object.__setattr__(self, "_state", "started")
+            object.__setattr__(self, "_start_pid", os.getpid())
+            object.__setattr__(self, "_start_thread", threading.current_thread())
+            object.__setattr__(self, "_start_task", _current_async_task())
+            owner._pending_commands.pop(self._key)
+            owner._command_started += 1
+            return True
+
+    def cancel_before_start(self) -> bool:
+        owner = self._owner
+        if owner._pid != os.getpid():
+            return False
+        with owner._guard:
+            if self._state != "reserved":
+                return False
+            return owner._release_command_locked(self)
+
+    def finish(self) -> bool:
+        owner = self._owner
+        if (
+            self._state != "started"
+            or self._start_pid != os.getpid()
+            or owner._pid != os.getpid()
+            or self._start_thread is not threading.current_thread()
+            or self._start_task is not _current_async_task()
+        ):
+            return False
+        with owner._guard:
+            if self._state != "started":
+                return False
+            return owner._release_command_locked(self, finish_started=True)
 
 
 @dataclass(frozen=True)
@@ -158,13 +279,13 @@ class PhysicalEffectReservation:
     )
     _unobserved_starts: set[object] = field(default_factory=set, init=False, repr=False)
 
-    def __copy__(self):
+    def __copy__(self) -> NoReturn:
         raise TypeError("physical effect ownership is not transferable")
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("physical effect ownership is not transferable")
 
-    def __reduce__(self):
+    def __reduce__(self) -> NoReturn:
         raise TypeError("physical effect ownership is not transferable")
 
     def _owner(self) -> "DeliveryAdmission":
@@ -723,6 +844,23 @@ class StorageControlPermit:
     def belongs_to(self, owner: "DeliveryAdmission") -> bool:
         return self._owner is owner and owner._control_permit is self
 
+    def check_current_operation(self) -> None:
+        """Validate this exact already-active physical control scope; create none."""
+        scope = _CURRENT.get()
+        if scope is None or scope.logical or not scope.is_current():
+            raise StorageAdmissionUnavailable()
+        owner = self._owner
+        with owner._guard:
+            lease = owner._control_lease
+            if (
+                not self.belongs_to(owner)
+                or self._lane_owner != threading.get_ident()
+                or scope.owner is not lease
+                or lease is None
+                or not lease.storage_control_current
+            ):
+                raise StorageAdmissionUnavailable()
+
     @contextmanager
     def _serial(self, *, wait: bool) -> Iterator[int]:
         owner = self._owner
@@ -812,9 +950,12 @@ class DeliveryAdmission:
         self._shared_ready = False
         self._shared_coordinator: SharedStorageCoordinator | None = None
         self._pending: dict[int, DeliveryReservation] = {}
+        self._commands: dict[int, CommandReservation] = {}
+        self._pending_commands: dict[int, CommandReservation] = {}
         self._receivers: dict[str, int] = {}
         self._sequence = count()
         self._started = 0
+        self._command_started = 0
         self._storage_only_inflight = 0
         self._storage_only_started = 0
         self._storage_connection_loans = 0
@@ -922,6 +1063,8 @@ class DeliveryAdmission:
             self._observation_ceiling = None
             for lease in tuple(self._pending.values()):
                 self._release_locked(lease)
+            for command in tuple(self._pending_commands.values()):
+                self._release_command_locked(command)
             return self._generation
 
     def invalidate(self, *, expected_generation: int) -> bool:
@@ -936,6 +1079,8 @@ class DeliveryAdmission:
             self._observation_ceiling = None
             for lease in tuple(self._pending.values()):
                 self._release_locked(lease)
+            for command in tuple(self._pending_commands.values()):
+                self._release_command_locked(command)
             return True
 
     @property
@@ -972,12 +1117,25 @@ class DeliveryAdmission:
             self._observation_ceiling = ceiling
             self._decision = decision
             # Newest unstarted handoffs yield first under pressure. Started
-            # work is never scanned or retired by a resource observation.
+            # work is never scanned or retired by a resource observation. A
+            # zero-storage command does not yield to storage-only debt.
             if self._current_decision(now).resource_debt != ResourceAmounts():
-                for lease in reversed(tuple(self._pending.values())):
-                    self._release_locked(lease)
-                    if self._current_decision(now).resource_debt == ResourceAmounts():
+                pending: Iterator[tuple[int, DeliveryReservation | CommandReservation]] = merge(
+                    reversed(tuple(self._pending.items())),
+                    reversed(tuple(self._pending_commands.items())),
+                    key=lambda entry: entry[0],
+                    reverse=True,
+                )
+                for _, reservation in pending:
+                    debt = self._current_decision(now).resource_debt
+                    if debt == ResourceAmounts():
                         break
+                    if isinstance(reservation, CommandReservation):
+                        if not self._overlaps_debt(reservation._footprint, debt):
+                            continue
+                        self._release_command_locked(reservation)
+                    else:
+                        self._release_locked(reservation)
             return True
 
     def _current_decision(
@@ -1007,6 +1165,22 @@ class DeliveryAdmission:
             self._policy, self._observation, now=now, committed=committed, budget=budget
         )
 
+    @staticmethod
+    def _command_fits(footprint: ResourceAmounts, remaining: ResourceAmounts) -> bool:
+        return (
+            footprint.memory_bytes <= remaining.memory_bytes
+            and footprint.cpu_millicores <= remaining.cpu_millicores
+            and footprint.storage_slots == 0
+        )
+
+    @staticmethod
+    def _overlaps_debt(footprint: ResourceAmounts, debt: ResourceAmounts) -> bool:
+        return (
+            (footprint.memory_bytes > 0 and debt.memory_bytes > 0)
+            or (footprint.cpu_millicores > 0 and debt.cpu_millicores > 0)
+            or (footprint.storage_slots > 0 and debt.storage_slots > 0)
+        )
+
     def owns_normal_storage(self, lease: object) -> bool:
         """Exact registered normal lease; a control credit cannot serve data SQL."""
         with self._guard:
@@ -1030,6 +1204,39 @@ class DeliveryAdmission:
                 and receiver not in self._receivers
                 and self._current_decision(now).available_slots
             )
+
+    def try_reserve_command(
+        self, *, footprint: ResourceAmounts, now: float
+    ) -> CommandAdmissionAttempt:
+        """Reserve a server-selected command's positive RAM/CPU footprint.
+
+        This token charges only RAM and CPU; the actor separately retains its
+        funded control connection. It grants no storage or shared-prep authority,
+        so work needing either uses the normal data reservation path.
+        """
+        validate_clock(now)
+        if (
+            type(footprint) is not ResourceAmounts
+            or footprint.memory_bytes <= 0
+            or footprint.cpu_millicores <= 0
+            or footprint.storage_slots != 0
+        ):
+            raise ValueError("command footprint requires exact positive RAM/CPU and zero storage")
+        with self._guard:
+            if not self._accepting:
+                return CommandAdmissionAttempt(None, "stopping")
+            decision = self._current_decision(now)
+            if decision.reason not in {"capacity_available", "resource_exhausted"}:
+                return CommandAdmissionAttempt(None, decision.reason)
+            remaining = decision.resource_capacity.excess_over(self._committed)
+            if not self._command_fits(footprint, remaining):
+                return CommandAdmissionAttempt(None, "resource_exhausted")
+            key = next(self._sequence)
+            reservation = CommandReservation(self, key, self._generation, footprint)
+            self._committed = self._committed + footprint
+            self._commands[key] = reservation
+            self._pending_commands[key] = reservation
+            return CommandAdmissionAttempt(reservation, "capacity_available")
 
     def try_reserve(self, receiver: str, *, now: float, storage_slots: int = 1) -> AdmissionAttempt:
         """Reserve the trusted operation's complete minimum physical footprint.
@@ -1097,6 +1304,26 @@ class DeliveryAdmission:
             self._pending[key] = lease
             self._storage_only_inflight += 1
             return StorageAdmissionAttempt(lease, "capacity_available")
+
+    def _release_command_locked(
+        self, command: CommandReservation, *, finish_started: bool = False
+    ) -> bool:
+        if self._commands.get(command._key) is not command:
+            return False
+        if command._state == "reserved":
+            if finish_started or self._pending_commands.get(command._key) is not command:
+                return False
+            self._pending_commands.pop(command._key)
+        elif command._state == "started":
+            if not finish_started:
+                return False
+            self._command_started -= 1
+        else:
+            return False
+        self._committed = self._committed - command._footprint
+        self._commands.pop(command._key)
+        object.__setattr__(command, "_state", "released")
+        return True
 
     def _release_locked(self, lease: DeliveryReservation) -> bool:
         if self._leases.get(lease._key) is not lease:
@@ -1182,10 +1409,12 @@ class DeliveryAdmission:
             self._accepting = False
             for lease in tuple(self._pending.values()):
                 self._release_locked(lease)
+            for command in tuple(self._pending_commands.values()):
+                self._release_command_locked(command)
 
     def start_accepting(self) -> None:
         with self._guard:
-            if self._leases:
+            if self._leases or self._commands:
                 raise RuntimeError("active delivery reservations must drain before restart")
             self._generation += 1
             self._observation = None
@@ -1207,7 +1436,8 @@ class DeliveryAdmission:
             if self._accepting
             else 0
         )
-        inflight = len(self._leases)
+        inflight = len(self._leases) + len(self._commands)
+        started = self._started + self._command_started
         reason: AdmissionReason = decision.reason
         if not self._accepting:
             reason = "stopping"
@@ -1219,8 +1449,8 @@ class DeliveryAdmission:
             accepting=self._accepting,
             generation=self._generation,
             inflight=inflight,
-            reserved=inflight - self._started,
-            started=self._started,
+            reserved=inflight - started,
+            started=started,
             limit=limit,
             available_slots=decision.available_slots if self._accepting else 0,
             debt=max(
@@ -1248,6 +1478,8 @@ class DeliveryAdmission:
             control_connection_loans=(
                 len(self._control_lease._storage_connections) if self._control_lease else 0
             ),
+            command_inflight=len(self._commands),
+            command_started=self._command_started,
         )
         return snapshot, decision
 

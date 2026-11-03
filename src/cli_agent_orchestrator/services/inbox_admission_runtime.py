@@ -10,12 +10,15 @@ import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Generic, Protocol, TypeVar
+from typing import Any, Callable, Generic, Literal, Protocol, TypeVar, overload
 from uuid import uuid4
 
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.storage_admission import storage_process_current
-from cli_agent_orchestrator.models.admission_control import AdmissionDiagnostics
+from cli_agent_orchestrator.models.admission_control import (
+    AdmissionDiagnostics,
+    AdmissionDiagnosticsV2,
+)
 from cli_agent_orchestrator.models.admission_domains import (
     SharedAbortReceipt,
     SharedDebtCursor,
@@ -282,7 +285,22 @@ class InboxAdmissionRuntime:
             mutating=True,
         )
 
-    def diagnostics(self, *, principal: object) -> AdmissionDiagnostics:
+    @overload
+    def diagnostics(self, *, principal: object, version: Literal[2]) -> AdmissionDiagnosticsV2: ...
+
+    @overload
+    def diagnostics(
+        self, *, principal: object, version: Literal[1] = 1
+    ) -> AdmissionDiagnostics: ...
+
+    @overload
+    def diagnostics(
+        self, *, principal: object, version: int
+    ) -> AdmissionDiagnostics | AdmissionDiagnosticsV2: ...
+
+    def diagnostics(
+        self, *, principal: object, version: int = 1
+    ) -> AdmissionDiagnostics | AdmissionDiagnosticsV2:
         """Read only cached process state, including while authority I/O is busy."""
         ResourceBootstrap._administrator(principal)
         if not self.available or asyncio.get_running_loop() is not self._loop:
@@ -290,7 +308,10 @@ class InboxAdmissionRuntime:
 
         self._check_process()
         now = self._clock()
-        return diagnostics_response(self.monitor.diagnostic(now=now), now=now)
+        snapshot = self.monitor.diagnostic(now=now)
+        if type(version) is int and version == 1:
+            return diagnostics_response(snapshot, now=now)
+        return diagnostics_response(snapshot, now=now, version=version)
 
     async def registered(self, *, principal: object) -> ResourceEnvelopeRecord:
         return await self._execute(

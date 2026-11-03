@@ -178,3 +178,15 @@ G4.D conserva la etapa/categoría de un rechazo pre-subject mediante campos estr
 ### T014.R.H1 — transacción externa y puertos reutilizables
 
 La transacción nativa puede crear un savepoint si ya hay una transacción abierta: eso no confirma un commit externo. La sesión operativa exige IDLE antes de cada operación y delega exclusivamente en funded_transaction, manteniendo la financiación y verificando rollback/IDLE antes de reutilizar. El scope existente ya valida task; no fue necesario ampliar ni debilitar Connection/_ControlSqlFunding. El repositorio fija sesión y binding en construcción para impedir fallback/races de bind mutable. Todos los lectores directos deben pasar por la sesión opt-in; los writers privilegiados se rechazan antes de su auditoría. El muestreo no adopta el handle como probe propio y mantiene su timeout LOCAL sin modificar la sesión. La revisión encontró una caída postcommit que se clasificaba como denegación: RED en dos recorridos y corrección a incertidumbre, sin refund/rearmado.
+
+
+### T014.R.H2.1 — monitor y autoridad originales
+
+El constructor leía control_storage_slots antes del preflight y podía esperar un lock ajeno: el negativo real mantiene ese lock y demuestra TimeoutError antes de corregir el orden, sin ampliar el plazo. Bootstrap convertía un DatabaseError con rollback no verificable en fallo ordinario: un reader SQL real y fallo de observación reproducen el bug antes de revalidar sesión en el except. La revisión read de Claude detectó este segundo caso; su afirmación de constructor sin locks fue refutada por el lead con la reproducción. Los errores de financiación y commit incierto heredan RuntimeError, no el tuple DatabaseError que captura bootstrap. Reconfigure/observe ya niegan cuando owner no acepta; un permit activo no concede admisión de datos ni memoria/CPU para un actor nuevo.
+
+
+### H2.2a — motivos y evidencia previa
+
+El contador available_slots es el mínimo de unidades estándar de entrega y puede ser0 por storage aunque un comando RAM/CPU quepa: se usa comprobación positiva por componentes con capacidad reciente. Un registro separado evita receivers falsos y crédito shared/data accidental; ningún comando puede obtener un préstamo SQL. El control actual financia PG pero tiene footprint RAM/CPU0, por lo que esta reserva no resuelve el bootstrap de un actor nuevo. La presión recorre solo pendientes relevantes en orden de secuencia, con mezcla lineal.
+
+El productor diagnóstico anterior sumaba solo deliveries y storage-only: un comando legítimo rompía el validador y la ruta devolvía503 en el RED privado. Añadir campos a v1 extra=forbid rompería consumidores estrictos; se elige versión2 y409 explícito para v1 incompatible. Un wirev1 congelado antes del cambio y casos de URL reales contrastan compatibilidad. El fallo de fábrica None del recorrido completo H2.1 exigió conservar la llamada anterior, sin cambiar su test; los consumidores/fábricas se buscan antes del siguiente congelado.

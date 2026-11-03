@@ -228,3 +228,18 @@ No se añade endpoint HTTP ni contrato externo SDK en este corte. La integració
 - `PostgresPressureSampler.sample_control(session)`: valida worker y target fresco, lee con presupuesto LOCAL readonly, no abre probes ni captura el canal en la propiedad de cierre del sampler. DB errors solo devuelven unknown después de revalidar rollback/session; incertidumbre o autoridad inválida se propagan.
 
 No son contratos externos de SDK/HTTP, no habilitan préstamos vivos para shared ni crean actor/cola/hilos. El camino legado sin sesión sigue separado y conserva sus transacciones/read-only/cierre.
+
+
+### T014.R.H2.1 — monitor y autoridad originales
+
+`ResourceEnvelopeRepository.read_latest(target, instance_id, control_session=None)`, `ResourceBootstrap.load_current(control_session=None)` y `shared_repository(control_session=None)` exponen opt-in interno; no son endpoints/SDK. `AdmissionMonitor(..., control_session=session)` fija el puerto y requiere su permiso exacto activo. `StorageControlPermit.check_current_operation()` verifica el scope/lease/worker existente sin adquirir otra operación. refresh y authority_read rechazan afinidad ajena antes de locks; start y writers privilegiados se rechazan. Los caminos None conservan contratos anteriores. La configuración de target se resuelve fresca y no hay fallback de SQL.
+
+
+### H2.2a — contratos internos y diagnóstico v2
+
+try_reserve_command(footprint=ResourceAmounts, now=clock) recibe costes internos positivos RAM/CPU y cero storage; start(now) y finish mantienen identidad física exacta, cancel_before_start no retira trabajo iniciado. No hay techo global de comandos ni agentes. Inflight/started/reserved incluyen todas las categorías y delivery_* excluye comandos.
+
+GET /admission/diagnostics?version=2 devuelve version2 y operations.commands={inflight,started}, con totales coherentes y modelos extra=forbid. La ruta por defecto/version1 conserva el wire anterior si no hay comandos; si hay, HTTP409 {"detail":{"code":"diagnostics_version_required","required_version":2,"supported_versions":[1,2]}}. HTTPversion3 (y tipos no enteros) se rechaza422. Respuestas mantienen Cache-Control:no-store y scopeadmin; el diagnóstico no es autoridad ni prueba de retiro. No introducir campos nuevos silenciosamente en version1 ni contar comandos como entregas.
+
+
+ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=invalid_diagnostics_query y no-store, sin reflejar entradas ni etiquetarlos como envelope. El resto de rutas de recursos conserva invalid_resource_envelope. Separar la política de validación de la ruta diagnóstica y documentar/probar el DTO422; mantener JWTadmin y la forma v1/v2. Primero reproducir el cuerpo incorrecto en el test ASGI, después corregir sin rebajar el status ni la cobertura.

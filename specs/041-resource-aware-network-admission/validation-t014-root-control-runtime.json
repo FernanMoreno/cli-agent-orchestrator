@@ -1,0 +1,570 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-03",
+  "components": [
+    "T014.R.H2.1",
+    "T014.R.H2.2a"
+  ],
+  "status": "validated-controlled-root-monitor-and-command-reservations",
+  "base_head": "71b90a48bf6566b18e75ffa82cb14ae8501436fd",
+  "global_acceptance": false,
+  "actor_implemented": false,
+  "production_cli_integrated": false,
+  "shared_live_loan_activation": false,
+  "acceptance": {
+    "phase": "control-runtime-ecc-final",
+    "passed": 1654,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 16,
+    "previous_accepted_cases": 1541,
+    "prior_selection_cases": 1598,
+    "previous_case_ids_preserved": true,
+    "new_distinct_cases": 113,
+    "selected_test_files": 120,
+    "focused_passed": 269,
+    "seconds": 1521.541,
+    "available_mib": 12526,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "owned_python_archive_match": 12,
+    "production_archive_match": 8,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+        "sha256": "198107480632920ef7a2ae741470a4ac54e4ae45cc8c74e885e359d254b85d97"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+        "sha256": "da9f8a6e1b729b789cb3d8b61c86f12033872b9aac70be81a37f580ee2f40b01"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+        "sha256": "2d94f73f1db038bf658c5aeaac335cf1d58a852b07d04aacb496bb70a2fd3b34"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3fd95b2153d8eb03fdd2603a86f919d8550735372c9b81141f67a6dbc940d5af"
+      },
+      {
+        "path": "test/postgres/test_root_control_monitor.py",
+        "sha256": "27e42cca36e05da9753d66910af4546304154a6726da0747105519bbddfce482"
+      },
+      {
+        "path": "test/services/test_admission_monitor_generation.py",
+        "sha256": "c57620054f3e26fe0a0ad536cd1843dc6393e2aafba6dd077949ff067096a8c0"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/admission_control.py",
+        "sha256": "a126bebe88096452fa8d08501ea5752d9761bfad748267353d52fc41a25a70ff"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_diagnostics.py",
+        "sha256": "f919cde7029f97bc084fe161a5a3654867b1ca1ddee4f5336c3f69c2845f3179"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "d660d00a37cac7a2e0de7cd739550f238e26e15df1feebe6701bf9508af8c47b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+        "sha256": "efea70972b4cde29cbc11be867ab405b35631e673439ec6237bc5fbe4effc35e"
+      },
+      {
+        "path": "test/services/test_admission_command_reservation.py",
+        "sha256": "ce8dd2dc97ddbacdeee76ad95e652faf54c55fbd5c73ceab46eb0b87fb0053be"
+      },
+      {
+        "path": "test/services/test_admission_command_diagnostics.py",
+        "sha256": "ff97483289857df5c50f90806dee5ee21d59156547aa773e2751c1fe411fe491"
+      }
+    ],
+    "archive_sha256": "6fdc5f0d0de3f29ed41d3b8f8f1aa59f786132df9d1e8337875e4549c40e9e4b",
+    "foreign_graphify_files_preserved": 12,
+    "coverage": {
+      "owned_production_line_percent": 92.47223364870423,
+      "package_percent": 36.574829931972786,
+      "files": {
+        "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py": {
+          "covered_lines": 66,
+          "num_statements": 77,
+          "percent_covered": 85.71428571428571,
+          "percent_covered_display": "86",
+          "missing_lines": 11,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/services/admission_bootstrap.py": {
+          "covered_lines": 211,
+          "num_statements": 231,
+          "percent_covered": 91.34199134199135,
+          "percent_covered_display": "91",
+          "missing_lines": 20,
+          "excluded_lines": 2
+        },
+        "src/cli_agent_orchestrator/services/admission_monitor.py": {
+          "covered_lines": 406,
+          "num_statements": 439,
+          "percent_covered": 92.48291571753987,
+          "percent_covered_display": "92",
+          "missing_lines": 33,
+          "excluded_lines": 4
+        },
+        "src/cli_agent_orchestrator/services/delivery_admission.py": {
+          "covered_lines": 858,
+          "num_statements": 925,
+          "percent_covered": 92.75675675675676,
+          "percent_covered_display": "93",
+          "missing_lines": 67,
+          "excluded_lines": 6
+        },
+        "src/cli_agent_orchestrator/models/admission_control.py": {
+          "covered_lines": 221,
+          "num_statements": 223,
+          "percent_covered": 99.10313901345292,
+          "percent_covered_display": "99",
+          "missing_lines": 2,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/services/admission_diagnostics.py": {
+          "covered_lines": 30,
+          "num_statements": 31,
+          "percent_covered": 96.7741935483871,
+          "percent_covered_display": "97",
+          "missing_lines": 1,
+          "excluded_lines": 18
+        },
+        "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": {
+          "covered_lines": 326,
+          "num_statements": 372,
+          "percent_covered": 87.63440860215054,
+          "percent_covered_display": "88",
+          "missing_lines": 46,
+          "excluded_lines": 30
+        },
+        "src/cli_agent_orchestrator/api/admission_routes.py": {
+          "covered_lines": 130,
+          "num_statements": 133,
+          "percent_covered": 97.74436090225564,
+          "percent_covered_display": "98",
+          "missing_lines": 3,
+          "excluded_lines": 0
+        }
+      },
+      "scope": "selected regression only; not global whole-project acceptance"
+    }
+  },
+  "architecture": {
+    "files": 461,
+    "dependencies": 2091,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "environment_recovery": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+    "server_version": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "cluster_system_identifier": "7703890055447961643",
+    "existing_container_reused": true,
+    "profile_verified": true,
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "operator_credentials_touched": false
+  },
+  "graphify": {
+    "private": true,
+    "partial": true,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+        "sha256": "efea70972b4cde29cbc11be867ab405b35631e673439ec6237bc5fbe4effc35e"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+        "sha256": "198107480632920ef7a2ae741470a4ac54e4ae45cc8c74e885e359d254b85d97"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+        "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/admission_control.py",
+        "sha256": "a126bebe88096452fa8d08501ea5752d9761bfad748267353d52fc41a25a70ff"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+        "sha256": "da9f8a6e1b729b789cb3d8b61c86f12033872b9aac70be81a37f580ee2f40b01"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_diagnostics.py",
+        "sha256": "f919cde7029f97bc084fe161a5a3654867b1ca1ddee4f5336c3f69c2845f3179"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+        "sha256": "2d94f73f1db038bf658c5aeaac335cf1d58a852b07d04aacb496bb70a2fd3b34"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_postgres.py",
+        "sha256": "c435e62db3ed089ec8bfd1591e440c76a5ebbe5248714636e3e87c155f829cbe"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "3fd95b2153d8eb03fdd2603a86f919d8550735372c9b81141f67a6dbc940d5af"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "d660d00a37cac7a2e0de7cd739550f238e26e15df1feebe6701bf9508af8c47b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "test/api/test_admission_status.py",
+        "sha256": "7a338aa51e85bdf36a0c80ad2dfa8b513efd6475329ac06ae0fa76cf3d10147e"
+      },
+      {
+        "path": "test/postgres/test_admission_bootstrap.py",
+        "sha256": "f6938017a17f99a97f0654ee00d70d16dfbae9a8d6fb751c453b1576393d4630"
+      },
+      {
+        "path": "test/postgres/test_admission_control_http.py",
+        "sha256": "de9618549acc4035c41a7ea3feaba047570f21f781f2a2c9cd3d7e4d9740a179"
+      },
+      {
+        "path": "test/postgres/test_root_control_monitor.py",
+        "sha256": "27e42cca36e05da9753d66910af4546304154a6726da0747105519bbddfce482"
+      },
+      {
+        "path": "test/postgres/test_root_control_ports.py",
+        "sha256": "33163abcc3b6aa7cc2b973e83834268efa1129acf79583eece109209a58160e3"
+      },
+      {
+        "path": "test/services/test_admission_command_diagnostics.py",
+        "sha256": "ff97483289857df5c50f90806dee5ee21d59156547aa773e2751c1fe411fe491"
+      },
+      {
+        "path": "test/services/test_admission_command_reservation.py",
+        "sha256": "ce8dd2dc97ddbacdeee76ad95e652faf54c55fbd5c73ceab46eb0b87fb0053be"
+      },
+      {
+        "path": "test/services/test_admission_diagnostics.py",
+        "sha256": "60c5498164c3ac05c80a4f10e5b5ef4e4083c61a07932281148a89fb8e90bf96"
+      },
+      {
+        "path": "test/services/test_admission_monitor.py",
+        "sha256": "5d1c77b05cbbf6649cae5c1e3d0674cc9c13f39c679bb4fb48157f173aea7e71"
+      },
+      {
+        "path": "test/services/test_admission_monitor_generation.py",
+        "sha256": "c57620054f3e26fe0a0ad536cd1843dc6393e2aafba6dd077949ff067096a8c0"
+      }
+    ],
+    "nodes": 650,
+    "edges": 1911,
+    "failed_sources": []
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "exit_code": 0,
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "black",
+          "--check",
+          "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+          "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+          "src/cli_agent_orchestrator/services/admission_monitor.py",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "test/postgres/test_root_control_monitor.py",
+          "test/services/test_admission_monitor_generation.py",
+          "src/cli_agent_orchestrator/models/admission_control.py",
+          "src/cli_agent_orchestrator/services/admission_diagnostics.py",
+          "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+          "src/cli_agent_orchestrator/api/admission_routes.py",
+          "test/services/test_admission_command_reservation.py",
+          "test/services/test_admission_command_diagnostics.py"
+        ]
+      },
+      {
+        "name": "isort",
+        "exit_code": 0,
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "isort",
+          "--check-only",
+          "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+          "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+          "src/cli_agent_orchestrator/services/admission_monitor.py",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "test/postgres/test_root_control_monitor.py",
+          "test/services/test_admission_monitor_generation.py",
+          "src/cli_agent_orchestrator/models/admission_control.py",
+          "src/cli_agent_orchestrator/services/admission_diagnostics.py",
+          "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+          "src/cli_agent_orchestrator/api/admission_routes.py",
+          "test/services/test_admission_command_reservation.py",
+          "test/services/test_admission_command_diagnostics.py"
+        ]
+      }
+    ],
+    "compile_files": 12,
+    "cold_mypy": {
+      "source_files": 458,
+      "errors": 0,
+      "incremental": false,
+      "configuration_changed": false,
+      "new_type_suppressions": false
+    },
+    "migration_sources": {
+      "sql_versions_preserved": 5,
+      "resource_versions_preserved": 7,
+      "unchanged_guards_and_schema": [
+        {
+          "path": "src/cli_agent_orchestrator/clients/admission_schema.py",
+          "sha256": "c16625ea02159411e65f7a4aee1d8f4648601c5abe3e66752edcda5b0cf24c2f",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/admission_bootstrap_schema.py",
+          "sha256": "89734b0e311dcb764d0cba0ddeeef642439366867382b2fdc656290129ca8463",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/sql_opening_schema.py",
+          "sha256": "4497693bb4164de446c123b267bc95219b90d820fdbf97dc3fa1a26befeacb00",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/postgres/connection.py",
+          "sha256": "ca38e27cbdc1f40d2f40cf6fe18d77b053a4b80949b43867be64cc83a3023480",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+          "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+          "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357",
+          "unchanged_from_base": true
+        },
+        {
+          "path": "src/cli_agent_orchestrator/services/shared_delivery_admission.py",
+          "sha256": "0e916978f2e02ef4f1c12b41db757488579b1cfe6c717972c44ba8868d0791bf",
+          "unchanged_from_base": true
+        }
+      ]
+    }
+  },
+  "behavior": {
+    "original_session_envelope_bootstrap_monitor": true,
+    "current_scope_verified_without_nesting": true,
+    "affinity_before_owner_locks": true,
+    "verified_rollback_reusable_and_unverified_propagates": true,
+    "reader_and_sampler_postcommit_uncertainty_preserved": true,
+    "cycle_fences_own_generation_and_preserves_newer": true,
+    "default_none_and_v1_factory_call_shapes_preserved": true,
+    "resource_priced_ram_cpu_commands_storage_zero": true,
+    "command_identity_generation_freshness_physical_worker_finish": true,
+    "started_costs_retained_on_stop_invalidate_reconfigure": true,
+    "pending_pressure_linear_merge_relevant_costs_only": true,
+    "no_fixed_command_or_agent_count": true,
+    "no_extra_sql_or_shared_grant": true,
+    "diagnostics_v1_wire_compatible_without_commands": true,
+    "diagnostics_v2_exact_totals_and_typed_409": true,
+    "diagnostic_query_fixed_typed_422_and_no_store": true,
+    "verified_admin_dependency_unchanged": true
+  },
+  "real_scope": {
+    "postgres": true,
+    "separate_signed_root_process": true,
+    "driver_count": 1,
+    "same_backend": true,
+    "root_command_reservations": 25,
+    "model_concurrency_acceptance": false,
+    "linux_observations": "deterministic",
+    "principal": "internal verified test factory; not live operator JWT"
+  },
+  "reviews": {
+    "ecc_shared_guidance": {
+      "shared_root": "/home/felni/.cache/ai-dev-stack/ecc/ECC",
+      "shared_commit": "b92f181b3b748d1abbc2afd94af6aa7d8c8fca29",
+      "roles": [
+        {
+          "path": "agents/python-reviewer.md",
+          "sha256": "d2180b115f5840383268c13d5d075b0541fe7ef2a1ac8ecd5d835266ca1b27ce",
+          "delegated_role_identical": true
+        },
+        {
+          "path": "agents/database-reviewer.md",
+          "sha256": "945c107dea01ca74e3e9bc3a5841e79e744673e8f14697e88cf1cfd9c01a1cc5",
+          "delegated_role_identical": true
+        },
+        {
+          "path": "agents/security-reviewer.md",
+          "sha256": "813e4062bed5f42ab25dd02a0070f682058ffe9508198fcfdbb2c31296f93b7b",
+          "delegated_role_identical": true
+        },
+        {
+          "path": "agents/architect.md",
+          "sha256": "6b8e1e8bd274995f3949691731f4334820c061d3054eaea3be2ce163386d1f24",
+          "delegated_role_identical": true
+        }
+      ],
+      "verification_loop": "shared source read by lead; project criteria remain authoritative"
+    },
+    "ecc_guidance_root": "/home/felni/.codex/plugins/cache/ecc/ecc/2.2.3/agents",
+    "ecc_agents": [
+      "python-reviewer",
+      "database-reviewer",
+      "security-reviewer"
+    ],
+    "subagent_model": "GPT-6 Luna Max",
+    "reviews_read_only": true,
+    "reviewer_tests_executed": false,
+    "lead_verified": true,
+    "security_query_finding": "reproduced, corrected and scoped re-review approved",
+    "prior_claude_read_jobs": [
+      "559cbbeba83747a0a240678b1a3228ed",
+      "96b86d547ba245daa93647ed2a7de7b4",
+      "3cef57ac00fc4c449801dc1e83c47c72",
+      "e863338694504458ba7522050d4e1bbd",
+      "b5d8cd3bf16f478ba09b8212251c03ad"
+    ]
+  },
+  "history": [
+    {
+      "phase": "root-monitor-red",
+      "failed": 1
+    },
+    {
+      "phase": "root-monitor-green",
+      "passed": 134
+    },
+    {
+      "phase": "root-monitor-affinity-red",
+      "failed": 1,
+      "cause": "owner property lock before foreign worker refusal"
+    },
+    {
+      "phase": "root-monitor-rollback-red",
+      "failed": 1,
+      "cause": "unverified rollback hidden as ordinary authority failure"
+    },
+    {
+      "phase": "root-monitor-final-focused",
+      "passed": 176,
+      "failed": 1,
+      "cause": "stale generation invalidation after own reconfigure"
+    },
+    {
+      "phase": "root-monitor-generation-red",
+      "passed": 1,
+      "failed": 1
+    },
+    {
+      "phase": "root-monitor-verified-focused",
+      "passed": 179
+    },
+    {
+      "phase": "root-monitor-final",
+      "passed": 1597,
+      "failed": 1,
+      "cause": "unnecessary None keyword broke legacy factory call shape"
+    },
+    {
+      "phase": "root-monitor-compatibility-focused",
+      "passed": 24
+    },
+    {
+      "phase": "private-command-unittest",
+      "passed": 19,
+      "canonical_acceptance": false
+    },
+    {
+      "phase": "private-diagnostics-red",
+      "cases": 9,
+      "failures": 3,
+      "errors": 2,
+      "canonical_acceptance": false
+    },
+    {
+      "phase": "private-diagnostics-green",
+      "passed": 9,
+      "canonical_acceptance": false
+    },
+    {
+      "phase": "canonical-projection-shape-red",
+      "cases": 10,
+      "errors": 1,
+      "cause": "unnecessary default version keyword broke projection factory"
+    },
+    {
+      "phase": "canonical-projection-shape-green",
+      "passed": 10
+    },
+    {
+      "phase": "control-runtime-focused",
+      "exit_code": 2,
+      "interrupted_by_user": true,
+      "partial_passed": 5,
+      "accepted": false
+    },
+    {
+      "phase": "ecc-query-red",
+      "cases": 10,
+      "failed": 1,
+      "cause": "query validation mislabeled as invalid resource envelope"
+    },
+    {
+      "phase": "ecc-query-final-green",
+      "passed": 10
+    },
+    {
+      "phase": "control-runtime-ecc-focused",
+      "passed": 269
+    }
+  ],
+  "limits": [
+    "Controlled original-worker ports and resource reservations only; no actor/executor/queue or production CLI/root-startup wiring.",
+    "A PG control permit does not fund new actor RAM/CPU/thread startup. Command reservation requires existing fresh capacity and grants no SQL or shared authority.",
+    "25 command reservations are accounting/lifecycle evidence, not 25 concurrent model/provider processes. Linux observations in root integration are deterministic.",
+    "Shared live-loan activation, terminal actor sealing, deployment issuer and independent custody remain pending; unchanged guards continue denying activation.",
+    "No live operator JWT login, physical M2, distributed network, provider model or global M1/M2/M3/SDK/UI acceptance.",
+    "Schemas, funding/checksums, coverage criteria, native deadlines and6144MiB floor unchanged; no new fixed agent/command maximum.",
+    "V1 diagnostics cannot represent active commands and returns typed409; clients must request explicit v2. Zero-command v1 wire and default call shapes are preserved."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261103-root-control-runtime",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "composition_report": "composition-t014-root-control-runtime.md"
+}

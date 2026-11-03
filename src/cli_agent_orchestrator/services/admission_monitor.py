@@ -11,8 +11,10 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeNotFound,
     EnvelopeRevisionConflict,
 )
+from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.services.admission_bootstrap import (
+    AttestationLoadResult,
     ResourceBootstrap,
     VerifiedResourceAttestation,
     is_verified_resource_attestation,
@@ -132,6 +134,13 @@ def _minimum(a: ResourceAmounts, b: ResourceAmounts) -> ResourceAmounts:
     )
 
 
+@dataclass
+class _CycleGeneration:
+    """The exact generation produced by one serialized refresh, not a later writer."""
+
+    value: int
+
+
 class _Recovery:
     """O(1) state: reductions now, sustained conservative growth by resource."""
 
@@ -184,13 +193,20 @@ class AdmissionMonitor:
         clock: Callable[[], float] = time.monotonic,
         resource_factory: Callable[[VerifiedResourceAttestation], ResourceSampler] | None = None,
         authority_state: AuthorityMutationState | None = None,
+        control_session: FundedControlSession | None = None,
     ):
+        if control_session is not None:
+            if type(control_session) is not FundedControlSession or storage_control is None:
+                raise StorageAdmissionUnavailable()
+            control_session.check_target(control_session.target)
+            storage_control.check_current_operation()
         if not isinstance(scope_id, str) or not scope_id.strip():
             raise ValueError("monitor requires an operator source scope")
         if owner.control_storage_slots != int(storage_control is not None) or (
             storage_control is not None and not storage_control.belongs_to(owner)
         ):
             raise ValueError("monitor requires its exact process storage control permit")
+        self._control_session = control_session
         self._storage_control = storage_control
         self.owner = owner
         self._policy_loader = policy_loader
@@ -250,6 +266,8 @@ class AdmissionMonitor:
             self._on_change = callback
 
     def begin_authority_change(self) -> object:
+        if self._control_session is not None:
+            raise AuthorityChangeUnavailable("bound runtime monitor cannot issue privileged writes")
         with self._lifecycle_guard:
             if self._authority_state.uncertain:
                 raise AuthorityChangeUnavailable("resource authority outcome is uncertain")
@@ -268,6 +286,8 @@ class AdmissionMonitor:
 
     @contextmanager
     def authority_change(self, token: object) -> Iterator[None]:
+        if self._control_session is not None:
+            raise AuthorityChangeUnavailable("bound runtime monitor cannot issue privileged writes")
         entered = False
         acquired = False
         try:
@@ -298,9 +318,20 @@ class AdmissionMonitor:
                 self._retired.set()
                 self._refresh_guard.release()
 
+    def _check_control_session(self) -> None:
+        session = self._control_session
+        if session is not None:
+            session.check_target(session.target)
+            if self._storage_control is None:
+                raise StorageAdmissionUnavailable()
+            self._storage_control.check_current_operation()
+
     @contextmanager
     def _control_operation(self) -> Iterator[None]:
-        if self._storage_control is None:
+        if self._control_session is not None:
+            self._check_control_session()
+            yield  # The original owner already holds this exact physical scope.
+        elif self._storage_control is None:
             yield  # Explicit legacy/manual construction only.
         else:
             with self._storage_control.operation(clock=self._clock):
@@ -314,6 +345,7 @@ class AdmissionMonitor:
     @contextmanager
     def authority_read(self) -> Iterator[None]:
         """Serialize registered reads with probes/writes without write invalidation."""
+        self._check_control_session()
         with self._refresh_guard:
             with self._lifecycle_guard:
                 if self._stopped:
@@ -368,6 +400,7 @@ class AdmissionMonitor:
                 self._last_cycle_result = CachedMonitorResult(self.owner.generation, at, result)
 
     def refresh(self) -> MonitorResult:
+        self._check_control_session()  # Refuse foreign/busy callers before state or locks.
         self.owner.retry_physical_closes()  # Before authority I/O or lifecycle locks.
         with self._lifecycle_guard:
             ticket = self._lifecycle
@@ -393,31 +426,45 @@ class AdmissionMonitor:
         if not self._refresh_guard.acquire(blocking=False):
             return MonitorResult("probe_busy")
         self._retired.clear()
-        generation = self.owner.generation  # Capture before any configuration I/O.
+        cycle = _CycleGeneration(self.owner.generation)  # Before configuration I/O.
         try:
             with self._lifecycle_guard:
                 if self._stopped or lifecycle != self._lifecycle:
                     return MonitorResult("stopping")
-            return self._cycle(generation)
+            return self._cycle(cycle)
         except StorageAdmissionUnavailable:
-            return self._invalidate(generation, "probe_busy")
+            result = self._invalidate(cycle.value, "probe_busy")
+            if self._control_session is not None:
+                raise  # A bound authority failure cannot masquerade as a new probe.
+            return result
         except Exception:
             # Close stale admission even for a programming error, then expose it
             # to the owning caller instead of converting it to a healthy sample.
-            self._invalidate(generation, "monitor_failed")
+            self._invalidate(cycle.value, "monitor_failed")
             raise
         finally:
             self._retired.set()
             self._refresh_guard.release()
 
-    def _cycle(self, generation: int) -> MonitorResult:
+    def _load_authority(self) -> AttestationLoadResult:
+        if self._control_session is None:
+            return self._bootstrap.load_current()
+        return self._bootstrap.load_current(control_session=self._control_session)
+
+    def _sample_pressure(self) -> PostgresPressureSample:
+        if self._control_session is None:
+            return self._postgres.sample()
+        return self._postgres.sample_control(self._control_session)
+
+    def _cycle(self, cycle: _CycleGeneration) -> MonitorResult:
+        generation = cycle.value
         cycle_at = self._clock()
         validate_clock(cycle_at)
         loaded = self._policy_loader.load(scope_id=self._scope_id)
         configuration = loaded.configuration
         if configuration is None:
             return self._invalidate(generation, "policy_unavailable")
-        attestation = self.control_call(self._bootstrap.load_current).attestation
+        attestation = self.control_call(self._load_authority).attestation
         if not is_verified_resource_attestation(attestation):
             return self._invalidate(generation, "authority_unavailable", reset_resources=True)
         assert attestation is not None
@@ -432,6 +479,7 @@ class AdmissionMonitor:
         if configured is None:
             return MonitorResult("generation_changed")
         generation = configured  # Configuration CAS completed before resource I/O.
+        cycle.value = configured  # A later exception must fence this exact generation.
         changed = configuration != self._configuration
         self._configuration = configuration
         self._interval = configuration.sample_interval_s
@@ -461,7 +509,7 @@ class AdmissionMonitor:
                 # Sampler parameters are installed; a subsequent published
                 # observation must still establish their capacity basis.
                 self._last_configuration = CachedAdmissionConfiguration(generation, configuration)
-        pressure_sample = self.control_call(self._postgres.sample)
+        pressure_sample = self.control_call(self._sample_pressure)
         with self._lifecycle_guard:
             self._last_postgres_probe = CachedPostgresProbe(
                 generation, pressure_sample, configuration.postgres
@@ -485,7 +533,7 @@ class AdmissionMonitor:
         with self._lifecycle_guard:
             self._last_resource_probe = CachedResourceProbe(generation, resource_sample)
         sample = resource_sample.observation
-        checked = self.control_call(self._bootstrap.load_current).attestation
+        checked = self.control_call(self._load_authority).attestation
         if (
             not is_verified_resource_attestation(checked)
             or checked is None
@@ -548,6 +596,8 @@ class AdmissionMonitor:
         return MonitorResult("recovering" if recovering else status.reason, True)
 
     async def start(self) -> None:
+        if self._control_session is not None:
+            raise StorageAdmissionUnavailable()  # Async dispatch has no original-worker adapter.
         with self._lifecycle_guard:
             if (
                 self._runner is not None

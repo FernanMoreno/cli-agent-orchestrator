@@ -19,10 +19,12 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeRevisionConflict,
     ResourceEnvelopeRepository,
 )
+from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.clients.postgres.connection import DatabaseError
 from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
     ResourceBinding,
@@ -347,13 +349,18 @@ class ResourceBootstrap:
         )
         return AttestationUpdate(record.revision, record.active)
 
-    def shared_repository(self) -> "ResourceAdmissionRepository":
+    def shared_repository(
+        self, *, control_session: FundedControlSession | None = None
+    ) -> "ResourceAdmissionRepository":
         """Trusted composition of the private main coordinator; issues no authority."""
         from cli_agent_orchestrator.clients.admission_repository import (
             ResourceAdmissionRepository,
         )
 
+        self._check_control(control_session)
         target = self._repository.resolve_target()
+        if control_session is not None:
+            control_session.check_target(target)
 
         def binding() -> ResourceBinding:
             value = self._capture(target)
@@ -361,7 +368,11 @@ class ResourceBootstrap:
                 raise ValueError("Resource bootstrap instance binding mismatch")
             return value
 
-        return ResourceAdmissionRepository(target, binding_supplier=binding)
+        if control_session is None:
+            return ResourceAdmissionRepository(target, binding_supplier=binding)
+        return ResourceAdmissionRepository(
+            target, binding_supplier=binding, control_session=control_session
+        )
 
     def matches_primary_target(self, target: DatabaseTarget) -> bool:
         """Pin a service to the configured application store, not a shared-domain claim."""
@@ -375,15 +386,33 @@ class ResourceBootstrap:
             and expected.store_id == target.store_id
         )
 
-    def load_current(self) -> AttestationLoadResult:
+    @staticmethod
+    def _check_control(session: FundedControlSession | None) -> None:
+        if session is not None:
+            if type(session) is not FundedControlSession:
+                raise StorageAdmissionUnavailable()
+            session.check_target(session.target)
+
+    def load_current(
+        self, *, control_session: FundedControlSession | None = None
+    ) -> AttestationLoadResult:
+        self._check_control(control_session)  # Before config, clocks, captures or SQL.
         try:
             at = self._clock()
             validate_clock(at)
             target = self._repository.resolve_target()
+            if control_session is not None:
+                control_session.check_target(target)
             binding = self._capture(target)
             if binding.instance_id != self._server_instance():
                 return AttestationLoadResult(None, "binding_changed")
-            latest = self._repository.read_latest(target, binding.instance_id)
+            latest = (
+                self._repository.read_latest(target, binding.instance_id)
+                if control_session is None
+                else self._repository.read_latest(
+                    target, binding.instance_id, control_session=control_session
+                )
+            )
             if latest is None:
                 return AttestationLoadResult(None, "authority_missing")
             if not latest.active:
@@ -392,6 +421,7 @@ class ResourceBootstrap:
                 return AttestationLoadResult(None, "binding_changed")
             if not latest.claims.complete_hierarchy:
                 return AttestationLoadResult(None, "hierarchy_unverified")
+            self._check_control(control_session)
             verified = object.__new__(VerifiedResourceAttestation)
             for name, value in (
                 ("binding", binding),
@@ -403,4 +433,7 @@ class ResourceBootstrap:
                 object.__setattr__(verified, name, value)
             return AttestationLoadResult(verified, "authority_verified")
         except (OSError, ValueError, DatabaseError, ConfigurationError, SchemaMismatch):
+            self._check_control(
+                control_session
+            )  # Do not hide a poisoned rollback as missing authority.
             return AttestationLoadResult(None, "authority_unavailable")

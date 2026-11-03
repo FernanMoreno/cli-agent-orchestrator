@@ -13,6 +13,7 @@ from cli_agent_orchestrator.clients.admission_bootstrap_schema import (
     RESOURCE_ENVELOPE_MIGRATIONS,
     RESOURCE_ENVELOPE_TABLE,
 )
+from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.postgres import Connection, DatabaseTarget, connect
 from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.clients.postgres.connection import Record
@@ -21,6 +22,7 @@ from cli_agent_orchestrator.clients.postgres.migrations import (
     verify_component,
     verify_runtime_role,
 )
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
     ResourceBinding,
@@ -77,19 +79,38 @@ class ResourceEnvelopeRepository:
         verify_runtime_role(connection)
         verify_component(connection, RESOURCE_ENVELOPE_MIGRATIONS)
 
-    def read_latest(
-        self, target: DatabaseTarget, instance_id: str
+    def _read_latest_from(
+        self, reader: Connection, target: DatabaseTarget, instance_id: str
     ) -> ResourceEnvelopeRecord | None:
+        self._verify_reader(reader)
+        row = reader.execute(
+            sql.SQL("SELECT * FROM {} WHERE instance_id=%s ORDER BY revision DESC LIMIT 1").format(
+                sql.Identifier(target.schema, RESOURCE_ENVELOPE_TABLE)
+            ),
+            (instance_id,),
+        ).fetchone()
+        return None if row is None else _record(row)
+
+    def read_latest(
+        self,
+        target: DatabaseTarget,
+        instance_id: str,
+        *,
+        control_session: FundedControlSession | None = None,
+    ) -> ResourceEnvelopeRecord | None:
+        if control_session is not None:
+            if type(control_session) is not FundedControlSession:
+                raise StorageAdmissionUnavailable()
+            control_session.check_worker()
+            control_session.check_target(target)
+
         instance_id = str(UUID(instance_id))
+        if control_session is not None:
+            with control_session.transaction(readonly=True) as reader:
+                return self._read_latest_from(reader, target, instance_id)
+
         with self._connect(target, readonly=True) as reader:
-            self._verify_reader(reader)
-            row = reader.execute(
-                sql.SQL(
-                    "SELECT * FROM {} WHERE instance_id=%s ORDER BY revision DESC LIMIT 1"
-                ).format(sql.Identifier(target.schema, RESOURCE_ENVELOPE_TABLE)),
-                (instance_id,),
-            ).fetchone()
-            return None if row is None else _record(row)
+            return self._read_latest_from(reader, target, instance_id)
 
     def append(
         self,

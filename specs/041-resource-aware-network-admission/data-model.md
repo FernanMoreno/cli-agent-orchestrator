@@ -170,3 +170,13 @@ La instalación exige root pendiente sin SQL previamente admitido y certifica un
 ### T014.R.H1 — sesión operativa de control
 
 `FundedControlSession` referencia el Connection/raw/target/loan/funding y worker originales; no es un crédito, permiso de primera conexión ni prueba de activación. Su vida es única y no transferible: NEW → OPEN → CLOSED; BUSY existe solo durante una transacción externa; POISONED es monotónico ante commit incierto o rollback no verificable. Las consultas readonly usan REPEATABLE READ READ ONLY y las mutaciones del ledger conservan READ COMMITTED. Un rechazo anterior a efectos no consume recursos ni altera el contexto válido; una incertidumbre posterior al commit conserva deuda y se propaga como FundedSqlCommitUncertain/SharedCommitUncertain. Cerrar el wrapper no cierra ni libera el canal del dueño. No se recrean wrappers automáticamente para eludir la incertidumbre.
+
+
+### T014.R.H2.1 — monitor y autoridad originales
+
+H2.1 mantiene el estado del monitor y su sesión en una única vida síncrona. La sesión/permit se fija en construcción; el primer preflight ocurre antes de leer propiedades del owner con locks. No hay transición de start asíncrono ni emisión de tokens administrativos en ese modo. El wrapper/canal siguen siendo propiedad del root original y stop del monitor no certifica cierre del canal. Un rollback del reader solo permite authority_unavailable si la sesión se revalida; una observación fallida del rollback propaga denegación de sesión bloqueada.
+
+
+### H2.2a — reserva efímera de comando
+
+CommandReservation es una identidad registrada opaca de un owner y una generación, con footprint RAM/CPU, estado reserved→started→released y worker capturado al iniciar. Pending puede cancelarse; started permanece cargado hasta finish del worker. No se persiste en SQLite ni se interpreta como metadato PG: es contabilidad efímera de CPU/RAM, mientras operación/deuda persistente conserva PostgreSQL. Snapshot añade command_inflight/command_started y conserva componentes de datos/storage/control. DiagnosticV2 añade un subobjeto commands; DiagnosticV1 mantiene su forma y rechaza explícitamente lo que no puede representar.

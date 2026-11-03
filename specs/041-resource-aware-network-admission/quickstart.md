@@ -144,3 +144,13 @@ El principal de los recorridos de génesis procede de la factory interna verific
 ### Alcance H1 de reutilización
 
 Los recorridos de `test_root_control_ports.py` conservan el arranque raíz firmado y prueban repetición de ledger/lecturas/auditoría/muestreo en el mismo backend con driver count1. Rollback/timeout readonly permiten una siguiente operación solo si el estado original se verifica; ACK o comprobación perdida tras commit conservan deuda y bloquean la sesión. El conjunto de pruebas también mantiene la negativa de activación shared sobre el préstamo vivo. Estos puertos no implementan aún el actor, ResourceBootstrap/EnvelopeRepository persistentes, monitor/CLI productivos ni custodia.
+
+
+### T014.R.H2.1 — monitor y autoridad originales
+
+`test_root_control_monitor.py` conserva el productor firmado de H1 e inserta el envelope por el owner financiado antes de emitir certificado. El root usa un driver/backend para ledger, lecturas y tres ciclos de monitor. Las observaciones Linux son deterministas; PostgreSQL, proceso raíz, roles, transacciones y presión son reales. Comprueba binding/revocación, target fresco, owner/worker/task ajenos, constructor y authority_read ante lock retenido, reentrada, rollback verificado/no verificable y comprobación postcommit perdida en reader y sampler. No valida muestreo físico M2, actor, wiring CLI/runtime ni activación shared.
+
+
+### H2.2a — validación de comandos y diagnóstico
+
+Las pruebas offline ejercitan costes/componentes,25 reservas, deuda, cancelación/inicio/finish físico, fork/thread/task/copia, generaciones y presión. Las de contrato HTTP son ASGI en proceso, con principal de factory verificada, sin login real. El rootPG firmado repite el monitor y reserva/inicia/retiene/termina25 comandos sin añadir TCP; mantiene deuda metadata y negativa de activación live-loan. Las observaciones Linux permanecen deterministas. Añadir a la selección los consumidores de diagnóstico/API/HTTP/fábrica además de los casos anteriores. No presentar estos resultados como actor/CLI desplegados,20modelos reales ni M2/SDK/UI global.

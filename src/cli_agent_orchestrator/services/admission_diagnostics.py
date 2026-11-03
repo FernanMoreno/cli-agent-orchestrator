@@ -1,11 +1,15 @@
 """Pure diagnostic projection: cached telemetry is separate from admission authority."""
 
 from dataclasses import asdict
+from typing import Any, Literal, overload
 
 from cli_agent_orchestrator.models.admission_control import (
     AdmissionDiagnostics,
+    AdmissionDiagnosticsV2,
     AdmissionOperationDiagnostics,
+    AdmissionOperationDiagnosticsV2,
     AdmissionPolicyDiagnostics,
+    CommandOperationDiagnostics,
     LocalResourceProbeDiagnostics,
     MonitorDiagnostics,
     PostgresProbeDiagnostics,
@@ -15,6 +19,10 @@ from cli_agent_orchestrator.models.admission_control import (
 )
 from cli_agent_orchestrator.services.admission_monitor import AdmissionMonitorDiagnostic
 from cli_agent_orchestrator.services.admission_policy import CapacityObservation, ResourceAmounts
+
+
+class DiagnosticsVersionRequired(RuntimeError):
+    """Version 1 cannot represent active command reservations without lying."""
 
 
 def _age(at: float | None, now: float) -> float | None:
@@ -41,9 +49,33 @@ def _sample(
     )
 
 
-def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> AdmissionDiagnostics:
+@overload
+def diagnostics_response(
+    value: AdmissionMonitorDiagnostic, *, now: float, version: Literal[2]
+) -> AdmissionDiagnosticsV2: ...
+
+
+@overload
+def diagnostics_response(
+    value: AdmissionMonitorDiagnostic, *, now: float, version: Literal[1] = 1
+) -> AdmissionDiagnostics: ...
+
+
+@overload
+def diagnostics_response(
+    value: AdmissionMonitorDiagnostic, *, now: float, version: int
+) -> AdmissionDiagnostics | AdmissionDiagnosticsV2: ...
+
+
+def diagnostics_response(
+    value: AdmissionMonitorDiagnostic, *, now: float, version: int = 1
+) -> AdmissionDiagnostics | AdmissionDiagnosticsV2:
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError("unsupported admission diagnostics version")
     ledger = value.ledger
     status = ledger.snapshot
+    if version == 1 and status.command_inflight:
+        raise DiagnosticsVersionRequired()
     current = status.accepting and status.reason in ("capacity_available", "resource_exhausted")
     capacity = ledger.decision.resource_capacity if current else None
     postgres = value.postgres
@@ -51,12 +83,12 @@ def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> Ad
     cycle = value.last_cycle
     configuration = value.configuration
     postgres_age = _age(postgres.sample.observation.observed_at, now) if postgres else None
-    return AdmissionDiagnostics(
-        generation=status.generation,
-        accepting=status.accepting,
-        reason=status.reason,
-        policy=AdmissionPolicyDiagnostics(**asdict(ledger.policy)),
-        sampling_policy=(
+    common_fields: dict[str, Any] = {
+        "generation": status.generation,
+        "accepting": status.accepting,
+        "reason": status.reason,
+        "policy": AdmissionPolicyDiagnostics(**asdict(ledger.policy)),
+        "sampling_policy": (
             SamplingPolicyDiagnostics(
                 generation=configuration.generation,
                 current_generation=configuration.generation == status.generation,
@@ -73,35 +105,20 @@ def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> Ad
             if configuration is not None
             else None
         ),
-        applied_budget=_amounts(ledger.budget) if current else None,
-        sample=(
+        "applied_budget": _amounts(ledger.budget) if current else None,
+        "sample": (
             _sample(ledger.observation, now=now, max_age=ledger.policy.max_sample_age_s)
             if ledger.observation is not None
             else None
         ),
-        capacity=_amounts(capacity),
-        remaining=(
+        "capacity": _amounts(capacity),
+        "remaining": (
             _amounts(capacity.excess_over(status.committed)) if capacity is not None else None
         ),
-        committed=ResourceQuantities(**asdict(status.committed)),
-        debt=ResourceQuantities(**asdict(status.resource_debt)),
-        recovery_ceiling=_amounts(ledger.ceiling),
-        operations=AdmissionOperationDiagnostics(
-            inflight_operations=status.inflight,
-            reserved_operations=status.reserved,
-            started_operations=status.started,
-            inflight_deliveries=status.delivery_inflight,
-            started_deliveries=status.delivery_started,
-            inflight_storage_only=status.storage_only_inflight,
-            started_storage_only=status.storage_only_started,
-            storage_connection_loans=status.storage_connection_loans,
-            storage_completion_credits=status.storage_completion_credits,
-            storage_retirement_pending=status.storage_retirement_pending,
-            control_storage_slots=status.control_storage_slots,
-            control_inflight=status.control_inflight,
-            control_connection_loans=status.control_connection_loans,
-        ),
-        monitor=MonitorDiagnostics(
+        "committed": ResourceQuantities(**asdict(status.committed)),
+        "debt": ResourceQuantities(**asdict(status.resource_debt)),
+        "recovery_ceiling": _amounts(ledger.ceiling),
+        "monitor": MonitorDiagnostics(
             stopping=value.stopping,
             sampling=value.sampling,
             authority_changing=value.authority_changing,
@@ -112,7 +129,7 @@ def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> Ad
                 cycle.generation_at_completion if cycle is not None else None
             ),
         ),
-        postgres=(
+        "postgres": (
             PostgresProbeDiagnostics(
                 generation=postgres.generation,
                 current_generation=postgres.generation == status.generation,
@@ -132,7 +149,7 @@ def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> Ad
             if postgres is not None
             else None
         ),
-        resource_probe=(
+        "resource_probe": (
             LocalResourceProbeDiagnostics(
                 **_sample(
                     resources.sample.observation, now=now, max_age=ledger.policy.max_sample_age_s
@@ -143,5 +160,46 @@ def diagnostics_response(value: AdmissionMonitorDiagnostic, *, now: float) -> Ad
             )
             if resources is not None
             else None
+        ),
+    }
+    if version == 1:
+        return AdmissionDiagnostics(
+            **common_fields,
+            operations=AdmissionOperationDiagnostics(
+                inflight_operations=status.inflight,
+                reserved_operations=status.reserved,
+                started_operations=status.started,
+                inflight_deliveries=status.delivery_inflight,
+                started_deliveries=status.delivery_started,
+                inflight_storage_only=status.storage_only_inflight,
+                started_storage_only=status.storage_only_started,
+                storage_connection_loans=status.storage_connection_loans,
+                storage_completion_credits=status.storage_completion_credits,
+                storage_retirement_pending=status.storage_retirement_pending,
+                control_storage_slots=status.control_storage_slots,
+                control_inflight=status.control_inflight,
+                control_connection_loans=status.control_connection_loans,
+            ),
+        )
+    return AdmissionDiagnosticsV2(
+        **common_fields,
+        operations=AdmissionOperationDiagnosticsV2(
+            inflight_operations=status.inflight,
+            reserved_operations=status.reserved,
+            started_operations=status.started,
+            inflight_deliveries=status.delivery_inflight,
+            started_deliveries=status.delivery_started,
+            inflight_storage_only=status.storage_only_inflight,
+            started_storage_only=status.storage_only_started,
+            commands=CommandOperationDiagnostics(
+                inflight=status.command_inflight,
+                started=status.command_started,
+            ),
+            storage_connection_loans=status.storage_connection_loans,
+            storage_completion_credits=status.storage_completion_credits,
+            storage_retirement_pending=status.storage_retirement_pending,
+            control_storage_slots=status.control_storage_slots,
+            control_inflight=status.control_inflight,
+            control_connection_loans=status.control_connection_loans,
         ),
     )

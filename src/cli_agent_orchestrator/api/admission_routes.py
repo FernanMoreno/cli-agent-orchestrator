@@ -1,9 +1,9 @@
 """Authenticated resource registration; shared control contract, not live-capacity claims."""
 
 from dataclasses import asdict
-from typing import Callable
+from typing import Any, Callable, ClassVar, Coroutine
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 
@@ -24,6 +24,11 @@ from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
 from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.models.admission_control import (
     AdmissionDiagnostics,
+    AdmissionDiagnosticsQueryError,
+    AdmissionDiagnosticsQueryErrorResponse,
+    AdmissionDiagnosticsV2,
+    AdmissionDiagnosticsVersionRequired,
+    AdmissionDiagnosticsVersionRequiredResponse,
     RegisteredResourceEnvelope,
     ResourceAttestationRequest,
     ResourceClaims,
@@ -44,6 +49,7 @@ from cli_agent_orchestrator.security.auth import (
     get_current_principal,
     is_verified_principal,
 )
+from cli_agent_orchestrator.services.admission_diagnostics import DiagnosticsVersionRequired
 from cli_agent_orchestrator.services.admission_monitor import AuthorityChangeUnavailable
 from cli_agent_orchestrator.services.inbox_admission_runtime import (
     AdmissionRuntimeUnavailable,
@@ -57,19 +63,26 @@ def failure(status: int, code: str) -> HTTPException:
 
 
 class FixedValidationRoute(APIRoute):
-    def get_route_handler(self) -> Callable:
+    validation_error_code: ClassVar[str] = "invalid_resource_envelope"
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
 
-        async def validated(request: Request):
+        async def validated(request: Request) -> Response:
             try:
                 return await handler(request)
             except RequestValidationError:
-                raise failure(422, "invalid_resource_envelope") from None
+                raise failure(422, self.validation_error_code) from None
 
         return validated
 
 
+class DiagnosticsValidationRoute(FixedValidationRoute):
+    validation_error_code: ClassVar[str] = AdmissionDiagnosticsQueryError().code
+
+
 router = APIRouter(prefix="/admission", tags=["resource control"], route_class=FixedValidationRoute)
+_diagnostics_router = APIRouter(route_class=DiagnosticsValidationRoute)
 
 
 async def operator(principal: Principal = Depends(get_current_principal)) -> Principal:
@@ -126,7 +139,7 @@ async def activate_shared(
     request: Request,
     response: Response,
     principal: Principal = Depends(operator),
-):
+) -> SharedAdmissionActivationResult:
     value = runtime(request)
     try:
         await value.activate_shared(principal=principal)
@@ -142,7 +155,7 @@ async def shared_debt(
     request: Request,
     response: Response,
     principal: Principal = Depends(operator),
-):
+) -> SharedDebtControlResult:
     value = runtime(request)
     try:
         page = await value.outstanding_resources(
@@ -162,7 +175,7 @@ async def abort_preparing(
     request: Request,
     response: Response,
     principal: Principal = Depends(operator),
-):
+) -> SharedPreparationAbortResult:
     value = runtime(request)
     try:
         receipt = await value.abort_preparing(
@@ -185,7 +198,7 @@ async def release_witnessed(
     request: Request,
     response: Response,
     principal: Principal = Depends(operator),
-):
+) -> SharedWitnessReleaseResult:
     value = runtime(request)
     try:
         receipt = await value.release_witnessed(
@@ -207,7 +220,7 @@ async def release_witnessed(
 @router.get("/resource-envelope", response_model=RegisteredResourceEnvelope)
 async def registered(
     request: Request, response: Response, principal: Principal = Depends(operator)
-):
+) -> RegisteredResourceEnvelope:
     value = runtime(request)
     try:
         record = await value.registered(principal=principal)
@@ -227,7 +240,7 @@ async def attest(
     request: Request,
     response: Response,
     principal: Principal = Depends(operator),
-):
+) -> ResourceUpdate:
     value = runtime(request)
     try:
         update = await value.attest(
@@ -247,7 +260,7 @@ async def revoke(
     request: Request,
     response: Response,
     principal: Principal = Depends(operator),
-):
+) -> ResourceUpdate:
     value = runtime(request)
     try:
         update = await value.revoke(principal=principal, expected_revision=body.expected_revision)
@@ -257,14 +270,38 @@ async def revoke(
     return ResourceUpdate(revision=update.revision, active=update.active)
 
 
-@router.get("/diagnostics", response_model=AdmissionDiagnostics)
+@_diagnostics_router.get(
+    "/diagnostics",
+    response_model=AdmissionDiagnostics | AdmissionDiagnosticsV2,
+    responses={
+        409: {"model": AdmissionDiagnosticsVersionRequiredResponse},
+        422: {"model": AdmissionDiagnosticsQueryErrorResponse},
+    },
+)
 async def diagnostics(
-    request: Request, response: Response, principal: Principal = Depends(operator)
-):
+    request: Request,
+    response: Response,
+    version: int = Query(default=1, ge=1, le=2),
+    principal: Principal = Depends(operator),
+) -> AdmissionDiagnostics | AdmissionDiagnosticsV2:
     value = runtime(request)
+    result: AdmissionDiagnostics | AdmissionDiagnosticsV2
     try:
-        result = value.diagnostics(principal=principal)
+        if version == 1:
+            result = value.diagnostics(principal=principal)
+        else:
+            result = value.diagnostics(principal=principal, version=version)
+    except DiagnosticsVersionRequired:
+        detail = AdmissionDiagnosticsVersionRequired().model_dump(mode="json")
+        raise HTTPException(
+            status_code=409,
+            detail=detail,
+            headers={"Cache-Control": "no-store"},
+        ) from None
     except _EXPECTED as error:
         raise control_error(error) from None
     response.headers["Cache-Control"] = "no-store"
     return result
+
+
+router.include_router(_diagnostics_router)

@@ -576,3 +576,26 @@ Crear `clients/funded_control_session.py`: wrapper explícito del Connection nat
 TDD: RED de API ausente antes de integrar; PG real para commits/rollback/role/read-only y subprocess root para primer TCP y mismo backend. Congelar fuente/runtime tras formato real del hook y serializar pruebas con mínimo6144MiB y PostgreSQL existente verificado. Comparar regresión/casos y bytes exactos, ejecutar arquitectura/revisión/composición y actualizar recibos/documentos/Obsidian. La revisión read de Claude se contrasta contra código y pruebas centrales.
 
 H1.3 precisión de worker: `check_worker` valida el scope original incluso dentro de su transacción propia, sin SQL ni exigir IDLE; `check_target` añade IDLE/no-busy para iniciar una operación. La auditoría niega reentrada antes de adquirir sus locks; la configuración de sesión del repositorio es permanente, sin bind/unbind mutable ni fallback.
+
+
+### T014.R.H2.1 — composición síncrona explícita
+
+1. ResourceEnvelopeRepository.read_latest añade control_session opcional por operación: preflight local/exacto antes de SQL y transaction(readonly=True), sin fallback; append sigue separado. ResourceBootstrap.load_current y shared_repository propagan opt-in explícito; validar sesión antes de captura/configuración y target antes de lectura. Fallos de autoridad/commit no se convierten en attestation verificada.
+2. StorageControlPermit.check_current_operation comprueba scope físico actual y su lease/worker exactos sin nueva adquisición. AdmissionMonitor constructor control_session opcional permanente requiere ese mismo permit; refresh preflight antes de retry_physical_closes/locks; control_call omite operation anidada solo después de validar sesión/permit. _cycle usa load_current con sesión y sample_control, conservando política, presupuesto, recuperación y doble comprobación de autoridad.
+3. start y begin_authority_change rechazan monitor ligado a sesión antes de mutar flags o lanzar tareas/writers. No wiring de InboxAdmissionRuntime ni reinterpretación de AsyncIO como ownership físico. H2.2 diseñará propietario persistente y comandos financiados; no introducir colas ilimitadas, un hilo por agente ni techo global fijo.
+4. TDD de APIs y fronteras; formato real previo a congelación, PG/root reales seriales con mínimo6144MiB y servicio existente fijado; tipos fríos y regresión preservando1541IDs. Arquitectura/composición, diff/Graphify privado, conocimiento durable y documentos antes de commit/push main autorizados.
+
+
+H2.1 precisión de generación: cada refresh conserva un ticket local de la generación que posee el ciclo. Tras reconfigure confirmado actualiza el ticket antes de más I/O; ante fallo invalida esa generación exacta, nunca una anterior ni la generación actual arbitraria del owner. Probar fallo tras reconfiguración propia y conservación de una reconfiguración/observación externa posterior; no ampliar la CAS a otro escritor. El monitor sigue siendo el publicador de observaciones de su ciclo.
+
+
+### T014.R.H2.2a — composición del ledger de comandos
+
+CommandAdmissionAttempt/CommandReservation y DeliveryAdmission.try_reserve_command añaden registro exacto separado, memoria/CPU positiva, cero slots nuevos y worker físico al iniciar. Contadores generales incluyen comandos; delivery/storage/control conservan su significado. Las dos colas de pendientes comparten secuencia y se mezclan linealmente con snapshots/heapq.merge; nunca retirar costes iniciados por timeout, stop o observación. Las comprobaciones usan capacidad/compromiso por dimensión y no available_slots de entregas. El token no implementa propietario de handles ni preparación shared.
+
+Modelos estrictos separados v1/v2, proyección desde un snapshot coherente, runtime y GETdiagnostics con versión1 por defecto y versión2 explícita. Mantener llamada original sin keywordversion para ruta1 y fábrica sin control_session paraNone. El error409 se codifica mediante DTO fijo y cabecera no-store; Field/query integer1..2 valida URL real y rechaza desconocidos422. Congelar salida v1 previa a modificar el productor para comparar estructura exacta, no relajar validadores.
+
+TDD privado en worktree: stdlib unittest RED antes de implementación y GREEN; source Graphify verificado antes de cada frontera nueva. Integrar solo archivos revisados tras comprobar baseline idéntico. Ejecutar selección canónica con consumidores reales de fábrica, modelos, HTTP, runtime, PG y scopes; derivar IDs completos por unión sin omitir las selecciones previas. Formato/tipos/archivo ejecutado/composición/revisión/conocimiento antes de main. El borrador privado y sus unittest no son aceptación canónica ni global.
+
+
+ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=invalid_diagnostics_query y no-store, sin reflejar entradas ni etiquetarlos como envelope. El resto de rutas de recursos conserva invalid_resource_envelope. Separar la política de validación de la ruta diagnóstica y documentar/probar el DTO422; mantener JWTadmin y la forma v1/v2. Primero reproducir el cuerpo incorrecto en el test ASGI, después corregir sin rebajar el status ni la cobertura.
