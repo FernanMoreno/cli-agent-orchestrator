@@ -624,3 +624,11 @@ ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=in
 3. Puerto privado de reserva startup-only RAM/CPU en ledger existente y reclamo irreversible por proceso; no producir observación de storage ni abrir admisión de datos.
 4. Consumidor SDK mide Linux sin SQL, crea la reserva y actor exactos; expected envelope se relee dentro del primer canal antes de ready/monitor. Entrada de proceso con trust/policy explícitos, EOF/stop y cierre conservador.
 5. RED/GREEN, consumidores heredados, contrato/PG real serializado con identidad/memoria, formato/tipos y composición; separar medición física, observaciones controladas y despliegue aún pendiente.
+
+
+## Corte H2.4a — propietario genérico de proceso
+
+1. Reutilizar CommandReservation/ledger y ResourceProcessSupervisor, sin nuevo scheduler/cupo. Handoff interno tipado de lanzamiento: marcar cargo y propietario antes de Popen fuera del guard. Bloquear finish directo de una reserva entregada al proceso y rechazar bases root destinadas al actor original.
+2. Mantener afinidad PID/hilo/tarea, handles y error primario; incertidumbre de arranque no habilita retry/refund. Join espera la observación auténtica exacta y cierre positivo antes de retirar bajo guard. No inferir ausencia de descendientes/SQL ni modificar las pruebas kernel del supervisor.
+3. TDD acotado y fuente revisada; procesos nativos Linux propios, pruebas de cancelación/errores/afinidad, consumidores CommandThread/actor/root y regresión H2.3. Serializar pruebas PG, formato antes de congelar, tipos/arquitectura/composición/diff/Graphify/conocimiento, recibos y main.
+4. Emisor de despliegue, canal privado postcommit y wiring central quedan como corte posterior sobre esta obligación padre, separada de la activación compute del hijo.

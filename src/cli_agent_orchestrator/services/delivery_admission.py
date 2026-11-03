@@ -4,15 +4,17 @@ import asyncio
 import math
 import os
 import queue
+import subprocess
 import threading
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from heapq import merge
 from itertools import count
-from typing import Generic, Literal, NoReturn, Protocol, SupportsIndex, TypeVar
+from typing import Generic, Literal, NoReturn, Protocol, SupportsIndex, TypeVar, cast
+from uuid import UUID
 
 from cli_agent_orchestrator.clients.storage_admission import (
     _CURRENT,
@@ -20,6 +22,11 @@ from cli_agent_orchestrator.clients.storage_admission import (
     check_storage_admission,
     physical_storage_scope,
     storage_close_uncertainty,
+)
+from cli_agent_orchestrator.models.resource_envelope import ResourceBinding
+from cli_agent_orchestrator.models.resource_generation import (
+    ProcessExitObservation,
+    is_process_exit_observation,
 )
 from cli_agent_orchestrator.models.root_control_activation import (
     VerifiedComputeStartupBasis,
@@ -30,6 +37,7 @@ from cli_agent_orchestrator.models.root_control_activation import (
     is_verified_compute_startup_sample,
     is_verified_root_control_activation,
 )
+from cli_agent_orchestrator.models.sql_process_origin import is_sql_process_application_name
 from cli_agent_orchestrator.services.admission_policy import (
     AdmissionDecision,
     AdmissionPolicy,
@@ -40,6 +48,10 @@ from cli_agent_orchestrator.services.admission_policy import (
     compute_capacity,
     evaluate_capacity,
     validate_clock,
+)
+from cli_agent_orchestrator.services.resource_process_supervisor import (
+    ResourceProcessSupervisor,
+    ResourceProcessUnproven,
 )
 
 AdmissionReason = CapacityReason | Literal["receiver_busy", "stopping"]
@@ -52,6 +64,17 @@ def _current_async_task() -> object | None:
         return asyncio.current_task()
     except RuntimeError:
         return None
+
+
+def _valid_command_timeout(value: object, *, optional: bool = False) -> bool:
+    if value is None:
+        return optional
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value >= 0
+    except OverflowError:
+        return False
 
 
 class SharedStorageCoordinator(Protocol):
@@ -128,6 +151,7 @@ class CommandReservation:
     _start_thread: threading.Thread | None
     _start_task: object | None
     _thread_worker: object | None
+    _process_worker: "CommandProcess | None"
     _actor_thread: "CommandThread[None] | None"
     _startup_basis: VerifiedComputeStartupBasis | None
 
@@ -149,6 +173,7 @@ class CommandReservation:
         object.__setattr__(self, "_start_thread", None)
         object.__setattr__(self, "_start_task", None)
         object.__setattr__(self, "_thread_worker", None)
+        object.__setattr__(self, "_process_worker", None)
         object.__setattr__(self, "_actor_thread", None)
         object.__setattr__(self, "_startup_basis", startup_basis)
 
@@ -245,6 +270,7 @@ class CommandReservation:
                 or worker._pid != os.getpid()
                 or not worker._registered_locked()
                 or worker._returned.is_set()
+                or self._process_worker is not None
                 or not self._pending_start_locked(now)
             ):
                 return False
@@ -272,6 +298,7 @@ class CommandReservation:
                 and self._state == "started"
                 and owner._commands.get(self._key) is self
                 and self._actor_thread is worker
+                and self._process_worker is None
                 and self._start_pid == os.getpid()
                 and self._start_thread is worker._thread
                 and self._start_task is None
@@ -317,6 +344,112 @@ class CommandReservation:
             worker._start_complete.set()
         return worker
 
+    def _launch_process(
+        self,
+        argv: Sequence[str],
+        *,
+        expected_store_id: str,
+        expected_target_identity_sha256: str,
+        env: Mapping[str, str] | None = None,
+        clock: Callable[[], float],
+    ) -> "CommandProcess | None":
+        """Fund and transfer this command token to one exact owned child."""
+        owner = self._owner
+        if owner._pid != os.getpid():
+            return None
+        if not callable(clock):
+            raise ValueError("command process requires an internal clock")
+        if isinstance(argv, (str, bytes)) or not isinstance(argv, Sequence):
+            raise ValueError("command process requires explicit argv")
+        arguments = tuple(argv)
+        if not arguments or any(
+            not isinstance(value, str) or not value or "\0" in value for value in arguments
+        ):
+            raise ValueError("command process requires explicit argv")
+        try:
+            store_id = str(UUID(expected_store_id))
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("command process requires a canonical store id") from None
+        if (
+            not isinstance(expected_target_identity_sha256, str)
+            or len(expected_target_identity_sha256) != 64
+            or any(value not in "0123456789abcdef" for value in expected_target_identity_sha256)
+        ):
+            raise ValueError("command process requires a canonical target digest")
+        if env is not None and not isinstance(env, Mapping):
+            raise ValueError("command process environment must be a mapping")
+        environment = None if env is None else dict(env)
+        if environment is not None and any(
+            not isinstance(key, str) or not isinstance(value, str) or "\0" in key or "\0" in value
+            for key, value in environment.items()
+        ):
+            raise ValueError("command process environment must contain text values")
+        now = clock()
+        validate_clock(now)
+        with owner._guard:
+            if (
+                self._startup_basis is not None
+                or self._footprint.memory_bytes <= 0
+                or self._footprint.cpu_millicores <= 0
+                or self._footprint.storage_slots != 0
+                or self._thread_worker is not None
+                or self._actor_thread is not None
+                or self._process_worker is not None
+                or not self._pending_start_locked(now)
+            ):
+                return None
+            worker = CommandProcess._create(
+                self,
+                store_id=store_id,
+                target_digest=expected_target_identity_sha256,
+            )
+            object.__setattr__(self, "_process_worker", worker)
+            self._mark_started_locked(threading.current_thread(), _current_async_task())
+        supervisor: ResourceProcessSupervisor | None = None
+        try:
+            supervisor = ResourceProcessSupervisor.launch(
+                arguments,
+                expected_store_id=store_id,
+                expected_target_identity_sha256=expected_target_identity_sha256,
+                env=environment,
+                first_sql_grant=False,
+                sql_broker=False,
+            )
+            if type(supervisor) is not ResourceProcessSupervisor:
+                raise TypeError("command process launch returned an unowned supervisor")
+            worker._attach_supervisor(supervisor)
+            if not worker._supervisor_context_valid:
+                raise ResourceProcessUnproven("command process supervisor context changed")
+        except BaseException as error:
+            attached = getattr(error, "__dict__", {}).get("resource_process_owner")
+            retained = (
+                supervisor
+                if type(supervisor) is ResourceProcessSupervisor
+                else attached if type(attached) is ResourceProcessSupervisor else None
+            )
+            if retained is not None:
+                try:
+                    if worker._supervisor is not retained:
+                        worker._attach_supervisor(retained)
+                    else:
+                        worker._supervisor_context_valid = bool(
+                            retained._owner_pid == worker._pid
+                            and retained._owner_thread is worker._thread
+                        )
+                except BaseException:
+                    # Keep the exact owner even if acknowledgement or attachment failed.
+                    object.__setattr__(worker, "_supervisor", retained)
+                    try:
+                        context_valid = bool(
+                            retained._owner_pid == worker._pid
+                            and retained._owner_thread is worker._thread
+                        )
+                    except BaseException:
+                        context_valid = False
+                    object.__setattr__(worker, "_supervisor_context_valid", context_valid)
+            raise CommandProcessStartUncertain(worker, error) from error
+        return worker
+
     def cancel_before_start(self) -> bool:
         owner = self._owner
         if owner._pid != os.getpid():
@@ -328,6 +461,8 @@ class CommandReservation:
 
     def finish(self) -> bool:
         owner = self._owner
+        if self._process_worker is not None:
+            return False
         actor = self._actor_thread
         if actor is not None:
             if (
@@ -369,6 +504,345 @@ class CommandThreadStartUncertain(RuntimeError, Generic[_T]):
         self.worker = worker
 
 
+_COMMAND_PROCESS_FACTORY = object()
+
+
+class CommandProcessStartUncertain(RuntimeError):
+    """Popen acknowledgement was uncertain; the transferred charge is sticky."""
+
+    def __init__(self, worker: "CommandProcess", cause: BaseException) -> None:
+        super().__init__("command process start is unconfirmed")
+        self.worker = worker
+        self.cause = cause
+
+
+class CommandProcess:
+    """Owner-bound lifetime of one exact child; no descendant or SQL-close proof."""
+
+    __slots__ = (
+        "_reservation",
+        "_pid",
+        "_thread",
+        "_task",
+        "_store_id",
+        "_target_digest",
+        "_supervisor",
+        "_supervisor_context_valid",
+        "_binding_attempted",
+        "_binding",
+        "_sql_application_name",
+        "_observation",
+        "_operation_guard",
+        "_terminal_uncertainty",
+        "_factory",
+    )
+    _reservation: CommandReservation
+    _pid: int
+    _thread: threading.Thread
+    _task: object | None
+    _store_id: str
+    _target_digest: str
+    _supervisor: ResourceProcessSupervisor | None
+    _supervisor_context_valid: bool
+    _binding_attempted: bool
+    _binding: ResourceBinding | None
+    _sql_application_name: str | None
+    _observation: ProcessExitObservation | None
+    _operation_guard: threading.Lock
+    _terminal_uncertainty: bool
+    _factory: object
+
+    def __init__(self, *, _factory: object) -> None:
+        if _factory is not _COMMAND_PROCESS_FACTORY:
+            raise TypeError("command processes must be launched by a reservation")
+
+    @classmethod
+    def _create(
+        cls,
+        reservation: CommandReservation,
+        *,
+        store_id: str,
+        target_digest: str,
+    ) -> "CommandProcess":
+        value = object.__new__(cls)
+        value._reservation = reservation
+        value._pid = os.getpid()
+        value._thread = threading.current_thread()
+        value._task = _current_async_task()
+        value._store_id = store_id
+        value._target_digest = target_digest
+        value._supervisor = None
+        value._supervisor_context_valid = False
+        value._binding_attempted = False
+        value._binding = None
+        value._sql_application_name = None
+        value._observation = None
+        value._operation_guard = threading.Lock()
+        value._terminal_uncertainty = False
+        value._factory = _COMMAND_PROCESS_FACTORY
+        return value
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("command process ownership is not transferable")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        raise TypeError("command process ownership is not transferable")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("command process ownership is not serializable")
+
+    def _check_owner(self) -> None:
+        if (
+            self._factory is not _COMMAND_PROCESS_FACTORY
+            or self._pid != os.getpid()
+            or self._thread is not threading.current_thread()
+            or self._task is not _current_async_task()
+        ):
+            raise StorageAdmissionUnavailable()
+
+    def _registered_locked(self) -> bool:
+        reservation = self._reservation
+        return (
+            reservation._owner._commands.get(reservation._key) is reservation
+            and reservation._process_worker is self
+            and reservation._state == "started"
+            and reservation._start_pid == self._pid
+            and reservation._start_thread is self._thread
+            and reservation._start_task is self._task
+        )
+
+    def _registered(self) -> bool:
+        self._check_owner()
+        owner = self._reservation._owner
+        with owner._guard:
+            return self._registered_locked()
+
+    def _attach_supervisor(self, supervisor: ResourceProcessSupervisor) -> None:
+        if type(supervisor) is not ResourceProcessSupervisor:
+            raise TypeError("command process requires its exact supervisor")
+        if self._supervisor is not None and self._supervisor is not supervisor:
+            raise ResourceProcessUnproven("command process supervisor cannot be replaced")
+        self._supervisor = supervisor
+        self._supervisor_context_valid = bool(
+            supervisor._owner_pid == self._pid and supervisor._owner_thread is self._thread
+        )
+
+    @property
+    def has_native_owner(self) -> bool:
+        """Whether this exact handle retains its supervisor; no process-state proof."""
+        self._check_owner()
+        return self._supervisor is not None
+
+    def receive_binding(self, *, timeout_s: float = 30) -> ResourceBinding:
+        self._check_owner()
+        if not _valid_command_timeout(timeout_s):
+            raise ValueError("command process binding timeout must be finite and nonnegative")
+        if not self._registered():
+            raise StorageAdmissionUnavailable()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        try:
+            supervisor = self._supervisor
+            if supervisor is None or self._binding_attempted or self._terminal_uncertainty:
+                raise ResourceProcessUnproven("command process binding is unavailable")
+            if (
+                not self._supervisor_context_valid
+                or supervisor._owner_pid != self._pid
+                or supervisor._owner_thread is not self._thread
+                or supervisor._binding_failed is not False
+                or supervisor._binding is not None
+            ):
+                self._terminal_uncertainty = True
+                raise ResourceProcessUnproven("command process binding owner is unavailable")
+            self._binding_attempted = True
+            try:
+                binding = supervisor.receive_binding(timeout_s=timeout_s)
+                label = supervisor.sql_application_name
+                if (
+                    type(binding) is not ResourceBinding
+                    or supervisor._binding is not binding
+                    or supervisor._binding_failed is not False
+                    or binding.store_id != self._store_id
+                    or binding.target_identity_sha256 != self._target_digest
+                    or not is_sql_process_application_name(label)
+                ):
+                    raise ResourceProcessUnproven("command process binding is unproven")
+                self._check_owner()
+                if not self._registered():
+                    raise StorageAdmissionUnavailable()
+                self._binding = binding
+                self._sql_application_name = label
+                return binding
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+        finally:
+            self._operation_guard.release()
+
+    def send_signal(self, signum: int) -> None:
+        self._check_owner()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        try:
+            supervisor = self._supervisor
+            if supervisor is None or not self._supervisor_context_valid or not self._registered():
+                raise ResourceProcessUnproven("command process supervisor is unavailable")
+            # Poison blocks proof/release, but cleanup may still signal this exact child.
+            supervisor.send_signal(signum)
+        finally:
+            self._operation_guard.release()
+
+    def cleanup(self, timeout_s: float | None = None) -> bool:
+        """Join/close this child without returning its command reservation.
+
+        None performs a nonblocking observation. Cleanup is allowed after
+        uncertainty so the same retained child can still be stopped safely.
+        """
+        self._check_owner()
+        if not _valid_command_timeout(timeout_s, optional=True):
+            raise ValueError("command process cleanup timeout must be finite and nonnegative")
+        if not self._operation_guard.acquire(blocking=False):
+            return False
+        try:
+            supervisor = self._supervisor
+            if (
+                supervisor is None
+                or not self._supervisor_context_valid
+                or supervisor._owner_pid != self._pid
+                or supervisor._owner_thread is not self._thread
+            ):
+                return False
+            # Once native cleanup starts, normal join can never refund this token.
+            self._terminal_uncertainty = True
+            try:
+                supervisor.wait(timeout_s=0 if timeout_s is None else timeout_s)
+            except subprocess.TimeoutExpired:
+                return False
+            supervisor.close()
+            try:
+                channel = supervisor._channel
+                broker_channel = supervisor._broker_channel
+                return bool(
+                    supervisor._closed is True
+                    and supervisor._exited is True
+                    and supervisor._pidfd is None
+                    and supervisor._owner_pid == self._pid
+                    and supervisor._owner_thread is self._thread
+                    and channel.fileno() == -1
+                    and (broker_channel is None or broker_channel.fileno() == -1)
+                )
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+        finally:
+            self._operation_guard.release()
+
+    def join(self, timeout_s: float | None = None) -> bool:
+        self._check_owner()
+        if not _valid_command_timeout(timeout_s, optional=True):
+            raise ValueError("command process join timeout must be finite and nonnegative")
+        if not self._operation_guard.acquire(blocking=False):
+            return False
+        try:
+            if self._terminal_uncertainty:
+                return False
+            supervisor = self._supervisor
+            binding = self._binding
+            label = self._sql_application_name
+            if supervisor is None or binding is None or label is None or not self._registered():
+                return False
+            if (
+                not self._supervisor_context_valid
+                or supervisor._owner_pid != self._pid
+                or supervisor._owner_thread is not self._thread
+                or supervisor._binding_failed is not False
+                or supervisor._binding is not binding
+                or supervisor._sql_application_name != label
+                or supervisor._pidfd is None
+            ):
+                self._terminal_uncertainty = True
+                return False
+            try:
+                observation = supervisor.wait(timeout_s=0 if timeout_s is None else timeout_s)
+            except subprocess.TimeoutExpired:
+                return False
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+            try:
+                valid_observation = is_process_exit_observation(observation)
+                if valid_observation:
+                    verified_observation = cast(ProcessExitObservation, observation)
+                    valid_observation = bool(
+                        verified_observation is supervisor.observation
+                        and verified_observation.binding is binding
+                        and verified_observation.sql_application_name == label
+                        and supervisor._exited is True
+                        and supervisor._binding_failed is False
+                        and supervisor._binding is binding
+                        and supervisor._sql_application_name == label
+                        and supervisor._owner_pid == self._pid
+                        and supervisor._owner_thread is self._thread
+                    )
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+            if not valid_observation:
+                self._terminal_uncertainty = True
+                return False
+            verified_observation = cast(ProcessExitObservation, observation)
+            try:
+                supervisor.close()
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+            try:
+                channel = supervisor._channel
+                broker_channel = supervisor._broker_channel
+                native_closed = bool(
+                    supervisor._closed is True
+                    and supervisor._pidfd is None
+                    and supervisor._owner_pid == self._pid
+                    and supervisor._owner_thread is self._thread
+                    and supervisor._binding_failed is False
+                    and supervisor._binding is binding
+                    and supervisor._sql_application_name == label
+                    and channel.fileno() == -1
+                    and (broker_channel is None or broker_channel.fileno() == -1)
+                    and supervisor.observation is verified_observation
+                )
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+            if not native_closed:
+                self._terminal_uncertainty = True
+                return False
+            owner = self._reservation._owner
+            try:
+                self._check_owner()
+                with owner._guard:
+                    if (
+                        not self._registered_locked()
+                        or self._supervisor is not supervisor
+                        or not self._supervisor_context_valid
+                        or self._binding is not binding
+                        or self._sql_application_name != label
+                    ):
+                        self._terminal_uncertainty = True
+                        return False
+                    released = owner._release_command_locked(self._reservation, finish_started=True)
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+            if not released:
+                self._terminal_uncertainty = True
+                return False
+            self._observation = verified_observation
+            return True
+        finally:
+            self._operation_guard.release()
+
+
 class CommandThread(Generic[_T]):
     """Retained native worker; its result is separate from its joined exit."""
 
@@ -399,6 +873,7 @@ class CommandThread(Generic[_T]):
         return (
             reservation._owner._commands.get(reservation._key) is reservation
             and reservation._thread_worker is self
+            and reservation._process_worker is None
             and reservation._state == "started"
             and reservation._start_pid == self._pid
             and reservation._start_thread is self._thread

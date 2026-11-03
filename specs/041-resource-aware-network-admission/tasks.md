@@ -313,3 +313,13 @@ T014.R.H2.2b.2 (2026-11-03), actor original opt-in validado por componente: un h
 - [x] H23-05 Validar negativos/consumidores, PostgreSQL y fuente física aplicable; recibos, arquitectura/revisión/diff/conocimiento/documentación. Mantener diez gates globales abiertos.
 
 Resultado H23: [validación](validation-t014-root-control-activation.json) y [composición](composition-t014-root-control-activation.md). Emisor de servicio y consumidor SDK/proceso aceptados; supervisor financiado de despliegue/API central, shared, custodia y diez gates originales pendientes.
+
+
+## T014.R.H2.4a — proceso financiado (primitiva opt-in validada)
+
+- [x] H24A-01 Contrastar conocimiento, supervisor/ledger y alternativas; spec/plan/tasks e impacto Graphify antes de implementación.
+- [x] H24A-02 Añadir handoff tipado con cargo previo al intento Popen, ownership exacto, bloqueo de finish/cancel y no transferencia de basis root.
+- [x] H24A-03 Conservar handles/errores/obligaciones inciertas y retirar solo tras exit auténtico/cierre positivos, sin ampliar autoridad a descendientes o SQL.
+- [x] H24A-04 TDD y procesos reales; regresión relevante completa, tipos/arquitectura/composición/revisiones, documentos/conocimiento y commit/push main.
+
+Resultado H24a: [validación](validation-t014-funded-process.json) y [composición](composition-t014-funded-process.md). H24b: publisher de identidad Root CLI/transporte privado y composición de despliegue pendientes; no cerrar diez gates originales.

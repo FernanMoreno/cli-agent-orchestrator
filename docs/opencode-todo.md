@@ -1,5 +1,9 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-11-03 · T014.R.H2.4a: proceso financiado validado como primitiva interna.**
+
+La reserva RAM/CPU del padre precede a Popen; conserva el cargo hasta binding, salida y cierre positivos del hijo exacto. PID/hilo/tarea, sin supervisor mutable expuesto, incertidumbre terminal y cleanup sin refund; sin otro ledger ni máximo fijo nuevo. **572 pruebas aprobadas**, cero fallos/errores/omisiones, 10 advertencias en 33 módulos; 30 casos nuevos. Incluye dos recorridos Linux reales, tipos finales de 463 fuentes, arquitectura 5/0 y PostgreSQL limpio. Las cantidades de cómputo del padre son sintéticas; no acredita concurrencia de modelos. H24b Root CLI/transporte, despliegue productivo/API central, shared, custodia, M1/M2/M3, integración SDK/UI restante y diez gates originales siguen pendientes. [Validación](../specs/041-resource-aware-network-admission/validation-t014-funded-process.json), [composición](../specs/041-resource-aware-network-admission/composition-t014-funded-process.md).
+
 **2026-11-03 · T014.R.H2.3: activación firmada preSQL validada como componente opt-in.**
 
 Emisor sobre canal propietario ya financiado y consumidor SDK/proceso implementados: firma de cómputo separada del certificado SQL, trust externo, reclamo único, RAM/CPU Linux reales antes de SQL con storage desconocido y envelope exacto hasta validar el primer ciclo. Sin techo fijo nuevo de agentes/entregas.

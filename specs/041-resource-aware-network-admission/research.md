@@ -207,3 +207,8 @@ H2.2b.2, revisión de implementación: finish y publicación del reply se serial
 Inspección ECC/lead: cao-server ejecuta init_db antes de runtime_from_environment; el monitor legacy necesita SQL antes de observar capacidad. Sus credenciales runtime no son owner del journal SQL5. funded_bridge no tiene caller productivo y su grant hijo no es root ni RAM/CPU. Por tanto no se promueve el endpoint admin ni se traslada su conexión temporal al actor.
 
 Un paquete firmado separado transporta autoridad explícita del emisor owner-funded; la medida local sigue siendo necesaria. Storage desconocido no se convierte en cero conocido: el arranque utiliza un tipo/reserva solo RAM/CPU y conserva la admisión normal desconocida. Keyring y canal emisor siguen entradas reales del despliegue, no se fabrican desde settings/peer identity. El primer readback impide aceptar una revisión revocada/cambiada tras emisión.
+
+
+### H2.4a: elegir handoff de comando
+
+PhysicalEffectReservation está ligado a una entrega y callbacks de cierre; ChildSqlSessionCharge financia SQL. Ninguno debe reinterpretarse como la obligación RAM/CPU padre de un supervisor genérico. Se amplía la familia de handoff de CommandReservation, como CommandThread, conservando ResourceProcessSupervisor como única fuente de prueba de proceso. Su wait sin observación tras handshake fallido no se debilita para obtener un refund. Esta conservación puede dejar deuda sin vía de reconciliación: custodia sigue separada.

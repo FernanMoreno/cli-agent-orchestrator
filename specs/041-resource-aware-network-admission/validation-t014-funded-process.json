@@ -1,0 +1,256 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-03",
+  "component": "T014.R.H2.4a",
+  "status": "validated-opt-in-funded-command-process",
+  "base_head": "94fe9d97bb280644c01da53cb94da8a33175802a",
+  "global_acceptance": false,
+  "acceptance": {
+    "phase": "funded-process-regression",
+    "passed": 572,
+    "baseline_relevant_passed": 542,
+    "baseline_accepted_union": 1843,
+    "new_distinct_cases": 30,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "modules": 33,
+    "warnings": 10,
+    "seconds": 349.393,
+    "available_mib": 10813,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "7406f157ae92491792350fe9daf0d87ed0248f88aaeda10172bd1370dd073b7e",
+    "source_archive_matches": 3,
+    "production_archive_matches": 1,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "c680e9f09b58f1709a4d293842ae5550eb5636388d1c770c680c0140d01b95bc"
+      },
+      {
+        "path": "test/services/test_admission_command_process.py",
+        "sha256": "3ef1461fd42bf66de604c8cc2f1f5fa6a600b2ff9799c24351451ef3040458fc"
+      },
+      {
+        "path": "test/services/test_admission_command_process_native.py",
+        "sha256": "ff21f316a411439b09b8da5cf4047810770eb93195cbb83a61655f31b26aa995"
+      }
+    ],
+    "foreign_files_preserved": 12,
+    "coverage": {
+      "owned_source": {
+        "src/cli_agent_orchestrator/services/delivery_admission.py": {
+          "covered_lines": 1074,
+          "num_statements": 1391,
+          "percent_covered": 77.21063982746226,
+          "percent_covered_display": "77",
+          "missing_lines": 317,
+          "excluded_lines": 6
+        }
+      },
+      "package_percent": 25.28645051536075,
+      "scope": "33 selected modules; not whole-package/global acceptance"
+    },
+    "sql_schema_versions_preserved": 5,
+    "resource_schema_versions_preserved": 7,
+    "global_acceptance": false,
+    "central_api_integrated": false,
+    "deployment_funded_producer": false,
+    "command_process_primitive": true,
+    "root_deployment_integrated": false,
+    "shared_activation": false,
+    "unchanged_neighbor_cases": 0,
+    "unchanged_neighbor_modules": [
+      "test/services/test_resource_process_supervisor.py"
+    ],
+    "unchanged_neighbors_match_head": true
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "black",
+          "--check",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "test/services/test_admission_command_process.py",
+          "test/services/test_admission_command_process_native.py"
+        ],
+        "exit_code": 0,
+        "source_hashes": {
+          "src/cli_agent_orchestrator/services/delivery_admission.py": "c680e9f09b58f1709a4d293842ae5550eb5636388d1c770c680c0140d01b95bc",
+          "test/services/test_admission_command_process.py": "3ef1461fd42bf66de604c8cc2f1f5fa6a600b2ff9799c24351451ef3040458fc",
+          "test/services/test_admission_command_process_native.py": "ff21f316a411439b09b8da5cf4047810770eb93195cbb83a61655f31b26aa995"
+        }
+      },
+      {
+        "name": "isort",
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "isort",
+          "--check-only",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "test/services/test_admission_command_process.py",
+          "test/services/test_admission_command_process_native.py"
+        ],
+        "exit_code": 0,
+        "source_hashes": {
+          "src/cli_agent_orchestrator/services/delivery_admission.py": "c680e9f09b58f1709a4d293842ae5550eb5636388d1c770c680c0140d01b95bc",
+          "test/services/test_admission_command_process.py": "3ef1461fd42bf66de604c8cc2f1f5fa6a600b2ff9799c24351451ef3040458fc",
+          "test/services/test_admission_command_process_native.py": "ff21f316a411439b09b8da5cf4047810770eb93195cbb83a61655f31b26aa995"
+        }
+      }
+    ],
+    "cold_mypy": {
+      "exit_code": 0,
+      "source_count": 463,
+      "source_preserved": true,
+      "final_source": true,
+      "new_suppressions": false
+    },
+    "main_unittest": {
+      "passed": 89,
+      "overlapping": true
+    },
+    "first_native": {
+      "passed": 3,
+      "actual_child_journeys": 2,
+      "overlapping": true
+    },
+    "architecture": {
+      "contracts_kept": 5,
+      "contracts_broken": 0
+    },
+    "postgres": {
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+      "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+      "service_profile": "cao-spec021-local-postgres-v3",
+      "lease_owner_pid": 6160,
+      "lease_owner_start_ticks": "273049",
+      "server_version_prefix": "18.6",
+      "other_clients": 0,
+      "test_databases": 0,
+      "test_roles": 0,
+      "live_reuse_lease_verified": true,
+      "container_stopped": false
+    }
+  },
+  "graphify": {
+    "private": true,
+    "partial": true,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/storage_admission.py",
+        "sha256": "484bca0c9ebb7a9f32b7019f1e494efdb97122fbdd2a8e62c75753d92c905943"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_generation.py",
+        "sha256": "a2cf6a1e9e830367faa71f61601bf01fc8ab5b01d0da7f1fb83e117e23a331d5"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/root_control_activation.py",
+        "sha256": "a9b7a42f615f46dff5cfe27741ad278b6d33db833a96ac6ca32531a005b138c3"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/root_control.py",
+        "sha256": "c213aed7364de7c14c80bdfdc248906372c5d1b246e77bcc294d078a7c202080"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_policy.py",
+        "sha256": "83afd34fbd404f6fa4a80898e7d7dbcf09830279c3d90cb5b9781d9fa81a965c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "c680e9f09b58f1709a4d293842ae5550eb5636388d1c770c680c0140d01b95bc"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/original_control_owner.py",
+        "sha256": "2ff6b57c5b0a6da4a37fa5b25c19e3739bd8df11e367ccf559d1666140359c11"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+        "sha256": "b6f8bd3881cba7c239898537d727561ee97c5da25dcadbd12a2777474bbdf05d"
+      },
+      {
+        "path": "test/services/test_admission_command_process.py",
+        "sha256": "3ef1461fd42bf66de604c8cc2f1f5fa6a600b2ff9799c24351451ef3040458fc"
+      },
+      {
+        "path": "test/services/test_admission_command_process_native.py",
+        "sha256": "ff21f316a411439b09b8da5cf4047810770eb93195cbb83a61655f31b26aa995"
+      },
+      {
+        "path": "test/services/test_admission_command_thread.py",
+        "sha256": "703efb98e7ae731e911331d0c06dfda4acabd57e3e0c857a8e9522f4bbe23c3b"
+      },
+      {
+        "path": "test/services/test_resource_process_supervisor.py",
+        "sha256": "bdd524831271ae1c5ce6a63c9f15ad0c3bb556f2e00912441655c4389e6e478b"
+      }
+    ],
+    "nodes": 634,
+    "edges": 1652,
+    "failed_sources": []
+  },
+  "behavior": {
+    "charge_before_popen": true,
+    "same_parent_ledger": true,
+    "opaque_native_handle": true,
+    "pid_thread_task_bound": true,
+    "nonblocking_default_join": true,
+    "terminal_uncertainty": true,
+    "timeout_retry_same_child": true,
+    "exact_binding_and_exit_observation": true,
+    "positive_close_before_refund": true,
+    "cleanup_never_refunds": true,
+    "root_startup_basis_rejected": true,
+    "first_sql_grant": false,
+    "sql_broker": false,
+    "fixed_count_added": false
+  },
+  "reviews": {
+    "ecc_luna_max": [
+      "architecture",
+      "python-native-harness"
+    ],
+    "claude_read_jobs": [
+      "1f2d5725b810443c870072f429f67aa7",
+      "d31453237aef40ebb267c53c65c4ed6c",
+      "06436bbec711414e8cb4078ba6e1c2e4"
+    ],
+    "static_only": true,
+    "actionable_findings_remaining": 0
+  },
+  "known_limits": [
+    "No native handle can be recovered if interruption occurs before return/local assignment or inside Popen; charge remains sticky and child may be unmanageable.",
+    "No unsafe PID signaling fallback on failed pidfd pin; exact owner may only passively wait/close.",
+    "Foreign-context owner is retained but cannot be controlled by this wrapper.",
+    "Process exit is not descendant, SQL or generation custody evidence.",
+    "Synchronous explicit finite waits block their owner; no async deployment scheduler is implemented."
+  ],
+  "pending": [
+    "H24b root CLI identity publication and bounded activation transport",
+    "funded productive deployment issuer/supervisor and central API wiring",
+    "shared activation and custody/reconciliation",
+    "physical/distributed M1/M2/M3 and remaining SDK/UI/global gates"
+  ],
+  "private_receipts": "/home/felni/.cache/caos-funded-process-20261103",
+  "knowledge": {
+    "operation_id": "markdown-20261103-funded-process",
+    "pages": 3,
+    "strict_lint_issues": 0
+  }
+}
