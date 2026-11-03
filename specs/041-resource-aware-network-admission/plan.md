@@ -632,3 +632,21 @@ ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=in
 2. Mantener afinidad PID/hilo/tarea, handles y error primario; incertidumbre de arranque no habilita retry/refund. Join espera la observación auténtica exacta y cierre positivo antes de retirar bajo guard. No inferir ausencia de descendientes/SQL ni modificar las pruebas kernel del supervisor.
 3. TDD acotado y fuente revisada; procesos nativos Linux propios, pruebas de cancelación/errores/afinidad, consumidores CommandThread/actor/root y regresión H2.3. Serializar pruebas PG, formato antes de congelar, tipos/arquitectura/composición/diff/Graphify/conocimiento, recibos y main.
 4. Emisor de despliegue, canal privado postcommit y wiring central quedan como corte posterior sobre esta obligación padre, separada de la activación compute del hijo.
+
+
+## Corte H2.4b — canal Root y composición
+
+1. Extraer RootSqlSubject a modelo puro con alias compatible; definir vocabulario/codec estricto de frames Root y endpoint privado separado de binding. Una weak registry/hook fork único evita retener endpoints cerrados por callbacks registrados por instancia.
+2. ResourceProcessSupervisor crea un segundo par solo en root_control_channel=True; valida modos/env antes de crear sockets, conserva/retira ambos endpoints en todos los errores. Mensajes autenticados por SCM_CREDENTIALS; el padre usa el Popen/pin existentes. Default False omite el keyword nuevo al llamar factories heredadas.
+3. CommandProcess expone subject descriptivo y operaciones Root tipadas con la misma afinidad/puerta no reentrante. No exponer supervisor/socket, ni usar reply como exit. RootSocket debe cerrar antes del wait de cleanup y formar parte del cierre verificado de join.
+4. Root CLI abre endpoint antes de bootstrap, publica binding identity-only y consume paquete sin cambiar permisos/root startup. Preservar stdio ausenteoptin. Polls de idle conocidos no consumen mensajes y pueden repetirse; fallos/ACK de activación inciertos cierran el canal sin retry.
+5. Servicio RootControlDeployment en dos fases: autorización/canal antes de launch, subject inmutable, luego activate por issue_root_control_activation con autoridad externa ya provisionada. Error conserva propietario y record poscommit. No crear el proveedor de autoridad ni migrar la API legacy.
+6. Worktrees separados para transporte/CLI-composición, interfaces acordadas antes de código, RED primero y revisión cruzada. Lead integra hashes y prueba consumidor PostgreSQL real en main, memoria6144MiB/identidad existente/serialización intactas. Formato antes de freeze; tipos/arquitectura/regresión de33módulos más nuevos, composición/diff/Graphify/Obsidian/documentos y main.
+
+
+### H24b corrección de cierre físico
+
+Conservar un testigo monotónico de fallo de cierre Root en el supervisor; propagarlo al CommandProcess antes de reintentos/retirada. Mantener getters compatibles con doubles legacy y el caso RPCfallido/cierrepositivo joinable. Reproducir primero la devolución indebida; añadir tres regresiones y repetir Native4,tipos467,arquitectura y selección626 sin cambiar límites.
+
+
+**2026-11-04 · H24b validado como componente interno opt-in.** Root CLI, publisher y transporte privado autenticado conectados a proceso financiado y activación en dos fases. Emisor único sobre su conexión original; provisión externa para subject vivo, gate de reentrada y registros/cargos conservados. 626PASS/10advertencias/39módulos,572IDs previos+54nuevos;3recorridos Root/PG reales. Tipos467, arquitectura5/0,14Python/8fuentes archivo-exactos y PostgreSQL0/0/0. Sin nuevo techo agregado fijo. El primer diagnóstico2fallos/2pases fue un defecto del arnés de préstamo SQL y se conserva fallido. No acepta autoridad productiva/API, shared, custodia, modelos, M1/M2/M3, SDK/UI restante ni los diez gates originales. [Validación](validation-t014-root-control-deployment.json), [composición](composition-t014-root-control-deployment.md).

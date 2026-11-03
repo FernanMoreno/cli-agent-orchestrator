@@ -323,3 +323,19 @@ Resultado H23: [validación](validation-t014-root-control-activation.json) y [co
 - [x] H24A-04 TDD y procesos reales; regresión relevante completa, tipos/arquitectura/composición/revisiones, documentos/conocimiento y commit/push main.
 
 Resultado H24a: [validación](validation-t014-funded-process.json) y [composición](composition-t014-funded-process.md). H24b: publisher de identidad Root CLI/transporte privado y composición de despliegue pendientes; no cerrar diez gates originales.
+
+
+## T014.R.H2.4b — Root CLI y transporte (validado opt-in)
+
+- [x] H24B-01 Conocimiento/spec/plan/tasks e impacto; fijar interfaces, modelo puro de subject con reexport y codec estricto sin nueva autoridad.
+- [x] H24B-02 Añadir endpoint privado autenticado y opt-in del supervisor; bounds/credenciales/rights/fork/deadlines y cierres completos, conservando binding/defaults.
+- [x] H24B-03 Conectar operaciones Root owner-bound a CommandProcess, subject del padre, activación única y cierre de todos los handles antes de retiro.
+- [x] H24B-04 Conectar Root CLI al publisher y canal privado; conservar stdio y espera idle, EOF/cierre positivo y errores fijos sin fallback inseguro.
+- [x] H24B-05 Componer launch/activate en dos fases con admin/canal financiado, autoridad externa y retención poscommit, sin auto-provisionar ni perder owner.
+- [x] H24B-06 RED/GREEN y recorrido CLI/PostgreSQL real con negativos de protocolo/autoridad/timeout/cierre y controles de compatibilidad.
+- [x] H24B-07 Regresión preservando33módulos/IDs, tipos/arquitectura/composición/revisiones, recibos/documentos/conocimiento y commit/push main. Diez gates globales abiertos.
+
+- [x] H24B-08 Reproducir/fijar incertidumbre física Root a través de reintento; denegar retiro tras fallo de close, preservar RPC puro joinable, tres regresiones nuevas y repetir recibos exactos626/native4/tipos/arquitectura.
+
+
+**2026-11-04 · H24b validado como componente interno opt-in.** Root CLI, publisher y transporte privado autenticado conectados a proceso financiado y activación en dos fases. Emisor único sobre su conexión original; provisión externa para subject vivo, gate de reentrada y registros/cargos conservados. 626PASS/10advertencias/39módulos,572IDs previos+54nuevos;3recorridos Root/PG reales. Tipos467, arquitectura5/0,14Python/8fuentes archivo-exactos y PostgreSQL0/0/0. Sin nuevo techo agregado fijo. El primer diagnóstico2fallos/2pases fue un defecto del arnés de préstamo SQL y se conserva fallido. No acepta autoridad productiva/API, shared, custodia, modelos, M1/M2/M3, SDK/UI restante ni los diez gates originales. [Validación](validation-t014-root-control-deployment.json), [composición](composition-t014-root-control-deployment.md).

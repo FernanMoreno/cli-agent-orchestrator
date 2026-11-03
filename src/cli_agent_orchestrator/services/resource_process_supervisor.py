@@ -32,6 +32,14 @@ from cli_agent_orchestrator.models.resource_generation import (
     _issue_process_exit_observation,
     is_process_exit_observation,
 )
+from cli_agent_orchestrator.models.root_control_protocol import (
+    ROOT_CONTROL_ERROR_CODE,
+    ROOT_CONTROL_FD_ENV,
+    RootControlReply,
+    RootControlRequest,
+    decode_root_control_reply,
+    encode_root_control_request,
+)
 from cli_agent_orchestrator.models.sql_child_subject import (
     VerifiedChildSqlSubject,
     _approve_verified_child_sql_subject,
@@ -46,6 +54,7 @@ from cli_agent_orchestrator.models.sql_process_origin import (
 )
 from cli_agent_orchestrator.models.sql_startup_permission import (
     SQL_BROKER_FD_ENV,
+    SQL_ROOT_GENESIS_ENV,
     SQL_STARTUP_PERMISSION_ENV,
     SQL_STARTUP_PERMISSION_VERSION,
     SqlBrokerIdle,
@@ -58,10 +67,21 @@ from cli_agent_orchestrator.models.sql_startup_permission import (
     sql_startup_binding_sha256,
     sql_startup_destination_sha256,
 )
+from cli_agent_orchestrator.services.root_control_transport import (
+    RootControlChannelEOF,
+    RootControlTransportUnavailable,
+)
+from cli_agent_orchestrator.services.root_control_transport import (
+    _receive_frame as _receive_root_control_frame,
+)
+from cli_agent_orchestrator.services.root_control_transport import (
+    _register_root_socket_owner,
+)
 from cli_agent_orchestrator.utils.process_sql_origin import (
     _deny_sql_startup_permission,
     _install_sql_broker,
     _install_sql_startup_permission,
+    _recording_task,
     current_sql_application_name,
 )
 
@@ -660,6 +680,21 @@ class ResourceProcessSupervisor:
     _store: str
     _target_digest: str
     _channel: socket.socket
+    _root_channel: socket.socket | None
+    _root_control_enabled: bool
+    _root_state: Literal[
+        "disabled",
+        "await_activation",
+        "await_ready",
+        "active",
+        "stopping",
+        "failed",
+        "closed",
+    ]
+    _root_sequence: int
+    _root_activation_attempted: bool
+    _root_close_uncertain: bool
+    _root_owner_task: object | None
     _process: subprocess.Popen[bytes]
 
     def __init__(self):
@@ -684,6 +719,7 @@ class ResourceProcessSupervisor:
         env: Mapping[str, str] | None = None,
         first_sql_grant: bool = False,
         sql_broker: bool = False,
+        root_control_channel: bool = False,
     ) -> ResourceProcessSupervisor:
         if (
             isinstance(argv, (str, bytes))
@@ -699,9 +735,10 @@ class ResourceProcessSupervisor:
         if (
             type(first_sql_grant) is not bool
             or type(sql_broker) is not bool
+            or type(root_control_channel) is not bool
             or (sql_broker and not first_sql_grant)
         ):
-            raise ValueError("SQL startup and broker modes must be explicit")
+            raise ValueError("process startup modes must be explicit")
         environment = dict(os.environ if env is None else env)
         if SQL_STARTUP_PERMISSION_ENV in environment or SQL_BROKER_FD_ENV in environment:
             raise ResourceProcessUnproven(
@@ -715,6 +752,12 @@ class ResourceProcessSupervisor:
         environment.pop("PGAPPNAME", None)
         if BINDING_FD_ENV in environment:
             raise ResourceProcessUnproven("resource process cannot inherit another supervisor")
+        if ROOT_CONTROL_FD_ENV in environment:
+            raise ResourceProcessUnproven("resource process cannot inherit another Root channel")
+        if root_control_channel and (
+            environment.get(SQL_ROOT_GENESIS_ENV) != "1" or first_sql_grant or sql_broker
+        ):
+            raise ResourceProcessUnproven("Root control requires identity-only Root genesis mode")
         if not hasattr(os, "pidfd_open") or not hasattr(socket, "SCM_CREDENTIALS"):
             raise ResourceProcessUnproven("resource process kernel support is unavailable")
         value = object.__new__(cls)
@@ -743,9 +786,17 @@ class ResourceProcessSupervisor:
         value._subject_token = None
         value._store = store
         value._target_digest = expected_target_identity_sha256
+        value._root_control_enabled = root_control_channel
+        value._root_channel = None
+        value._root_state = "await_activation" if root_control_channel else "disabled"
+        value._root_sequence = 1
+        value._root_activation_attempted = False
+        value._root_close_uncertain = False
+        value._root_owner_task = _recording_task() if root_control_channel else None
         parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         value._channel = parent
         broker_child = None
+        root_child = None
         try:
             inherited = [child.fileno()]
             if sql_broker:
@@ -755,6 +806,14 @@ class ResourceProcessSupervisor:
                 value._broker_channel.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
                 environment[SQL_BROKER_FD_ENV] = str(broker_child.fileno())
                 inherited.append(broker_child.fileno())
+            if root_control_channel:
+                value._root_channel, root_child = socket.socketpair(
+                    socket.AF_UNIX, socket.SOCK_SEQPACKET
+                )
+                value._root_channel.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
+                environment[ROOT_CONTROL_FD_ENV] = str(root_child.fileno())
+                inherited.append(root_child.fileno())
+                _register_root_socket_owner(value)
             parent.setsockopt(socket.SOL_SOCKET, socket.SO_PASSCRED, 1)
             environment[BINDING_FD_ENV] = str(child.fileno())
             value._process = subprocess.Popen(
@@ -764,6 +823,8 @@ class ResourceProcessSupervisor:
             parent.close()
             if value._broker_channel is not None:
                 value._broker_channel.close()
+            if value._root_channel is not None:
+                value._root_channel.close()
             # Losing the Popen handle does NOT establish no-start or cleanup.
             _add_failure_note(
                 error, "Child start is unobserved; no resource exit proof was produced."
@@ -773,6 +834,8 @@ class ResourceProcessSupervisor:
             child.close()
             if broker_child is not None:
                 broker_child.close()
+            if root_child is not None:
+                root_child.close()
         try:
             value._pidfd = os.pidfd_open(value._process.pid, 0)
             os.set_inheritable(value._pidfd, False)
@@ -794,11 +857,15 @@ class ResourceProcessSupervisor:
             parent.close()
             if value._broker_channel is not None:
                 value._broker_channel.close()
+            if value._root_channel is not None:
+                value._root_channel.close()
         except BaseException as error:
             value._binding_failed = True
             parent.close()
             if value._broker_channel is not None:
                 value._broker_channel.close()
+            if value._root_channel is not None:
+                value._root_channel.close()
             # Keep the first exception and the exact physical child owner.
             setattr(error, "resource_process_owner", value)
             _add_failure_note(error, "Resource child still requires its original owner's join.")
@@ -808,6 +875,194 @@ class ResourceProcessSupervisor:
     def _check_owner(self) -> None:
         if self._owner_pid != os.getpid() or self._owner_thread is not threading.current_thread():
             raise PermissionError("resource process belongs to another owner")
+
+    def _check_root_context(self) -> None:
+        self._check_owner()
+        if (
+            getattr(self, "_root_control_enabled", False)
+            and getattr(self, "_root_owner_task", None) is not _recording_task()
+        ):
+            raise PermissionError("Root control belongs to another async task")
+
+    def _validate_root_control(
+        self,
+        *,
+        live: bool = True,
+        snapshot: tuple[object, ...] | None = None,
+        sequence: int | None = None,
+    ) -> None:
+        self._check_root_context()
+        channel = self._root_channel
+        identity = self._identity
+        binding = self._binding
+        if (
+            not getattr(self, "_root_control_enabled", False)
+            or channel is None
+            or channel.fileno() < 0
+            or self._root_state in {"disabled", "failed", "closed"}
+            or self._closed
+            or self._binding_failed
+            or binding is None
+            or identity is None
+            or self._pidfd is None
+            or self._process.pid != binding.process_pid
+            or self._sql_application_name is None
+            or not is_sql_process_application_name(self._sql_application_name)
+            or (live and _exit_ready(self._pidfd) is not False)
+        ):
+            raise ResourceProcessUnproven("Root control process is unavailable")
+        if snapshot is not None:
+            process, pidfd, expected_binding, expected_identity, label, expected_channel = snapshot
+            if (
+                self._process is not process
+                or self._pidfd != pidfd
+                or binding is not expected_binding
+                or identity is not expected_identity
+                or self._sql_application_name != label
+                or channel is not expected_channel
+                or self._root_sequence != sequence
+                or self._root_state != "active"
+            ):
+                raise ResourceProcessUnproven("Root stop context changed")
+        if live:
+            current = _identity(self._process.pid)
+            if current != identity or not _matches(binding, current):
+                raise ResourceProcessUnproven("Root control process identity changed")
+
+    def _root_exchange(self, request: RootControlRequest, *, timeout_s: float) -> RootControlReply:
+        self._check_root_context()
+        channel = self._root_channel
+        if channel is None:
+            raise ResourceProcessUnproven("Root control channel is unavailable")
+        deadline = time.monotonic() + timeout_s
+        payload = encode_root_control_request(request)
+        self._validate_root_control()
+        identity = self._identity
+        if identity is None:
+            raise ResourceProcessUnproven("Root control process identity is unavailable")
+        expected_uid = identity.uid
+        snapshot = (
+            self._process,
+            self._pidfd,
+            self._binding,
+            identity,
+            self._sql_application_name,
+            channel,
+        )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(self._process.args, timeout_s)
+        channel.settimeout(remaining)
+        sent = channel.send(payload)
+        if sent != len(payload):
+            raise ResourceProcessUnproven("Root control request was not sent")
+        if request.type == "stop":
+            self._validate_root_control(live=False, snapshot=snapshot, sequence=request.sequence)
+        else:
+            self._validate_root_control()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(self._process.args, timeout_s)
+        try:
+            raw, credentials = _receive_root_control_frame(channel, timeout_s=remaining)
+        except socket.timeout as error:
+            raise subprocess.TimeoutExpired(self._process.args, timeout_s) from error
+        except (RootControlChannelEOF, RootControlTransportUnavailable) as error:
+            raise ResourceProcessUnproven("Root control reply is unavailable") from error
+        if credentials[0] != self._process.pid or credentials[1] != expected_uid:
+            raise ResourceProcessUnproven("Root control reply sender is unproven")
+        reply = decode_root_control_reply(raw)
+        if reply.sequence != request.sequence:
+            raise ResourceProcessUnproven("Root control reply sequence differs")
+        if request.type == "stop":
+            self._validate_root_control(live=False, snapshot=snapshot, sequence=request.sequence)
+        else:
+            self._validate_root_control()
+        if reply.type == "error" and reply.code == ROOT_CONTROL_ERROR_CODE:
+            raise ResourceProcessUnproven("Root control operation failed")
+        return reply
+
+    def _fail_root_control(self, primary: BaseException | None = None) -> None:
+        self._root_state = "failed"
+        channel = self._root_channel
+        if channel is None:
+            return
+        try:
+            channel.close()
+            if channel.fileno() != -1:
+                raise ResourceProcessUnproven("Root control channel close is unproven")
+        except BaseException as error:
+            self._root_close_uncertain = True
+            if primary is None:
+                raise ResourceProcessUnproven("Root control channel close is uncertain") from error
+            _add_failure_note(primary, "Root control channel close remains uncertain.")
+
+    def close_root_control(self) -> None:
+        """Close only the private protocol endpoint; retain process ownership."""
+        self._check_root_context()
+        if not getattr(self, "_root_control_enabled", False):
+            return
+        self._fail_root_control()
+        channel = self._root_channel
+        if channel is not None and channel.fileno() != -1:
+            self._root_close_uncertain = True
+            raise ResourceProcessUnproven("Root control channel close is unproven")
+
+    def root_activate(self, packet: bytes, *, timeout_s: float = 30) -> None:
+        self._check_root_context()
+        timeout = _timeout(timeout_s)
+        assert timeout is not None
+        request = RootControlRequest(0, "activation", packet)
+        try:
+            self._validate_root_control()
+            if self._root_state != "await_activation" or self._root_activation_attempted:
+                raise ResourceProcessUnproven("Root activation is single use")
+            self._root_activation_attempted = True
+            self._root_state = "await_ready"
+            reply = self._root_exchange(request, timeout_s=timeout)
+            if reply.type != "ready":
+                raise ResourceProcessUnproven("Root activation acknowledgement is invalid")
+            self._root_sequence = 1
+            self._root_state = "active"
+        except BaseException as error:
+            self._fail_root_control(error)
+            raise
+
+    def root_refresh(self, *, timeout_s: float = 30) -> str:
+        self._check_root_context()
+        timeout = _timeout(timeout_s)
+        assert timeout is not None
+        try:
+            self._validate_root_control()
+            if self._root_state != "active":
+                raise ResourceProcessUnproven("Root control is not active")
+            request = RootControlRequest(self._root_sequence, "refresh")
+            reply = self._root_exchange(request, timeout_s=timeout)
+            if reply.type != "refresh" or reply.reason is None:
+                raise ResourceProcessUnproven("Root refresh acknowledgement is invalid")
+            self._root_sequence += 1
+            return reply.reason
+        except BaseException as error:
+            self._fail_root_control(error)
+            raise
+
+    def root_stop(self, *, timeout_s: float = 30) -> None:
+        self._check_root_context()
+        timeout = _timeout(timeout_s)
+        assert timeout is not None
+        try:
+            self._validate_root_control()
+            if self._root_state != "active":
+                raise ResourceProcessUnproven("Root control is not active")
+            request = RootControlRequest(self._root_sequence, "stop")
+            reply = self._root_exchange(request, timeout_s=timeout)
+            if reply.type != "stopping":
+                raise ResourceProcessUnproven("Root stop acknowledgement is invalid")
+            self._root_sequence += 1
+            self._root_state = "stopping"
+        except BaseException as error:
+            self._fail_root_control(error)
+            raise
 
     @property
     def observation(self) -> ProcessExitObservation | None:
@@ -1494,6 +1749,8 @@ class ResourceProcessSupervisor:
         self._check_owner()
         if self._closed:
             return
+        if getattr(self, "_root_control_enabled", False):
+            self.close_root_control()
         if not self._exited:
             try:
                 self.wait(timeout_s=0)

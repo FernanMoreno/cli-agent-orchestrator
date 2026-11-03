@@ -1,5 +1,11 @@
 # Claude Code: análisis y pendientes
 
+**2026-11-04 · T014.R.H2.4b: Root CLI/transporte y composición interna validados opt-in.**
+
+Publisher antes de SQL, canal privado autenticado, subject del padre y activación en dos fases sobre la conexión original. Emisor único, controles no reentrantes, registro poscommit/handle retenidos y retiro de CPU/RAM solo tras salida/cierre positivos; ACK no devuelve créditos SQL. Sin nuevo máximo fijo de agentes/entregas.
+
+**626 pruebas aprobadas**, cero fallos, errores u omisiones y 10 advertencias en 39 módulos. Conserva los 572 casos previos y añade 54; incluye tres recorridos Root/PG reales. Tipos verificados en 467 archivos, arquitectura 5/0 y 14 Python (8 fuentes) idénticos al archivo ejecutado. PostgreSQL limpio. Un fallo de cierre Root conserva la deuda aunque un reintento cierre: tres regresiones nuevas cubren esa corrección. El primer diagnóstico2fallos/2pases fue del arnés SQL y se conserva fallido. Cómputo padre sintético y operador de fixture: autoridad productiva/API central, shared, custodia, M1/M2/M3, modelos, SDK/UI restante y diez gates originales siguen pendientes. [Validación](../specs/041-resource-aware-network-admission/validation-t014-root-control-deployment.json), [composición](../specs/041-resource-aware-network-admission/composition-t014-root-control-deployment.md).
+
 **2026-11-03 · T014.R.H2.4a: proceso financiado validado como primitiva interna.**
 
 La reserva RAM/CPU del padre precede a Popen; conserva el cargo hasta binding, salida y cierre positivos del hijo exacto. PID/hilo/tarea, sin supervisor mutable expuesto, incertidumbre terminal y cleanup sin refund; sin otro ledger ni máximo fijo nuevo. **572 pruebas aprobadas**, cero fallos/errores/omisiones, 10 advertencias en 33 módulos; 30 casos nuevos. Incluye dos recorridos Linux reales, tipos finales de 463 fuentes, arquitectura 5/0 y PostgreSQL limpio. Las cantidades de cómputo del padre son sintéticas; no acredita concurrencia de modelos. H24b Root CLI/transporte, despliegue productivo/API central, shared, custodia, M1/M2/M3, integración SDK/UI restante y diez gates originales siguen pendientes. [Validación](../specs/041-resource-aware-network-admission/validation-t014-funded-process.json), [composición](../specs/041-resource-aware-network-admission/composition-t014-funded-process.md).

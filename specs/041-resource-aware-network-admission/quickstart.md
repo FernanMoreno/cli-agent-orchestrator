@@ -173,3 +173,18 @@ La primera línea stdout es `{"type":"subject","value":...}`. El emisor externo 
 Una CommandReservation existente, positiva y del ledger padre puede invocar _launch_process con argv, store/target/env explícitos y clock del mismo dominio. El hijo debe publicar el binding mediante el publisher de supervisor existente. receive_binding autentica; join con timeout finito espera y solo retira tras exit/close positivos. join sin timeout hace poll. El propietario permanece en el mismo PID/hilo/tarea: no mover solo join a to_thread ni transferir la reserva al hijo.
 
 El handle nativo no se expone. has_native_owner es solo presencia, no prueba de salida. send_signal actúa sobre el hijo exacto; cleanup espera/cierra sin refund y hace terminal la incertidumbre aunque después cierre. Su default también es poll; elegir timeout finito al esperar. Sin pidfd no hay fallback de señal por PID. El arranque sin handle y el binding/exit/cierre inciertos conservan deuda. No usar estas pruebas como retiro SQL/descendientes, custodia o capacidad de modelos. El Root CLI y el productor de despliegue siguen sin conectar esta primitiva.
+
+### H24b — composición privada en dos fases (validado opt-in)
+
+El llamante debe aportar un principal administrador verificado, su conexión de control ya financiada y una CommandReservation pendiente con CPU/RAM positivas. RootControlDeployment.launch verifica estos requisitos antes del arranque, solicita un socket Root separado y autentica el binding del hijo. Su subject describe ese mismo proceso; no concede autoridad ni provisiona recursos.
+
+Esta composición interna recibe argv/env de código de despliegue confiable. El binding acredita la identidad del proceso y su vista de recursos, no la identidad del ejecutable. No exponer esos parámetros directamente mediante una API o formulario externo sin definir y validar antes ese contrato.
+
+Después del launch, el operador provisiona explícitamente envelope, cuotas, créditos e intención para el subject vivo. activate usa la conexión original y el emisor existente una sola vez; conserva el registro poscommit y el handle aunque falle la entrega. La clave privada permanece en el emisor. El descriptor privado y el selector de entorno no autorizan SQL.
+
+El CLI publica el binding antes de esperar activación y no usa stdin/stdout para el protocolo privado. La espera idle puede continuar mientras viva el padre; cada operación tiene su propio deadline. refresh y stop reciben respuestas tipadas con secuencia y credenciales del proceso. Un ACK de stop no demuestra salida: join debe acreditar el hijo exacto y el cierre de todos los handles antes de retirar únicamente CPU/RAM del padre. cleanup conserva el cargo y cierra primero el socket para entregar EOF. Ninguna de estas operaciones devuelve créditos SQL ni acredita custodia de descendientes.
+
+Este corte permanece opt-in. La instalación productiva de autoridad, la conexión automática con la API central, shared, custodia, M1/M2/M3 y modelos reales requieren sus gates independientes. El recorrido real y la regresión están documentados en [validación H24b](validation-t014-root-control-deployment.json); esta guía no amplía su alcance.
+
+
+Si el cierre del descriptor Root falla o no se demuestra, conservar el mismo handle y cargo; cleanup puede completar el cierre, pero join no devuelve esa reserva. No reiniciar el estado para borrar la deuda. Este testigo físico es distinto del error RPC cuyo cierre sí fue confirmado.

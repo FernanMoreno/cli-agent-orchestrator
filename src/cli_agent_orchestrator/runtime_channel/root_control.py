@@ -1,8 +1,8 @@
-"""Opt-in caller process for a signed pre-SQL root control activation.
+"""Opt-in consumer for a signed pre-SQL root control activation.
 
-Protocol: the first stdout line is the exact local root subject. The caller
-then writes one canonical activation JSON line, followed by typed refresh/stop
-lines. EOF also requests stop. No key, credential or grant is created here.
+The unselected legacy mode exchanges bounded lines over stdio. A private Root
+control descriptor instead uses the authenticated endpoint and keeps protocol
+traffic off stdio. Neither mode creates a key, credential or grant.
 """
 
 from __future__ import annotations
@@ -30,15 +30,23 @@ from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
 from cli_agent_orchestrator.models.root_control_activation import (
     ROOT_CONTROL_ACTIVATION_MAX_BYTES,
 )
+from cli_agent_orchestrator.models.root_control_protocol import ROOT_CONTROL_FD_ENV
 from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
 from cli_agent_orchestrator.services.admission_settings import (
     AdmissionPolicyLoader,
     read_private_operator_policy,
 )
 from cli_agent_orchestrator.services.original_control_owner import OriginalControlUnavailable
+from cli_agent_orchestrator.services.resource_process_supervisor import publish_resource_binding
 from cli_agent_orchestrator.services.root_control_activation import (
     RootControlActivationUnavailable,
     prepare_original_control_owner,
+)
+from cli_agent_orchestrator.services.root_control_transport import (
+    RootControlChannelEOF,
+    RootControlChildEndpoint,
+    RootControlTransportUnavailable,
+    open_root_control_endpoint,
 )
 from cli_agent_orchestrator.services.root_sql_control import current_root_sql_subject
 from cli_agent_orchestrator.utils.process_sql_origin import SqlStartupPermissionUnavailable
@@ -205,7 +213,34 @@ def _arguments(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the opt-in process protocol; environment does not choose trust/policy."""
+    # open_root_control_endpoint consumes its private FD. Remember selection
+    # first so a malformed descriptor can never downgrade to stdout/stdin.
+    private_requested = ROOT_CONTROL_FD_ENV in os.environ
+    try:
+        endpoint = open_root_control_endpoint()
+    except Exception:
+        if private_requested:
+            return 2
+        raise
+    if private_requested and endpoint is None:
+        return 2
+    if endpoint is not None:
+        status = 2
+        try:
+            status = _run_private(argv, endpoint)
+        finally:
+            try:
+                endpoint.close()
+            except Exception:
+                status = 2
+        return status
+
     parsed = _arguments(argv)
+    return _run_stdio(parsed)
+
+
+def _run_stdio(parsed: argparse.Namespace) -> int:
+    """Preserve the historical opt-out stdio contract exactly."""
     try:
         trusted_keys = _read_trusted_keys(parsed.trust_file)
         bootstrap = scoped_process_bootstrap(parsed.scope)
@@ -278,6 +313,106 @@ def main(argv: Sequence[str] | None = None) -> int:
             # or alternate close path is manufactured here.
             status = 2
     return status
+
+
+def _run_private(parsed_argv: Sequence[str] | None, endpoint: RootControlChildEndpoint) -> int:
+    """Run Root over its private endpoint without emitting protocol bytes to stdio."""
+    actor = None
+    activation_received = False
+    ready = False
+    status = 2
+    try:
+        parsed = _arguments(parsed_argv)
+        trusted_keys = _read_trusted_keys(parsed.trust_file)
+        bootstrap = scoped_process_bootstrap(parsed.scope)
+        subject = current_root_sql_subject(bootstrap)
+        if not publish_resource_binding(subject.binding, first_sql_grant=False):
+            return 2
+
+        while True:
+            packet = endpoint.receive_activation(timeout_s=1.0)
+            if packet is not None:
+                activation_received = True
+                if type(packet) is not bytes or not packet:
+                    raise RootControlTransportUnavailable()
+                break
+
+        actor = asyncio.run(
+            prepare_original_control_owner(
+                packet=packet,
+                trusted_keys=trusted_keys,
+                bootstrap=bootstrap,
+                policy_loader=AdmissionPolicyLoader(
+                    source=lambda: read_private_operator_policy(parsed.policy_file)
+                ),
+                scope_id=parsed.scope,
+            )
+        )
+
+        with _stop_signals():
+            actor.start()
+            asyncio.run(actor.wait_ready())
+            endpoint.send_ready()
+            ready = True
+            status = 0
+            should_ack_stop = False
+            while True:
+                try:
+                    command = endpoint.receive_command(timeout_s=1.0)
+                except RootControlChannelEOF:
+                    # EOF is a stop request; the endpoint is already unusable.
+                    break
+                if command is None:
+                    continue
+                if command == "stop":
+                    should_ack_stop = True
+                    break
+                if command != "refresh":
+                    raise RootControlTransportUnavailable()
+                result = asyncio.run(actor.refresh())
+                endpoint.send_refresh(result.reason)
+            if should_ack_stop:
+                endpoint.send_stopping()
+    except RootControlChannelEOF:
+        # EOF before ready is an incomplete startup; after ready it is a normal
+        # parent-requested stop. In either case no reply is sent on the dead fd.
+        status = 0 if ready else 2
+    except KeyboardInterrupt:
+        if activation_received:
+            _best_effort_private_error(endpoint)
+        status = 2
+    except (
+        OSError,
+        ValueError,
+        ConfigurationError,
+        RootControlActivationUnavailable,
+        SqlStartupPermissionUnavailable,
+        OriginalControlUnavailable,
+        RootControlTransportUnavailable,
+    ):
+        if activation_received:
+            _best_effort_private_error(endpoint)
+        status = 2
+    except Exception:
+        if activation_received:
+            _best_effort_private_error(endpoint)
+        status = 2
+    finally:
+        if actor is not None:
+            try:
+                asyncio.run(actor.aclose(timeout=parsed.close_timeout))
+            except (Exception, asyncio.CancelledError):
+                # Keep the actor and its exact started reservation until process
+                # exit; neither a failed close nor this private ACK proves join.
+                status = 2
+    return status
+
+
+def _best_effort_private_error(endpoint: RootControlChildEndpoint) -> None:
+    try:
+        endpoint.send_error()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

@@ -1,0 +1,187 @@
+{
+  "schema": "caos.spec041.root-control-deployment.validation.v1",
+  "date": "2026-11-04",
+  "status": "accepted_opt_in_component",
+  "task": "T014.R.H2.4b",
+  "behavior": [
+    "separate authenticated private Root transport",
+    "publisher before first SQL",
+    "parent authenticated immutable subject",
+    "two-phase internally funded deployment with external operator provisioning",
+    "one issuer attempt with postcommit record and native handle retention",
+    "nonreentrant issuer and child controls",
+    "stop acknowledgement separated from physical exit proof",
+    "parent compute retirement only after authentic exit and all handle closure"
+  ],
+  "tests": {
+    "passed": 626,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 10,
+    "modules": 39,
+    "seconds": 467.156,
+    "available_mib": 10505,
+    "baseline_relevant_passed": 572,
+    "new_distinct_cases": 54
+  },
+  "new_cases": {
+    "unit_and_local_ipc": 50,
+    "new_native_harness_cases": 4,
+    "actual_root_cli_journeys": 3,
+    "scenarios": [
+      "healthy",
+      "wrong_key",
+      "eof_before_activation"
+    ]
+  },
+  "preservation": {
+    "previous_selected_cases": 572,
+    "previous_selected_modules": 33,
+    "previous_tests_unchanged_from_head": true,
+    "source_archive_matches": 14,
+    "production_archive_matches": 8,
+    "candidate_archive_sha256": "b65a686527de75cc0db6929abb215e9fa808d8346a02adb9251a43e863e2207f",
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "foreign_graphify_files_preserved": 12,
+    "sql_schema_versions": 5,
+    "resource_schema_versions": 7
+  },
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/models/sql_root_subject.py",
+      "sha256": "762879aa5de81560f1161ca9c25fca7aa3a90c2aaeb25ab573fa2235348fdc10"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/root_control_protocol.py",
+      "sha256": "cca0c115cf313dd40e3637c3546b2a232405844cd45e06788c8ce79698638f20"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/root_control_transport.py",
+      "sha256": "2667cb37ad27731400c5b3a67b2bfeee9ae60cbc14bb3aa4d2bf4c4ef8fa6aeb"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/resource_process_supervisor.py",
+      "sha256": "28a3cd786dd1da7f4d9b6367c2e33af6f610910ba6d55a3bff57f4c6f009c2c9"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+      "sha256": "e4b5b9dac4a6b8daa012a09c4ef921d776e08d25f04280e6e77ae66bb9bb5235"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+      "sha256": "813f313bf3d262d0437b12bb708a9339cf01c298037f8869ec9027b6658449e5"
+    },
+    {
+      "path": "test/services/test_root_control_protocol.py",
+      "sha256": "c5a3cc0af8934d11942ac9606fc058f9f6c3fdf294b720f1c9872b2a29e9d142"
+    },
+    {
+      "path": "test/services/test_root_control_transport.py",
+      "sha256": "d3f61384c6c23b431b8b3c9a59e5da1fcd71fe49882e42c4d8a83299a5f5f4e5"
+    },
+    {
+      "path": "test/services/test_admission_root_control.py",
+      "sha256": "f83731eaec6a19e30fb931436641a6e1ec69cd68903748c615745fae9f3bf868"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/root_control.py",
+      "sha256": "201609e7a44fa517937dbaa4bcbd9ccd60102d7328a5dfc063d11f9231d4d801"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/root_control_deployment.py",
+      "sha256": "0b9b91299d9b88aa68161c691d31c97d25bcf60a0415068fd5c4add6af4817ee"
+    },
+    {
+      "path": "test/runtime_channel/test_root_control_private.py",
+      "sha256": "c2ab017eb4f6b05f15fc5ac9a63b7f906940aee595eab8b6c8096477a01928fe"
+    },
+    {
+      "path": "test/services/test_root_control_deployment.py",
+      "sha256": "ae17d3773a278e1ee2d1689eae66e2ecfcb1ffd5cb2c6475b4ff68b28e8aaa85"
+    },
+    {
+      "path": "test/postgres/test_root_control_deployment.py",
+      "sha256": "4af80ffb8d823a574d4b9032feb51472609a901809c5312dce33d62b3a6d0496"
+    }
+  ],
+  "typing": {
+    "cold": true,
+    "source_files": 467,
+    "configuration_unchanged": true,
+    "new_suppressions": false
+  },
+  "architecture": {
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "server_version_prefix": "18.6",
+    "service_profile": "cao-spec021-local-postgres-v3",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "reviews": {
+    "ecc": [
+      "architecture",
+      "python_harness",
+      "security",
+      "evidence_inventory"
+    ],
+    "claude_product_job": "3c2fb12a21d0445ab5cc749afc7b4f35",
+    "claude_harness_job": "59f96d6c3fb14365801c85217deddebf",
+    "claude_physical_close_defect_job": "f86e8bd66512426680d7201732f94ef1",
+    "mode": "read",
+    "native_checks_owned_by": "Codex lead"
+  },
+  "late_physical_fix": {
+    "previous_candidate_passed": 623,
+    "new_controlled_close_failures": 3,
+    "red_failures": 3,
+    "sticky_root_descriptor_uncertainty": true,
+    "ordinary_rpc_failure_still_joinable": true,
+    "new_tests": 3
+  },
+  "prior_diagnostic": {
+    "phase": "root-private-native",
+    "passed": 2,
+    "failed": 2,
+    "accepted": false,
+    "cause": "harness attempted a nested storage loan while issuer held its original funded connection",
+    "fix": "separately compute-and-storage-funded operator worker; final aggregate read on original funded connection",
+    "limits_or_coverage_lowered": false
+  },
+  "limits": {
+    "parent_compute_quantities_synthetic": true,
+    "operator_setup_is_fixture": true,
+    "trusted_internal_argv_and_env": true,
+    "executable_identity_proved": false,
+    "productive_operator_authority_installed": false,
+    "central_api_integrated": false,
+    "shared_activation": false,
+    "custody": false,
+    "model_concurrency_accepted": false,
+    "global_acceptance": false,
+    "original_gates_still_open": [
+      "T013",
+      "T014",
+      "T015",
+      "T016",
+      "T018",
+      "T019",
+      "T020",
+      "T021",
+      "T022",
+      "T023"
+    ]
+  },
+  "private_receipts": "/home/felni/.cache/caos-root-transport-20261103/physical-close",
+  "commit_proof": "private post-commit receipt; validation binds executed source bytes rather than a future commit identity",
+  "run_date_utc": "2026-11-03",
+  "recorded_timezone": "Europe/Madrid"
+}

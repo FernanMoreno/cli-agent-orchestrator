@@ -195,3 +195,14 @@ Paquete firmado: certificado SQL + envelope completo/revisión + dos huellas com
 
 
 H2.4a: propietario CommandProcess y error de lanzamiento incierto retienen reserva, contexto original y supervisor exacto opcional. La reserva registra handoff exclusivo para impedir finish directo. Estado pendiente puede cancelarse antes del intento; iniciado conserva compromiso hasta observación exit auténtica y cierre. Estado incierto no tiene retry/refund automático; no existe fila/esquema SQL nuevo.
+
+
+H24b: RootSqlSubject puro con alias de servicio compatible; frames Root inmutables de versión/secuencia/tipo y payload acotado. Endpoint Root privado con contexto y estado protocolar (await_activation/await_ready/active/stopping/failed/closed), separado del binding. RootControlDeployment retiene CommandProcess seguro, subject autenticado y estado de intento/record poscommit; expone dos fases para autoridad ya provisionada. No filas, migraciones ni grants nuevos.
+
+
+**2026-11-04 · H24b validado como componente interno opt-in.** Root CLI, publisher y transporte privado autenticado conectados a proceso financiado y activación en dos fases. Emisor único sobre su conexión original; provisión externa para subject vivo, gate de reentrada y registros/cargos conservados. 626PASS/10advertencias/39módulos,572IDs previos+54nuevos;3recorridos Root/PG reales. Tipos467, arquitectura5/0,14Python/8fuentes archivo-exactos y PostgreSQL0/0/0. Sin nuevo techo agregado fijo. El primer diagnóstico2fallos/2pases fue un defecto del arnés de préstamo SQL y se conserva fallido. No acepta autoridad productiva/API, shared, custodia, modelos, M1/M2/M3, SDK/UI restante ni los diez gates originales. [Validación](validation-t014-root-control-deployment.json), [composición](composition-t014-root-control-deployment.md).
+
+
+### Testigo físico de cierre Root
+
+_root_close_uncertain pertenece al supervisor exacto y solo cambia de False a True. Un fallo/poscondición no demostrada de cierre Root lo conserva incluso si se absorbe el error primario o un reintento cierra. CommandProcess lo incorpora como incertidumbre terminal en aborto y retiro. No forma parte del subject ni concede autoridad; no se reinicia al cerrar ni permite refund por ACK/cleanup. El error RPC con cierre confirmado conserva su camino de join.

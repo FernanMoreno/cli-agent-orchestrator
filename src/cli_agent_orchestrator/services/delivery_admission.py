@@ -38,6 +38,7 @@ from cli_agent_orchestrator.models.root_control_activation import (
     is_verified_root_control_activation,
 )
 from cli_agent_orchestrator.models.sql_process_origin import is_sql_process_application_name
+from cli_agent_orchestrator.models.sql_root_subject import RootSqlSubject
 from cli_agent_orchestrator.services.admission_policy import (
     AdmissionDecision,
     AdmissionPolicy,
@@ -351,12 +352,15 @@ class CommandReservation:
         expected_store_id: str,
         expected_target_identity_sha256: str,
         env: Mapping[str, str] | None = None,
+        root_control_channel: bool = False,
         clock: Callable[[], float],
     ) -> "CommandProcess | None":
         """Fund and transfer this command token to one exact owned child."""
         owner = self._owner
         if owner._pid != os.getpid():
             return None
+        if type(root_control_channel) is not bool:
+            raise ValueError("command process Root control selector must be boolean")
         if not callable(clock):
             raise ValueError("command process requires an internal clock")
         if isinstance(argv, (str, bytes)) or not isinstance(argv, Sequence):
@@ -407,14 +411,25 @@ class CommandReservation:
             self._mark_started_locked(threading.current_thread(), _current_async_task())
         supervisor: ResourceProcessSupervisor | None = None
         try:
-            supervisor = ResourceProcessSupervisor.launch(
-                arguments,
-                expected_store_id=store_id,
-                expected_target_identity_sha256=expected_target_identity_sha256,
-                env=environment,
-                first_sql_grant=False,
-                sql_broker=False,
-            )
+            if root_control_channel:
+                supervisor = ResourceProcessSupervisor.launch(
+                    arguments,
+                    expected_store_id=store_id,
+                    expected_target_identity_sha256=expected_target_identity_sha256,
+                    env=environment,
+                    first_sql_grant=False,
+                    sql_broker=False,
+                    root_control_channel=True,
+                )
+            else:
+                supervisor = ResourceProcessSupervisor.launch(
+                    arguments,
+                    expected_store_id=store_id,
+                    expected_target_identity_sha256=expected_target_identity_sha256,
+                    env=environment,
+                    first_sql_grant=False,
+                    sql_broker=False,
+                )
             if type(supervisor) is not ResourceProcessSupervisor:
                 raise TypeError("command process launch returned an unowned supervisor")
             worker._attach_supervisor(supervisor)
@@ -534,6 +549,7 @@ class CommandProcess:
         "_observation",
         "_operation_guard",
         "_terminal_uncertainty",
+        "_root_activation_attempted",
         "_factory",
     )
     _reservation: CommandReservation
@@ -550,6 +566,7 @@ class CommandProcess:
     _observation: ProcessExitObservation | None
     _operation_guard: threading.Lock
     _terminal_uncertainty: bool
+    _root_activation_attempted: bool
     _factory: object
 
     def __init__(self, *, _factory: object) -> None:
@@ -579,6 +596,7 @@ class CommandProcess:
         value._observation = None
         value._operation_guard = threading.Lock()
         value._terminal_uncertainty = False
+        value._root_activation_attempted = False
         value._factory = _COMMAND_PROCESS_FACTORY
         return value
 
@@ -632,6 +650,163 @@ class CommandProcess:
         """Whether this exact handle retains its supervisor; no process-state proof."""
         self._check_owner()
         return self._supervisor is not None
+
+    def _root_supervisor(self) -> ResourceProcessSupervisor:
+        supervisor = self._supervisor
+        if (
+            supervisor is None
+            or not self._supervisor_context_valid
+            or supervisor._owner_pid != self._pid
+            or supervisor._owner_thread is not self._thread
+            or not getattr(supervisor, "_root_control_enabled", False)
+            or supervisor._root_channel is None
+            or supervisor._root_channel.fileno() < 0
+            or self._terminal_uncertainty
+            or self._binding is None
+            or self._sql_application_name is None
+        ):
+            raise ResourceProcessUnproven("command Root control is unavailable")
+        return supervisor
+
+    def root_subject(self) -> RootSqlSubject:
+        """Return the parent-authenticated child subject as descriptive data."""
+        self._check_owner()
+        if not self._registered():
+            raise StorageAdmissionUnavailable()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        try:
+            supervisor = self._root_supervisor()
+            supervisor._validate_root_control()
+            binding = self._binding
+            label = self._sql_application_name
+            identity = supervisor._identity
+            if binding is None or label is None or identity is None:
+                raise ResourceProcessUnproven("command Root subject is unavailable")
+            subject = RootSqlSubject(
+                binding,
+                label,
+                identity.boot_id,
+                identity.ticks,
+                identity.pid_ns,
+            )
+            self._check_owner()
+            if (
+                not self._registered()
+                or self._binding is not binding
+                or self._sql_application_name != label
+                or supervisor._identity is not identity
+            ):
+                raise ResourceProcessUnproven("command Root subject changed")
+            return subject
+        finally:
+            self._operation_guard.release()
+
+    def _retain_root_close_uncertainty(self, supervisor: ResourceProcessSupervisor) -> None:
+        if getattr(supervisor, "_root_close_uncertain", False) is not False:
+            self._terminal_uncertainty = True
+
+    def _abort_root_after_failure(
+        self, supervisor: ResourceProcessSupervisor, primary: BaseException
+    ) -> None:
+        self._retain_root_close_uncertainty(supervisor)
+        try:
+            supervisor.close_root_control()
+        except BaseException as error:
+            self._terminal_uncertainty = True
+            add_note = getattr(primary, "add_note", None)
+            if callable(add_note):
+                add_note("Root control channel close remains uncertain.")
+            _ = error
+        finally:
+            self._retain_root_close_uncertainty(supervisor)
+
+    def root_activate(self, packet: bytes, timeout_s: float = 30) -> None:
+        self._check_owner()
+        if type(packet) is not bytes or not packet:
+            raise ValueError("command Root activation packet must be bytes")
+        if not _valid_command_timeout(timeout_s):
+            raise ValueError("command Root activation timeout must be finite and nonnegative")
+        if not self._registered():
+            raise StorageAdmissionUnavailable()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        supervisor: ResourceProcessSupervisor | None = None
+        try:
+            supervisor = self._root_supervisor()
+            if self._root_activation_attempted:
+                raise ResourceProcessUnproven("command Root activation is single use")
+            self._root_activation_attempted = True
+            supervisor.root_activate(packet, timeout_s=timeout_s)
+        except BaseException as error:
+            if supervisor is not None:
+                self._abort_root_after_failure(supervisor, error)
+            raise
+        finally:
+            self._operation_guard.release()
+
+    def root_refresh(self, timeout_s: float = 30) -> str:
+        self._check_owner()
+        if not _valid_command_timeout(timeout_s):
+            raise ValueError("command Root refresh timeout must be finite and nonnegative")
+        if not self._registered():
+            raise StorageAdmissionUnavailable()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        supervisor: ResourceProcessSupervisor | None = None
+        try:
+            supervisor = self._root_supervisor()
+            return supervisor.root_refresh(timeout_s=timeout_s)
+        except BaseException as error:
+            if supervisor is not None:
+                self._abort_root_after_failure(supervisor, error)
+            raise
+        finally:
+            self._operation_guard.release()
+
+    def root_stop(self, timeout_s: float = 30) -> None:
+        self._check_owner()
+        if not _valid_command_timeout(timeout_s):
+            raise ValueError("command Root stop timeout must be finite and nonnegative")
+        if not self._registered():
+            raise StorageAdmissionUnavailable()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        supervisor: ResourceProcessSupervisor | None = None
+        try:
+            supervisor = self._root_supervisor()
+            supervisor.root_stop(timeout_s=timeout_s)
+        except BaseException as error:
+            if supervisor is not None:
+                self._abort_root_after_failure(supervisor, error)
+            raise
+        finally:
+            self._operation_guard.release()
+
+    def root_abort(self) -> None:
+        """Close/fail only Root RPC; retain the exact child and funded charge."""
+        self._check_owner()
+        if not self._operation_guard.acquire(blocking=False):
+            raise ResourceProcessUnproven("command process operation is already active")
+        try:
+            supervisor = self._supervisor
+            if supervisor is None:
+                return
+            if (
+                not self._supervisor_context_valid
+                or supervisor._owner_pid != self._pid
+                or supervisor._owner_thread is not self._thread
+            ):
+                raise ResourceProcessUnproven("command Root owner is unavailable")
+            try:
+                supervisor.close_root_control()
+            except BaseException:
+                self._terminal_uncertainty = True
+                raise
+            finally:
+                self._retain_root_close_uncertainty(supervisor)
+        finally:
+            self._operation_guard.release()
 
     def receive_binding(self, *, timeout_s: float = 30) -> ResourceBinding:
         self._check_owner()
@@ -714,6 +889,8 @@ class CommandProcess:
                 return False
             # Once native cleanup starts, normal join can never refund this token.
             self._terminal_uncertainty = True
+            if getattr(supervisor, "_root_control_enabled", False):
+                supervisor.close_root_control()
             try:
                 supervisor.wait(timeout_s=0 if timeout_s is None else timeout_s)
             except subprocess.TimeoutExpired:
@@ -722,6 +899,7 @@ class CommandProcess:
             try:
                 channel = supervisor._channel
                 broker_channel = supervisor._broker_channel
+                root_channel = getattr(supervisor, "_root_channel", None)
                 return bool(
                     supervisor._closed is True
                     and supervisor._exited is True
@@ -730,6 +908,7 @@ class CommandProcess:
                     and supervisor._owner_thread is self._thread
                     and channel.fileno() == -1
                     and (broker_channel is None or broker_channel.fileno() == -1)
+                    and (root_channel is None or root_channel.fileno() == -1)
                 )
             except BaseException:
                 self._terminal_uncertainty = True
@@ -750,6 +929,9 @@ class CommandProcess:
             binding = self._binding
             label = self._sql_application_name
             if supervisor is None or binding is None or label is None or not self._registered():
+                return False
+            self._retain_root_close_uncertainty(supervisor)
+            if self._terminal_uncertainty:
                 return False
             if (
                 not self._supervisor_context_valid
@@ -809,7 +991,12 @@ class CommandProcess:
                     and supervisor._sql_application_name == label
                     and channel.fileno() == -1
                     and (broker_channel is None or broker_channel.fileno() == -1)
+                    and (
+                        getattr(supervisor, "_root_channel", None) is None
+                        or supervisor._root_channel.fileno() == -1
+                    )
                     and supervisor.observation is verified_observation
+                    and getattr(supervisor, "_root_close_uncertain", False) is False
                 )
             except BaseException:
                 self._terminal_uncertainty = True
@@ -827,6 +1014,7 @@ class CommandProcess:
                         or not self._supervisor_context_valid
                         or self._binding is not binding
                         or self._sql_application_name != label
+                        or getattr(supervisor, "_root_close_uncertain", False) is not False
                     ):
                         self._terminal_uncertainty = True
                         return False

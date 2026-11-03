@@ -212,3 +212,13 @@ Un paquete firmado separado transporta autoridad explícita del emisor owner-fun
 ### H2.4a: elegir handoff de comando
 
 PhysicalEffectReservation está ligado a una entrega y callbacks de cierre; ChildSqlSessionCharge financia SQL. Ninguno debe reinterpretarse como la obligación RAM/CPU padre de un supervisor genérico. Se amplía la familia de handoff de CommandReservation, como CommandThread, conservando ResourceProcessSupervisor como única fuente de prueba de proceso. Su wait sin observación tras handshake fallido no se debilita para obtener un refund. Esta conservación puede dejar deuda sin vía de reconciliación: custodia sigue separada.
+
+
+### H24b: separar identidad y transporte
+
+El socket de binding actual cierra tras ACK y Popen hereda stdio. Pipes permitirían stdout corrupto/bloqueo y no ofrecen credenciales por emisor; se elige otro SOCK_SEQPACKET con datagramas limitados y derechos rechazados. SO_PEERCRED en el socketpair del padre identifica al creador, no al hijo: validar SCM_CREDENTIALS por frame. Derivar subject en el padre evita datos descriptivos redundantes. Reexportar el modelo puro conserva type(subject) de los consumidores y evita ciclo con delivery_admission.
+
+La vinculación del nuevo PID impide tener su envelope completo antes de launch. La composición debe exponer subject y esperar la provisión externa antes de activate; no inventar envelope/credits ni añadir callbacks de autoridad. La espera idle de Root es infraestructura ya cargada, no un permiso nuevo de trabajo. Un poll no consumidor puede repetirse, pero no un envío/ACK incierto. El proveedor de autoridad de una instalación y el init_db de API central siguen pendientes.
+
+
+**2026-11-04 · H24b validado como componente interno opt-in.** Root CLI, publisher y transporte privado autenticado conectados a proceso financiado y activación en dos fases. Emisor único sobre su conexión original; provisión externa para subject vivo, gate de reentrada y registros/cargos conservados. 626PASS/10advertencias/39módulos,572IDs previos+54nuevos;3recorridos Root/PG reales. Tipos467, arquitectura5/0,14Python/8fuentes archivo-exactos y PostgreSQL0/0/0. Sin nuevo techo agregado fijo. El primer diagnóstico2fallos/2pases fue un defecto del arnés de préstamo SQL y se conserva fallido. No acepta autoridad productiva/API, shared, custodia, modelos, M1/M2/M3, SDK/UI restante ni los diez gates originales. [Validación](validation-t014-root-control-deployment.json), [composición](composition-t014-root-control-deployment.md).

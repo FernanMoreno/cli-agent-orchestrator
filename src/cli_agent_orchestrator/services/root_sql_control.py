@@ -8,7 +8,6 @@ import os
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
@@ -20,6 +19,7 @@ from cli_agent_orchestrator.models.sql_root_genesis import (
     RootSqlOpeningIntent,
     SignedRootSqlOpening,
 )
+from cli_agent_orchestrator.models.sql_root_subject import RootSqlSubject
 from cli_agent_orchestrator.models.sql_startup_permission import (
     _approve_verified_sql_startup_permission,
     _expire_verified_sql_startup_permission,
@@ -43,17 +43,6 @@ from cli_agent_orchestrator.utils.process_sql_origin import (
     _recording_task,
     current_sql_application_name,
 )
-
-
-@dataclass(frozen=True)
-class RootSqlSubject:
-    """Descriptive request, never permission to open SQL or issue a certificate."""
-
-    binding: ResourceBinding
-    sql_application_name: str
-    boot_id: str
-    start_time_ticks: int
-    pid_namespace: tuple[int, int]
 
 
 class RootCertificateUnavailableAfterCommit(RootGenesisUnavailable):
