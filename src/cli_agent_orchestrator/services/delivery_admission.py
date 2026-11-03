@@ -1,16 +1,18 @@
 """Process-local reservation ownership, independent of delivery or authority."""
 
 import asyncio
+import math
 import os
 import queue
 import threading
 import weakref
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from heapq import merge
 from itertools import count
-from typing import Literal, NoReturn, Protocol, SupportsIndex
+from typing import Generic, Literal, NoReturn, Protocol, SupportsIndex, TypeVar
 
 from cli_agent_orchestrator.clients.storage_admission import (
     _CURRENT,
@@ -31,6 +33,7 @@ from cli_agent_orchestrator.services.admission_policy import (
 
 AdmissionReason = CapacityReason | Literal["receiver_busy", "stopping"]
 ReservationState = Literal["reserved", "started", "released"]
+_T = TypeVar("_T")
 
 
 def _current_async_task() -> object | None:
@@ -113,6 +116,7 @@ class CommandReservation:
     _start_pid: int | None
     _start_thread: threading.Thread | None
     _start_task: object | None
+    _thread_worker: object | None
 
     def __init__(
         self,
@@ -129,6 +133,7 @@ class CommandReservation:
         object.__setattr__(self, "_start_pid", None)
         object.__setattr__(self, "_start_thread", None)
         object.__setattr__(self, "_start_task", None)
+        object.__setattr__(self, "_thread_worker", None)
 
     def __copy__(self) -> NoReturn:
         raise TypeError("command reservation is not transferable")
@@ -151,34 +156,69 @@ class CommandReservation:
         with self._owner._guard:
             return self._state
 
+    def _fits_locked(self, now: float) -> bool:
+        owner = self._owner
+        decision = owner._current_decision(now, charged=False)
+        if decision.reason not in {"capacity_available", "resource_exhausted"}:
+            return False
+        other_committed = owner._committed - self._footprint
+        remaining = decision.resource_capacity.excess_over(other_committed)
+        return owner._command_fits(self._footprint, remaining)
+
+    def _pending_start_locked(self, now: float) -> bool:
+        owner = self._owner
+        return (
+            self._state == "reserved"
+            and owner._accepting
+            and self._generation == owner._generation
+            and owner._commands.get(self._key) is self
+            and owner._pending_commands.get(self._key) is self
+            and self._fits_locked(now)
+        )
+
+    def _mark_started_locked(self, thread: threading.Thread, task: object | None) -> None:
+        object.__setattr__(self, "_state", "started")
+        object.__setattr__(self, "_start_pid", os.getpid())
+        object.__setattr__(self, "_start_thread", thread)
+        object.__setattr__(self, "_start_task", task)
+        self._owner._pending_commands.pop(self._key)
+        self._owner._command_started += 1
+
     def start(self, *, now: float) -> bool:
         validate_clock(now)
         owner = self._owner
         if owner._pid != os.getpid():
             return False
         with owner._guard:
-            if (
-                self._state != "reserved"
-                or not owner._accepting
-                or self._generation != owner._generation
-                or owner._commands.get(self._key) is not self
-                or owner._pending_commands.get(self._key) is not self
-            ):
+            if not self._pending_start_locked(now):
                 return False
-            decision = owner._current_decision(now, charged=False)
-            if decision.reason not in {"capacity_available", "resource_exhausted"}:
-                return False
-            other_committed = owner._committed - self._footprint
-            remaining = decision.resource_capacity.excess_over(other_committed)
-            if not owner._command_fits(self._footprint, remaining):
-                return False
-            object.__setattr__(self, "_state", "started")
-            object.__setattr__(self, "_start_pid", os.getpid())
-            object.__setattr__(self, "_start_thread", threading.current_thread())
-            object.__setattr__(self, "_start_task", _current_async_task())
-            owner._pending_commands.pop(self._key)
-            owner._command_started += 1
+            self._mark_started_locked(threading.current_thread(), _current_async_task())
             return True
+
+    def _launch_thread(
+        self, target: Callable[[], _T], *, clock: Callable[[], float]
+    ) -> "CommandThread[_T] | None":
+        """Trusted internal handoff only; never an HTTP/MCP callback interface."""
+        owner = self._owner
+        if owner._pid != os.getpid():
+            return None
+        if not callable(target) or not callable(clock):
+            raise ValueError("command thread requires an internal target and clock")
+        now = clock()
+        validate_clock(now)
+        with owner._guard:
+            if not self._pending_start_locked(now):
+                return None
+            worker = CommandThread(self, target, clock)
+            object.__setattr__(self, "_thread_worker", worker)
+            self._mark_started_locked(worker._thread, None)
+        try:
+            worker._thread.start()  # No physical start or wait under the ledger guard.
+        except BaseException:
+            raise CommandThreadStartUncertain(worker) from None
+        finally:
+            worker._start_complete.set()
+        return worker
 
     def cancel_before_start(self) -> bool:
         owner = self._owner
@@ -193,6 +233,7 @@ class CommandReservation:
         owner = self._owner
         if (
             self._state != "started"
+            or self._thread_worker is not None
             or self._start_pid != os.getpid()
             or owner._pid != os.getpid()
             or self._start_thread is not threading.current_thread()
@@ -203,6 +244,108 @@ class CommandReservation:
             if self._state != "started":
                 return False
             return owner._release_command_locked(self, finish_started=True)
+
+
+class CommandThreadStartUncertain(RuntimeError, Generic[_T]):
+    """A start attempt failed; the exact handle and its charge remain owned."""
+
+    def __init__(self, worker: "CommandThread[_T]") -> None:
+        super().__init__("command thread start is unconfirmed")
+        self.worker = worker
+
+
+class CommandThread(Generic[_T]):
+    """Retained native worker; its result is separate from its joined exit."""
+
+    def __init__(
+        self, reservation: CommandReservation, target: Callable[[], _T], clock: Callable[[], float]
+    ) -> None:
+        self._reservation = reservation
+        self._target = target
+        self._clock = clock
+        self._pid = os.getpid()
+        self._future: Future[_T] = Future()
+        self._start_complete = threading.Event()
+        self._returned = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=False)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("command thread ownership cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        raise TypeError("command thread ownership cannot be copied")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("command thread ownership cannot be serialized")
+
+    def _registered_locked(self) -> bool:
+        reservation = self._reservation
+        return (
+            reservation._owner._commands.get(reservation._key) is reservation
+            and reservation._thread_worker is self
+            and reservation._state == "started"
+            and reservation._start_pid == self._pid
+            and reservation._start_thread is self._thread
+            and reservation._start_task is None
+        )
+
+    def _run(self) -> None:
+        try:
+            if self._pid != os.getpid() or self._thread is not threading.current_thread():
+                raise StorageAdmissionUnavailable()
+            now = self._clock()
+            validate_clock(now)
+            reservation = self._reservation
+            owner = reservation._owner
+            with owner._guard:
+                if (
+                    not self._registered_locked()
+                    or not owner._accepting
+                    or reservation._generation != owner._generation
+                    or not reservation._fits_locked(now)
+                ):
+                    raise StorageAdmissionUnavailable()
+            self._future.set_result(self._target())
+        except BaseException as error:
+            self._future.set_exception(error)
+        finally:
+            self._returned.set()
+
+    def result(self, timeout: float | None = None) -> _T:
+        if self._pid != os.getpid() or self._thread is threading.current_thread():
+            raise StorageAdmissionUnavailable()
+        return self._future.result(timeout=timeout)
+
+    async def await_result(self) -> _T:
+        if self._pid != os.getpid() or self._thread is threading.current_thread():
+            raise StorageAdmissionUnavailable()
+        return await asyncio.shield(asyncio.wrap_future(self._future))
+
+    def join(self, timeout: float | None = None) -> bool:
+        if timeout is not None and (
+            isinstance(timeout, bool) or not math.isfinite(timeout) or timeout < 0
+        ):
+            raise ValueError("command join timeout must be finite and nonnegative")
+        if (
+            self._pid != os.getpid()
+            or self._thread is threading.current_thread()
+            or not self._start_complete.is_set()
+        ):
+            return False
+        owner = self._reservation._owner
+        with owner._guard:
+            if not self._registered_locked():
+                return False
+        try:
+            self._thread.join(timeout=timeout)
+        except RuntimeError:
+            return False  # Failed start without positive entry/exit evidence.
+        if not self._returned.is_set() or self._thread.is_alive():
+            return False
+        with owner._guard:
+            if not self._registered_locked():
+                return False
+            return owner._release_command_locked(self._reservation, finish_started=True)
 
 
 @dataclass(frozen=True)

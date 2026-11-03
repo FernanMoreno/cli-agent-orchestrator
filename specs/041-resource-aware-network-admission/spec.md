@@ -1,5 +1,13 @@
 # Feature Specification: Admisión dinámica y capacidad distribuida de la red
 
+## T014.R.H2.2b.1 — Arranque físico de un worker financiado (2026-11-03)
+
+Antes de crear el hilo del propietario persistente, una reserva exacta de comando debe pasar atómicamente de pendiente a iniciada. La reserva procede de un dueño con capacidad fresca y costes positivos RAM/CPU y cero SQL; este componente no inventa observaciones ni sustituye al emisor de despliegue. El callback es código interno del servidor, nunca una entrada HTTP/MCP ni autoridad SQL.
+
+El handle conserva el hilo exacto y su resultado. Stop, invalidación, reconfiguración, cancelación del solicitante y el retorno del callback no liberan el cargo del hilo. Solo la observación de retorno y el join físico de ese mismo hilo permiten retirarlo. Un error de Thread.start mantiene la reserva y entrega un handle reconciliable; no prueba que el hilo nunca existió. Copias, otro proceso, finalización manual del token y self-join no permiten retirar el cargo.
+
+Aceptación: barreras con hilos reales prueban cargo antes de la primera instrucción, presión/stop entre despacho y entrada, resultado anterior a salida física, fallo de arranque antes/después del inicio y conciliación positiva posterior. La capacidad procede de recursos, sin techo global de workers. El actor, su buzón, el emisor productivo, SQL/shared y los gates globales permanecen separados hasta implementar sus dependencias.
+
 **Feature Branch**: `main` — integración de especificación y código, sin nueva rama.
 
 **Feature Directory**: `specs/041-resource-aware-network-admission`

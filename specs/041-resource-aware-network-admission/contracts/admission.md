@@ -1,5 +1,13 @@
 # Admission contract — 041
 
+## H2.2b.1 — CommandThread interno
+
+CommandReservation._launch_thread(target, clock) acepta únicamente una reserva registrada pendiente y un callback interno. El reloj del dueño se lee al despachar y al entrar, validando de nuevo frescura, generación y capacidad antes del callback. Devuelve handle tipado o rechazo sin crear hilo físico. Registra el cargo iniciado antes de Thread.start. No permite cancelar/refundar una reserva despachada ni finalizarla mediante CommandReservation.finish. El resultado no acredita salida física.
+
+CommandThread.result/await_result entregan el resultado o error del callback; cancelar la espera async no cancela el Future original. CommandThread.join(timeout) retira únicamente tras retorno observado y join del hilo exacto fuera del mutex. Devuelve falso si no hay prueba, hay self-join o el proceso no coincide; una copia no adquiere identidad. Thread.start incierto arroja CommandThreadStartUncertain con worker retenido, sin refund ni segundo lanzamiento.
+
+Si el hilo nunca entra, este puerto no ofrece una API que afirme su ausencia ni permita otro start: el cargo permanece incierto. La conciliación positiva por join solo aplica si el mismo hilo alcanza salida observada. join es síncrono; el futuro actor no puede bloquear con él el event loop de ASGI. await_result no añade executors ni exporta el Future mutable.
+
 ## Política local
 
 La función pura recibe cantidades y tiempo explícitos y devuelve una decisión estructurada. Sin contexto de credenciales, llamadas SQL o inferencias de estado de tarea. Una muestra caducada, futura o incompleta deniega nuevas operaciones. Un recurso con capacidad cero es conocido pero saturado, no desconocido.

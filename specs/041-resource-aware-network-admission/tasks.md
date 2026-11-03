@@ -1,5 +1,13 @@
 # Tasks: Admisión dinámica y capacidad distribuida
 
+## T014.R.H2.2b.1 — prerrequisito de arranque del propietario (validado por componente)
+
+- [x] H2B1-01 Contrastar conocimiento, spec/plan/contratos y grafo privado antes de implementación; verificar callers en fuente.
+- [x] H2B1-02 RED de test/services/test_admission_command_thread.py: cargo previo al hilo, ciclo físico, presión/cancelación, copias/proceso ajeno y fallos de inicio.
+- [x] H2B1-03 Implementar traspaso y handle tipado en src/cli_agent_orchestrator/services/delivery_admission.py sin cambiar semántica de los comandos existentes ni añadir SQL.
+- [x] H2B1-04 Validar contratos heredados, hilos reales, formato/tipos y regresión aplicable con recibos exactos; serializar PostgreSQL.
+- [x] H2B1-05 Revisiones ECC/composición/diff/Graphify/conocimiento; registrar resultados y actualizar los tres documentos de pendientes. Mantener abiertos actor/buzón/issuer/CLI/shared y los diez gates originales.
+
 ## Phase 1 — Diseño y fuentes
 
 - [x] T001 Contrastar fuente, conocimiento y Graphify; guardar decisiones e interfaces en specs/041-resource-aware-network-admission/research.md y plan.md.
@@ -281,3 +289,6 @@ ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=in
 
 
 T014.R.H2.1/H2.2a (2026-11-03), componentes controlados validados: envelope/bootstrap/monitor usan worker/SQL original con afinidad previa a locks, incertidumbre preservada y CAS de generación propia. Comandos reservan RAM/CPU positiva sin otro slotSQL ni máximo fijo; inicio/cancelación/finish físico y cargos durante stop coherentes. Diagnóstico v2 expone contadores exactos; v1sin comandos preserva wire/llamadas, v1incompatible409 y query inválida422 tipados/no-store/JWTadmin. **1654PASS**,0fallos/errores/omisiones,16advertencias,120módulos; conserva1.541IDs aceptados y1.598de selección anterior. Ocho fuentes/doce Python exactos, tipos458/frío, formato/composición aprobados y mismo PG18.6 limpio tras cierre. RootPG real con25comandos contables, no25modelos reales; Linux determinista. ECC/LunaMax y revisiones previas contrastados. Actor/arranque/cola/drain/CLI/sharedlive-loan/custodia/M1/M2/M3/SDK/UI y diez gates siguen pendientes. [Validación](validation-t014-root-control-runtime.json), [composición](composition-t014-root-control-runtime.md).
+
+
+T014.R.H2.2b.1 (2026-11-03), traspaso financiado de hilo validado por componente: cargo RAM/CPU iniciado antes de Thread.start, entrada exacta con generación/frescura/capacidad, resultado separado de salida y retiro solo tras retorno/join físicos. Stop/presión/cancelación no devuelven cargos despachados; error de start conserva handle y coste, sin reintento/refund si falta observación de entrada/salida. Espera async shield sin executor por solicitante; join es síncrono. **1671 PASS**, 0 fallos/errores/omisiones, 16 advertencias, 121 módulos; conserva 1.654 IDs y añade 17. Una fuente/dos Python ejecutados exactos, tipos458/frío, formato/arquitectura aprobados y mismo PG18.6 limpio tras cierre. Hilos reales con costes sintéticos, no modelos ni M1 físico. Actor/buzón/financiación externa/CLI/shared/custodia/M1/M2/M3/SDK/UI y diez gates siguen pendientes. [Validación](validation-t014-funded-command-thread.json), [composición](composition-t014-funded-command-thread.md).

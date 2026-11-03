@@ -1,5 +1,14 @@
 # Admisión dinámica y capacidad distribuida — Implementation Plan
 
+## Corte H2.2b.1 — traspaso antes del hilo
+
+1. Ampliar CommandReservation en services/delivery_admission.py con lanzamiento financiado de un callback interno tipado; conservar start/finish actuales para comandos que no crean hilo. Extraer la comprobación de capacidad común sin alterar su semántica.
+2. Bajo el mutex del ledger, validar identidad/generación/frescura/coste, registrar el handle y marcar el cargo iniciado antes de llamar Thread.start fuera del mutex. No crear otro ledger ni una muestra sintética de arranque.
+3. Conservar resultado y prueba de retorno por separado. El handle permite espera síncrona/async sin executor adicional; cancelar una espera no cancela el resultado ni retira el trabajo. Join del hilo exacto y prueba de retorno preceden a la liberación. Fallo de arranque conserva handle y cargo incierto.
+4. TDD con test/services/test_admission_command_thread.py; luego consumidores de reservas/diagnóstico/monitor y regresión seleccionada con PostgreSQL reutilizado, sin cambiar deadlines/cobertura. Formato/tipos antes de congelar; composición, ECC read, diff, Graphify privado y conocimiento después de pruebas.
+
+No hay migración, protocolo nuevo ni autoridad shared. El constructor del futuro actor requerirá esta financiación explícita; no se presenta este puerto como emisor/CLI ni actor ya integrado. Único escritor main; agentes ECC revisan en read. Los 12 archivos Graphify ajenos se conservan.
+
 **Branch**: `main` | **Date**: 2026-10-30 | **Spec**: [spec.md](spec.md)
 
 **Goal**: Sustituir techos locales de despacho por reservas según recursos, coordinar dominios compartidos y distribuir encargos nuevos sin alterar autoridad, orden o recuperación.

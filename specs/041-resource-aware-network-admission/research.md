@@ -1,5 +1,9 @@
 # Research — 041
 
+## Decisión H2.2b.1: financiar antes de Thread.start
+
+CommandReservation.start actual fija identidad desde el callback, demasiado tarde para financiar la creación del hilo o impedir liberación de una reserva aún pendiente. Se añade un lanzamiento interno que registra el hilo exacto antes de su inicio y conserva el cargo hasta join. Alternativas rechazadas: cargar desde el hijo; confiar en Future.done como prueba física; liberar tras un error de start; crear un ledger con capacidad inventada para el bootstrap. La financiación externa y la activación shared siguen siendo contratos separados. ECC Arquitectura y Python revisan estas fronteras sin escrituras paralelas.
+
 ## Decisión: dueño común, no una nueva constante
 
 Cambiar4por8 o solo ampliar `event_bus_max_queue_size` conserva el problema. La profundidad de cola no es ejecución y tres presupuestos por entrada suman consumo oculto. Se separa una política pura del dueño común de reservas para poder verificar presión y ciclo físico de vida independientemente del scheduler.

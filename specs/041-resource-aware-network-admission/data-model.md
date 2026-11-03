@@ -1,5 +1,9 @@
 # Data model — 041
 
+## H2.2b.1 — propiedad de hilo
+
+CommandThread conserva identidad del token/hilo/PID, Future tipado y evento de retorno. El token referencia el handle exacto mientras conserva el cargo. Pendiente → iniciado/despachado ocurre antes del inicio físico; iniciado → liberado requiere retorno y join positivos. Un Thread.start fallido conserva estado iniciado incierto, reconciliable con ese handle si el hilo alcanza finalmente retorno y cierre. No se añade permiso SQL ni una observación de capacidad.
+
 ## M1: observación y decisión
 
 - AdmissionPolicy: coste de memoria por entrega en bytes, coste CPU en millicores, fracción reservada de memoria/CPU, frescura máxima en segundos. Validación estricta finita y rangos explícitos.

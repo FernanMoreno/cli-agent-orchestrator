@@ -1,5 +1,7 @@
 # Validation guide — 041
 
+H2.2b.1: antes de la regresión, reproducir API ausente en test/services/test_admission_command_thread.py. Usar barreras/eventos, no sleeps, para observar cargo previo a entrada, retorno previo a salida, start fallido y join tardío. Conservar pruebas de falta de recursos, presión y capacidad desconocida. No interpretar hilos de callback como modelos ni como actor/CLI productivos. Declarar separadamente las pruebas PostgreSQL reutilizadas y los casos nuevos sin SQL.
+
 1. Leer spec/plan/tasks y el manifiesto del intento. Verificar main, estado git, memoria y dueño/identidad exacta del PostgreSQL existente. No iniciar contenedores alternativos ni modelos.
 2. Ejecutar los controles puros de política y reservas con COVERAGE_FILE y temporales privados. Esperado: adaptación por CPU/memoria/almacenamiento, desconocido/caducado denegados y reservas iniciadas retenidas tras cancelación.
 3. Tras integrarM1, ejecutar la selección InboxService/API/contexto/orden/barridos/drenaje y sampler. La profundidad de cola y4workers de una fixture no se presentan como límite de producto.

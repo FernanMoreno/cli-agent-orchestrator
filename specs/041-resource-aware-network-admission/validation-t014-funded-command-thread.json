@@ -1,0 +1,267 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-03",
+  "component": "T014.R.H2.2b.1",
+  "status": "validated-controlled-funded-thread-handoff",
+  "base_head": "425abd4fdc4b1bc89a95a15fea8954fa8cf92d6e",
+  "global_acceptance": false,
+  "actor_implemented": false,
+  "production_cli_integrated": false,
+  "shared_activation": false,
+  "acceptance": {
+    "phase": "funded-command-thread-final",
+    "passed": 1671,
+    "focused_passed": 46,
+    "baseline_passed": 1654,
+    "new_distinct_cases": 17,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 16,
+    "modules": 121,
+    "seconds": 1514.261,
+    "available_mib": 10940,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "source_archive_matches": 2,
+    "production_archive_matches": 1,
+    "archive_sha256": "6facb9ff79178aa0b339938dbfef96b3b3f3d2c05b7f7b2bdc4cff6713b65eb8",
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "ae9549deeb7fbd7fadb69da3ff34f6c106ebb13f96ae224defdb22fd23814599"
+      },
+      {
+        "path": "test/services/test_admission_command_thread.py",
+        "sha256": "703efb98e7ae731e911331d0c06dfda4acabd57e3e0c857a8e9522f4bbe23c3b"
+      }
+    ],
+    "foreign_files_preserved": 12,
+    "coverage": {
+      "owned_source": {
+        "covered_lines": 951,
+        "num_statements": 1021,
+        "percent_covered": 93.14397649363369,
+        "percent_covered_display": "93",
+        "missing_lines": 70,
+        "excluded_lines": 6
+      },
+      "package_percent": 36.63586119416508,
+      "scope": "selected regression, not global acceptance"
+    }
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "exit_code": 0,
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "black",
+          "--check",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "test/services/test_admission_command_thread.py"
+        ]
+      },
+      {
+        "name": "isort",
+        "exit_code": 0,
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "isort",
+          "--check-only",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "test/services/test_admission_command_thread.py"
+        ]
+      }
+    ],
+    "compile_files": 2,
+    "cold_mypy": {
+      "source_files": 458,
+      "errors": 0,
+      "incremental": false,
+      "configuration_changed": false,
+      "new_type_suppressions": false,
+      "command_evidence": {
+        "exit_code": 0,
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "mypy",
+          "--no-incremental",
+          "--cache-dir",
+          "/home/felni/.cache/caos-funded-command-thread-20261103/mypy-cache",
+          "src"
+        ],
+        "log_sha256": "5e5bc1f501f7dcd5f5e86beb2938aad70d87a6486dccc4ce3516e8834e26d6c1",
+        "configuration": {
+          "mypy.ini": "e4c3628682fb9d3425ad860eebcad3c977239ab7e63f1bd727b90a1407cb5865",
+          "pyproject.toml": "716d3a13c74ce42c608e39f407abfb205d4025ff28fa101791d0d3cdc2c04159"
+        },
+        "source_files": [
+          {
+            "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+            "sha256": "ae9549deeb7fbd7fadb69da3ff34f6c106ebb13f96ae224defdb22fd23814599"
+          },
+          {
+            "path": "test/services/test_admission_command_thread.py",
+            "sha256": "703efb98e7ae731e911331d0c06dfda4acabd57e3e0c857a8e9522f4bbe23c3b"
+          }
+        ],
+        "scope": "458 files under src; test candidate hash retained for provenance, not a claim tests were typechecked",
+        "actual_exec_session": 86530
+      }
+    }
+  },
+  "architecture": {
+    "files": 461,
+    "dependencies": 2091,
+    "contracts_kept": 5,
+    "contracts_broken": 0
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+    "service_profile": "cao-spec021-local-postgres-v3",
+    "lease_owner_pid": 6160,
+    "lease_owner_start_ticks": "273049",
+    "server_version_prefix": "18.6",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "private": true,
+    "partial": true,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "ae9549deeb7fbd7fadb69da3ff34f6c106ebb13f96ae224defdb22fd23814599"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "d660d00a37cac7a2e0de7cd739550f238e26e15df1feebe6701bf9508af8c47b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+        "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+      },
+      {
+        "path": "test/services/test_admission_command_reservation.py",
+        "sha256": "ce8dd2dc97ddbacdeee76ad95e652faf54c55fbd5c73ceab46eb0b87fb0053be"
+      },
+      {
+        "path": "test/services/test_admission_command_diagnostics.py",
+        "sha256": "ff97483289857df5c50f90806dee5ee21d59156547aa773e2751c1fe411fe491"
+      },
+      {
+        "path": "test/services/test_admission_command_thread.py",
+        "sha256": "703efb98e7ae731e911331d0c06dfda4acabd57e3e0c857a8e9522f4bbe23c3b"
+      }
+    ],
+    "nodes": 366,
+    "edges": 864,
+    "failed_sources": []
+  },
+  "behavior": {
+    "exact_registered_pending_reservation": true,
+    "positive_ram_cpu_zero_sql": true,
+    "charge_before_native_thread_start": true,
+    "physical_start_outside_ledger_guard": true,
+    "entry_rechecks_generation_clock_capacity": true,
+    "start_attempt_and_target_return_signals_separate": true,
+    "ordinary_finish_cannot_refund_thread": true,
+    "stop_pressure_invalidation_reconfigure_retain_dispatched_charge": true,
+    "result_is_not_physical_exit": true,
+    "exact_returned_and_joined_thread_required_for_release": true,
+    "start_exception_retains_handle_and_charge": true,
+    "unobserved_start_has_no_supported_retry_or_refund": true,
+    "waiter_cancellation_does_not_cancel_result": true,
+    "no_executor_per_waiter": true,
+    "no_fixed_worker_count": true,
+    "legacy_start_finish_preserved": true
+  },
+  "reviews": {
+    "ecc_agents": [
+      "architect",
+      "python-reviewer"
+    ],
+    "model": "GPT-6 Luna Max",
+    "shared_guidance_root": "/home/felni/.cache/ai-dev-stack/ecc/ECC",
+    "read_only": true,
+    "reviewer_checks_executed": false,
+    "lead_verified": true,
+    "notes": "No actionable lifecycle/legacy defect; sticky unobserved-start debt and synchronous join limits recorded.",
+    "claude_read_job": "7e60a39d934242e7af914141d824cb94",
+    "claude_status": "completed exit0; no actionable lifecycle defect"
+  },
+  "history": [
+    {
+      "phase": "initial-red-name-collision",
+      "cases": 14,
+      "failures": 1,
+      "errors": 21,
+      "accepted": false,
+      "detail": "Proposed private method name collided with existing worker-identity field; renamed launch entry before implementation."
+    },
+    {
+      "phase": "red-api",
+      "cases": 14,
+      "failures": 1,
+      "errors": 21,
+      "accepted": false,
+      "detail": "Missing launch API and handle class."
+    },
+    {
+      "phase": "initial-unit-green",
+      "passed": 43
+    },
+    {
+      "phase": "expanded-unit-green",
+      "passed": 46
+    },
+    {
+      "phase": "native-focused",
+      "passed": 46
+    }
+  ],
+  "limits": [
+    "Funded internal thread handoff only; persistent original SQL actor/mailbox/runtime/CLI wiring not implemented by this cut.",
+    "Caller must supply an exact reservation from an existing fresh funded owner. No fabricated observation, new bootstrap ledger, deployment issuer, SQL or shared authority.",
+    "If start fails without an observed thread entry/exit, the charge stays sticky. No supported restart or no-start refund API is provided.",
+    "Result delivery is asynchronous-capable without a new executor, but join is synchronous; actor shutdown must not block the ASGI event loop.",
+    "25 native callback threads use synthetic declared resource costs. This does not prove measured host capacity, 25 model processes, physical M2 or distributed scalability.",
+    "No shared live-loan activation, new provider acceptance, external custody, M1/M2/M3/SDK/UI or global acceptance. Ten original gates remain open."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261103-funded-command-thread",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "composition_report": "composition-t014-funded-command-thread.md"
+}
