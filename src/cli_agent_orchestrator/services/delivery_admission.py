@@ -117,6 +117,7 @@ class CommandReservation:
     _start_thread: threading.Thread | None
     _start_task: object | None
     _thread_worker: object | None
+    _actor_thread: "CommandThread[None] | None"
 
     def __init__(
         self,
@@ -134,6 +135,7 @@ class CommandReservation:
         object.__setattr__(self, "_start_thread", None)
         object.__setattr__(self, "_start_task", None)
         object.__setattr__(self, "_thread_worker", None)
+        object.__setattr__(self, "_actor_thread", None)
 
     def __copy__(self) -> NoReturn:
         raise TypeError("command reservation is not transferable")
@@ -181,8 +183,63 @@ class CommandReservation:
         object.__setattr__(self, "_start_pid", os.getpid())
         object.__setattr__(self, "_start_thread", thread)
         object.__setattr__(self, "_start_task", task)
+        object.__setattr__(self, "_actor_thread", None)
         self._owner._pending_commands.pop(self._key)
         self._owner._command_started += 1
+
+    def _dispatch_to_thread(self, worker: "CommandThread[None]", *, now: float) -> bool:
+        """Bind a pending command to one already-started internal actor thread."""
+        validate_clock(now)
+        owner = self._owner
+        if owner._pid != os.getpid() or type(worker) is not CommandThread:
+            return False
+        if (
+            not worker._start_complete.is_set()
+            or not worker._start_confirmed.is_set()
+            or not worker._thread.is_alive()
+            or worker._returned.is_set()
+        ):
+            return False
+        with owner._guard:
+            if (
+                worker._reservation._owner is not owner
+                or worker._pid != os.getpid()
+                or not worker._registered_locked()
+                or worker._returned.is_set()
+                or not self._pending_start_locked(now)
+            ):
+                return False
+            self._mark_started_locked(worker._thread, None)
+            object.__setattr__(self, "_actor_thread", worker)
+            return True
+
+    def _check_dispatched(self, worker: "CommandThread[None]", *, now: float) -> bool:
+        """Recheck a started actor command immediately before its first effect."""
+        validate_clock(now)
+        owner = self._owner
+        if (
+            owner._pid != os.getpid()
+            or type(worker) is not CommandThread
+            or worker._pid != os.getpid()
+            or worker._thread is not threading.current_thread()
+            or _current_async_task() is not None
+            or not worker._thread.is_alive()
+        ):
+            return False
+        with owner._guard:
+            return bool(
+                worker._registered_locked()
+                and not worker._returned.is_set()
+                and self._state == "started"
+                and owner._commands.get(self._key) is self
+                and self._actor_thread is worker
+                and self._start_pid == os.getpid()
+                and self._start_thread is worker._thread
+                and self._start_task is None
+                and self._generation == owner._generation
+                and owner._accepting
+                and self._fits_locked(now)
+            )
 
     def start(self, *, now: float) -> bool:
         validate_clock(now)
@@ -214,6 +271,7 @@ class CommandReservation:
             self._mark_started_locked(worker._thread, None)
         try:
             worker._thread.start()  # No physical start or wait under the ledger guard.
+            worker._start_confirmed.set()
         except BaseException:
             raise CommandThreadStartUncertain(worker) from None
         finally:
@@ -231,7 +289,25 @@ class CommandReservation:
 
     def finish(self) -> bool:
         owner = self._owner
-        if (
+        actor = self._actor_thread
+        if actor is not None:
+            if (
+                self._state != "started"
+                or self._thread_worker is not None
+                or self._start_pid != os.getpid()
+                or owner._pid != os.getpid()
+                or actor._pid != os.getpid()
+                or actor._thread is not threading.current_thread()
+                or self._start_thread is not actor._thread
+                or self._start_task is not None
+                or _current_async_task() is not None
+            ):
+                return False
+            with owner._guard:
+                if not actor._registered_locked() or self._state != "started":
+                    return False
+                return owner._release_command_locked(self, finish_started=True)
+        elif (
             self._state != "started"
             or self._thread_worker is not None
             or self._start_pid != os.getpid()
@@ -266,6 +342,7 @@ class CommandThread(Generic[_T]):
         self._pid = os.getpid()
         self._future: Future[_T] = Future()
         self._start_complete = threading.Event()
+        self._start_confirmed = threading.Event()
         self._returned = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=False)
 
@@ -309,7 +386,9 @@ class CommandThread(Generic[_T]):
         except BaseException as error:
             self._future.set_exception(error)
         finally:
-            self._returned.set()
+            owner = self._reservation._owner
+            with owner._guard:
+                self._returned.set()
 
     def result(self, timeout: float | None = None) -> _T:
         if self._pid != os.getpid() or self._thread is threading.current_thread():
@@ -319,7 +398,14 @@ class CommandThread(Generic[_T]):
     async def await_result(self) -> _T:
         if self._pid != os.getpid() or self._thread is threading.current_thread():
             raise StorageAdmissionUnavailable()
-        return await asyncio.shield(asyncio.wrap_future(self._future))
+        wrapped = asyncio.wrap_future(self._future)
+
+        def retrieve_late_exception(completed: asyncio.Future[_T]) -> None:
+            if not completed.cancelled():
+                completed.exception()
+
+        wrapped.add_done_callback(retrieve_late_exception)
+        return await asyncio.shield(wrapped)
 
     def join(self, timeout: float | None = None) -> bool:
         if timeout is not None and (
@@ -1085,6 +1171,7 @@ class DeliveryAdmission:
         self._committed = ResourceAmounts()
         self._pid = os.getpid()
         self._process_guard = threading.RLock()
+        self._command_condition = threading.Condition(self._process_guard)
         self._leases: dict[int, DeliveryReservation] = {}
         self._retirement_queue: queue.SimpleQueue[DeliveryRetirementHold | None] = (
             queue.SimpleQueue()
@@ -1466,6 +1553,7 @@ class DeliveryAdmission:
         self._committed = self._committed - command._footprint
         self._commands.pop(command._key)
         object.__setattr__(command, "_state", "released")
+        self._command_condition.notify_all()
         return True
 
     def _release_locked(self, lease: DeliveryReservation) -> bool:
@@ -1502,6 +1590,7 @@ class DeliveryAdmission:
         lease._remaining = ResourceAmounts()
         self._leases.pop(lease._key)
         self._pending.pop(lease._key, None)
+        self._command_condition.notify_all()
         if lease._receiver is not None and self._receivers.get(lease._receiver) == lease._key:
             self._receivers.pop(lease._receiver)
         lease._state = "released"
@@ -1554,6 +1643,56 @@ class DeliveryAdmission:
                 self._release_locked(lease)
             for command in tuple(self._pending_commands.values()):
                 self._release_command_locked(command)
+
+    def _wait_for_command_drain(
+        self,
+        startup: CommandReservation,
+        worker: CommandThread[None],
+        control_lease: DeliveryReservation | None,
+    ) -> bool:
+        """Wait on this actor thread until only its startup charge remains."""
+        if (
+            type(startup) is not CommandReservation
+            or type(worker) is not CommandThread
+            or startup._owner is not self
+            or startup._thread_worker is not worker
+            or startup._start_pid != os.getpid()
+            or startup._start_thread is not threading.current_thread()
+            or startup._start_task is not _current_async_task()
+            or worker._thread is not threading.current_thread()
+            or (
+                control_lease is not None
+                and (
+                    not isinstance(control_lease, DeliveryReservation)
+                    or control_lease._owner is not self
+                )
+            )
+        ):
+            return False
+        with self._command_condition:
+            while self._commands.get(startup._key) is startup:
+                exact_control_lease = (
+                    control_lease is not None
+                    and self._control_lease is control_lease
+                    and self._leases.get(control_lease._key) is control_lease
+                )
+                external_leases = len(self._leases) - int(exact_control_lease)
+                if not external_leases and len(self._commands) == 1:
+                    break
+                self._command_condition.wait()
+            return (
+                self._commands.get(startup._key) is startup
+                and len(self._commands) == 1
+                and (
+                    not self._leases
+                    or (
+                        control_lease is not None
+                        and self._control_lease is control_lease
+                        and self._leases.get(control_lease._key) is control_lease
+                        and len(self._leases) == 1
+                    )
+                )
+            )
 
     def start_accepting(self) -> None:
         with self._guard:

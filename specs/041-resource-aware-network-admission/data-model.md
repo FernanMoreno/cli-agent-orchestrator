@@ -1,5 +1,9 @@
 # Data model — 041
 
+## H2.2b.2 — actor original
+
+OriginalControlConfig es composición interna; no DTO de cliente ni permiso de arranque. OriginalControlOwner conserva PID, worker financiado, estado de ingreso, ready privado, buzón de refreshes registrados y monitor/session locales al worker. Un refresh contiene token exacto y reply privado; su coste queda iniciado antes de publicación. Los registros salen del buzón solo hacia el worker original, que entrega valor/error y finaliza. La reserva de infraestructura pertenece al mismo ledger y permanece separada de los costes por mensaje. Estados iniciando/operativo/cerrando/incierto/retirado no se deducen únicamente de un Future terminado.
+
 ## H2.2b.1 — propiedad de hilo
 
 CommandThread conserva identidad del token/hilo/PID, Future tipado y evento de retorno. El token referencia el handle exacto mientras conserva el cargo. Pendiente → iniciado/despachado ocurre antes del inicio físico; iniciado → liberado requiere retorno y join positivos. Un Thread.start fallido conserva estado iniciado incierto, reconciliable con ese handle si el hilo alcanza finalmente retorno y cierre. No se añade permiso SQL ni una observación de capacidad.

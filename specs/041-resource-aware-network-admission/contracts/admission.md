@@ -1,5 +1,13 @@
 # Admission contract — 041
 
+## H2.2b.2 — propietario opt-in
+
+OriginalControlConfig fija bootstrap, owner/control originales, certificado/claves públicas, policy loader, scope, coste positivo RAM/CPU de refresh, clock y resource factory opcional. OriginalControlOwner(config, startup=...) exige token exacto del mismo ledger; start es único y nunca inventa capacidad. wait_ready/refresh/aclose son esperas async protegidas; diagnostics proyecta el ledger actual y telemetría SQL cacheada en v1/v2. No hay submit de callbacks del cliente.
+
+El puerto de despacho a un worker existente comprueba registro/vida de su CommandThread e identidad del mismo owner antes de enlazar otro token al hilo/task exactos. El mensaje se hace visible después del despacho y permanece cargado hasta rechazo/finish del actor. Guardar el payload antes de publicación bajo el lock del buzón permite rechazo sin dejar cargos iniciados huérfanos; una notificación incierta no autoriza refund/replay. El resultado no expone Future/session/Connection. Diagnóstico v1 incompatible conserva el 409 tipado existente.
+
+El primer ciclo no crea un grant para iniciar el propio actor. La disponibilidad de transporte y la capacidad de entrega son estados distintos. Stop/poison/cancelación conservan incertidumbre; aclose no informa retiro sobre un canal nativo o participantes externos sin prueba. La integración con la autoridad de despliegue/runtime/CLI/shared requiere contratos posteriores explícitos.
+
 ## H2.2b.1 — CommandThread interno
 
 CommandReservation._launch_thread(target, clock) acepta únicamente una reserva registrada pendiente y un callback interno. El reloj del dueño se lee al despachar y al entrar, validando de nuevo frescura, generación y capacidad antes del callback. Devuelve handle tipado o rechazo sin crear hilo físico. Registra el cargo iniciado antes de Thread.start. No permite cancelar/refundar una reserva despachada ni finalizarla mediante CommandReservation.finish. El resultado no acredita salida física.

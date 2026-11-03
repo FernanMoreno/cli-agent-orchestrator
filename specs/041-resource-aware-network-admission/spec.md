@@ -1,5 +1,13 @@
 # Feature Specification: Admisión dinámica y capacidad distribuida de la red
 
+## T014.R.H2.2b.2 — Propietario original y buzón financiado (validado por componente, 2026-11-03)
+
+Un propietario opt-in conserva un único hilo no daemon y abre root_sql_control_channel/FundedControlSession dentro de ese worker, sin transferir sesiones ni abrir otro TCP. El llamante debe aportar una CommandReservation exacta, pendiente, positiva RAM/CPU y sin SQL, del mismo DeliveryAdmission que usa el monitor. No se crea owner, muestra, crédito, certificado ni autoridad de despliegue para sortear capacidad desconocida o shared-unready. La reserva positiva de infraestructura cubre el arranque y el ciclo de control; no autoriza entregas ni activación compartida.
+
+La primera interfaz admite refresh tipado y diagnóstico cached versionado, sin submit(callback). La publicación de un refresh enlaza una reserva al hilo exacto ya financiado, antes de que el mensaje sea visible. El cargo permanece mientras existe el payload/resultado pendiente; presión o cancelación del solicitante no lo devuelven. Antes de SQL el actor comprueba generación/frescura/capacidad e identidad de la sesión. Rechazo y finalización se acreditan en su worker. Un buzón acotado por recursos sustituye un máximo fijo de mensajes/agentes; no hay executor ni hilo por solicitud.
+
+Ready acredita canal/sesión originales operativos y primer ciclo observado, no capacidad de entrega ni integración productiva. Una sesión incierta queda terminal, sin replay/reconnect. El cierre detiene ingreso, resuelve sus mensajes y conserva cargos/propiedad hasta las pruebas físicas pertinentes. Timeout/cancelación solo separan al solicitante. El cierre async no bloquea el loop con join síncrono. El emisor productivo, wiring CLI/runtime, autoridad shared, participantes/custodia y los gates globales siguen separados.
+
 ## T014.R.H2.2b.1 — Arranque físico de un worker financiado (2026-11-03)
 
 Antes de crear el hilo del propietario persistente, una reserva exacta de comando debe pasar atómicamente de pendiente a iniciada. La reserva procede de un dueño con capacidad fresca y costes positivos RAM/CPU y cero SQL; este componente no inventa observaciones ni sustituye al emisor de despliegue. El callback es código interno del servidor, nunca una entrada HTTP/MCP ni autoridad SQL.

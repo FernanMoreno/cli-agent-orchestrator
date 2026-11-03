@@ -1,0 +1,316 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-03",
+  "component": "T014.R.H2.2b.2",
+  "status": "validated-opt-in-original-control-owner",
+  "base_head": "0ac40ffae5f6c2980039231477d3f3d684c9f19b",
+  "global_acceptance": false,
+  "actor_implemented": true,
+  "production_cli_integrated": false,
+  "shared_activation": false,
+  "acceptance": {
+    "phase": "original-control-owner-saturation-final",
+    "passed": 320,
+    "baseline_relevant_passed": 286,
+    "baseline_accepted_total": 1671,
+    "new_distinct_cases": 34,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "modules": 20,
+    "warnings": 10,
+    "seconds": 247.325,
+    "available_mib": 11520,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "efb65f3d430ddd3a73310fde5b235849851abbc4305cee78c1dd5528b32b079f",
+    "source_archive_matches": 4,
+    "production_archive_matches": 2,
+    "document_archive_matches": 3,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "51c09599664ce42f9603f2bc45498e56e3bad66e93a3e3ae5a71c61824740b26"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/original_control_owner.py",
+        "sha256": "18eec0576ae990dee2dad0ccd60a76582e128851c5e158d6680edc7b0addd323"
+      },
+      {
+        "path": "test/services/test_original_control_owner.py",
+        "sha256": "ea588d709639a2631b4b492789bcb3ee073b668e946675c32f791b1b72b8b583"
+      },
+      {
+        "path": "test/postgres/test_original_control_owner.py",
+        "sha256": "85b8af0cc4a0f2947cfdee200ec1e1882d02347810ae2979f1430869f2145c16"
+      }
+    ],
+    "foreign_files_preserved": 12,
+    "coverage": {
+      "owned_source": {
+        "src/cli_agent_orchestrator/services/delivery_admission.py": {
+          "covered_lines": 809,
+          "num_statements": 1075,
+          "percent_covered": 75.25581395348837,
+          "percent_covered_display": "75",
+          "missing_lines": 266,
+          "excluded_lines": 6
+        },
+        "src/cli_agent_orchestrator/services/original_control_owner.py": {
+          "covered_lines": 446,
+          "num_statements": 507,
+          "percent_covered": 87.96844181459566,
+          "percent_covered_display": "88",
+          "missing_lines": 61,
+          "excluded_lines": 0
+        }
+      },
+      "package_percent": 23.688214856331314,
+      "scope": "20 selected modules; not whole-package/global acceptance"
+    },
+    "sql_schema_versions_preserved": 5,
+    "resource_schema_versions_preserved": 7,
+    "global_acceptance": false,
+    "production_cli_integrated": false,
+    "shared_activation": false
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "black",
+          "--check",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "src/cli_agent_orchestrator/services/original_control_owner.py",
+          "test/services/test_original_control_owner.py",
+          "test/postgres/test_original_control_owner.py"
+        ],
+        "exit_code": 0,
+        "files": [
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "src/cli_agent_orchestrator/services/original_control_owner.py",
+          "test/services/test_original_control_owner.py",
+          "test/postgres/test_original_control_owner.py"
+        ],
+        "source_hashes": {
+          "src/cli_agent_orchestrator/services/delivery_admission.py": "51c09599664ce42f9603f2bc45498e56e3bad66e93a3e3ae5a71c61824740b26",
+          "src/cli_agent_orchestrator/services/original_control_owner.py": "18eec0576ae990dee2dad0ccd60a76582e128851c5e158d6680edc7b0addd323",
+          "test/services/test_original_control_owner.py": "ea588d709639a2631b4b492789bcb3ee073b668e946675c32f791b1b72b8b583",
+          "test/postgres/test_original_control_owner.py": "85b8af0cc4a0f2947cfdee200ec1e1882d02347810ae2979f1430869f2145c16"
+        }
+      },
+      {
+        "name": "isort",
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "isort",
+          "--check-only",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "src/cli_agent_orchestrator/services/original_control_owner.py",
+          "test/services/test_original_control_owner.py",
+          "test/postgres/test_original_control_owner.py"
+        ],
+        "exit_code": 0,
+        "files": [
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "src/cli_agent_orchestrator/services/original_control_owner.py",
+          "test/services/test_original_control_owner.py",
+          "test/postgres/test_original_control_owner.py"
+        ],
+        "source_hashes": {
+          "src/cli_agent_orchestrator/services/delivery_admission.py": "51c09599664ce42f9603f2bc45498e56e3bad66e93a3e3ae5a71c61824740b26",
+          "src/cli_agent_orchestrator/services/original_control_owner.py": "18eec0576ae990dee2dad0ccd60a76582e128851c5e158d6680edc7b0addd323",
+          "test/services/test_original_control_owner.py": "ea588d709639a2631b4b492789bcb3ee073b668e946675c32f791b1b72b8b583",
+          "test/postgres/test_original_control_owner.py": "85b8af0cc4a0f2947cfdee200ec1e1882d02347810ae2979f1430869f2145c16"
+        }
+      }
+    ],
+    "cold_mypy": {
+      "source_files": 459,
+      "incremental": false,
+      "errors": 0,
+      "configuration_changed": false,
+      "scope": "src only; all source/config hashes still match the actual cold run, later native-test-only mutation excluded"
+    }
+  },
+  "architecture": {
+    "files": 462,
+    "dependencies": 2104,
+    "contracts_kept": 5,
+    "contracts_broken": 0,
+    "exit_code": 0,
+    "log_sha256": "671a53134e8af549d05b5c6ab342fcfccd66c1ab45e6dd902b5f04eebe5c78a6"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+    "service_profile": "cao-spec021-local-postgres-v3",
+    "lease_owner_pid": 6160,
+    "lease_owner_start_ticks": "273049",
+    "server_version_prefix": "18.6",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "graphify": {
+    "private": true,
+    "partial": true,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+        "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "51c09599664ce42f9603f2bc45498e56e3bad66e93a3e3ae5a71c61824740b26"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "d660d00a37cac7a2e0de7cd739550f238e26e15df1feebe6701bf9508af8c47b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/original_control_owner.py",
+        "sha256": "18eec0576ae990dee2dad0ccd60a76582e128851c5e158d6680edc7b0addd323"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "test/postgres/test_original_control_owner.py",
+        "sha256": "85b8af0cc4a0f2947cfdee200ec1e1882d02347810ae2979f1430869f2145c16"
+      },
+      {
+        "path": "test/services/test_admission_command_diagnostics.py",
+        "sha256": "ff97483289857df5c50f90806dee5ee21d59156547aa773e2751c1fe411fe491"
+      },
+      {
+        "path": "test/services/test_admission_command_reservation.py",
+        "sha256": "ce8dd2dc97ddbacdeee76ad95e652faf54c55fbd5c73ceab46eb0b87fb0053be"
+      },
+      {
+        "path": "test/services/test_admission_command_thread.py",
+        "sha256": "703efb98e7ae731e911331d0c06dfda4acabd57e3e0c857a8e9522f4bbe23c3b"
+      },
+      {
+        "path": "test/services/test_original_control_owner.py",
+        "sha256": "ea588d709639a2631b4b492789bcb3ee073b668e946675c32f791b1b72b8b583"
+      }
+    ],
+    "nodes": 490,
+    "edges": 1279,
+    "failed_sources": []
+  },
+  "behavior": {
+    "original_native_worker": true,
+    "single_pg_backend": true,
+    "no_connection_fallback": true,
+    "typed_resource_funded_mailbox": true,
+    "retained_startup_charge": true,
+    "periodic_control_recovery": true,
+    "cancellation_detaches_waiter": true,
+    "no_executor_per_request": true,
+    "no_fixed_mailbox_or_agent_count": true,
+    "exact_pid_thread_task": true,
+    "copy_and_foreign_pid_rejected": true,
+    "no_replay_after_session_poison": true,
+    "own_queue_rejected_before_external_drain": true,
+    "ready_failure_before_external_drain": true,
+    "positive_native_close_and_join_required": true,
+    "concurrent_close_idempotent": true,
+    "retirement_and_reply_atomic_for_ledger_observers": true,
+    "native_declared_compute_saturation_rejects_before_worker": true
+  },
+  "reviews": {
+    "ecc": [
+      "architect",
+      "database-reviewer",
+      "python-reviewer"
+    ],
+    "model": "GPT-6 Luna Max",
+    "read_only": true,
+    "claude_job": "28be7a66a26b4c7eb77004c8d09aa2a5",
+    "claude_status": "approved scoped F1/F2; no test/DB execution",
+    "lead_verified": true
+  },
+  "history": [
+    {
+      "phase": "original-control-owner-first",
+      "passed": 5,
+      "failed": 3,
+      "accepted": false,
+      "cause": "Harness assumed immediate command capacity after readiness; actual first refusal reason was not captured. Recovery is a source-backed explanation, not a directly observed historical reason."
+    },
+    {
+      "phase": "original-control-owner-focused-final",
+      "passed": 319,
+      "failed": 1,
+      "accepted": false,
+      "cause": "Poison scenario had already verified retirement; redundant finally close rethrew its expected stored error. Cleanup now closes only when retirement is unproven."
+    },
+    {
+      "phase": "clock-launch-red",
+      "accepted": false
+    },
+    {
+      "phase": "dispatch-cleanup-red",
+      "accepted": false
+    },
+    {
+      "phase": "atomic-reply-red",
+      "accepted": false
+    },
+    {
+      "phase": "latest-main-unit",
+      "passed": 72
+    },
+    {
+      "phase": "original-control-owner-acceptance",
+      "passed": 320,
+      "failed": 0,
+      "accepted": false,
+      "superseded_by": "additional native saturation control; no production source mutation"
+    }
+  ],
+  "limits": [
+    "Opt-in component: no production issuer or CLI/API/runtime wiring.",
+    "Startup reservation and signed SQL certificate supplied externally; actor creates neither authority nor capacity.",
+    "Real PG/process/threads; compute observations and footprints are synthetic, not measured model capacity or M1.",
+    "Shared activation, distributed custody/reconciliation and M1/M2/M3/SDK/UI remain pending.",
+    "Unproven native start, close or message retirement remains charged with a sticky hold; no supported refund/retry by timeout.",
+    "320 selected cases preserve286 relevant baseline IDs; this cut does not rerun all1671 accepted baseline cases."
+  ],
+  "knowledge": {
+    "operation_id": "markdown-20261103-original-control-owner",
+    "changed_paths": [
+      "wiki/concepts/Multiagent capacity evidence.md",
+      "wiki/index.md",
+      "wiki/log.md"
+    ],
+    "strict_lint_issues": 0
+  },
+  "composition_report": "composition-t014-original-control-owner.md",
+  "native_saturation": {
+    "basis": "synthetic declared compute quantities from current ledger with real actor/channel/PostgreSQL",
+    "fixed_count_added": false,
+    "reply_count": 28,
+    "refused_before_worker": true,
+    "original_channel_still_live": true,
+    "physical_host_or_pg_pressure_claimed": false
+  }
+}

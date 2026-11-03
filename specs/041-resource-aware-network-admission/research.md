@@ -1,5 +1,9 @@
 # Research — 041
 
+## Decisión H2.2b.2: cargo de cola retenido y un solo ledger
+
+Un token pendiente en una cola es insuficiente: observe/invalidate/stop pueden devolverlo mientras el payload aún existe. Se enlaza el token al worker financiado antes de publicación y solo ese worker acredita su rechazo/finish. La cola se limita por recursos, sin una constante de agentes. Se exige que startup y monitor compartan DeliveryAdmission para no duplicar ledgers físicos ni ocultar el coste de infraestructura. Si ese ledger no tiene capacidad fresca/autoridad, start falla cerrado; no se desactiva shared-required ni se crea una muestra para desbloquearlo. El emisor externo que proporciona ese estado sigue siendo dependencia productiva no acreditada. Diagnóstico puede usar caché sin buzón; el primer corte no añade callbacks arbitrarios ni activación shared.
+
 ## Decisión H2.2b.1: financiar antes de Thread.start
 
 CommandReservation.start actual fija identidad desde el callback, demasiado tarde para financiar la creación del hilo o impedir liberación de una reserva aún pendiente. Se añade un lanzamiento interno que registra el hilo exacto antes de su inicio y conserva el cargo hasta join. Alternativas rechazadas: cargar desde el hijo; confiar en Future.done como prueba física; liberar tras un error de start; crear un ledger con capacidad inventada para el bootstrap. La financiación externa y la activación shared siguen siendo contratos separados. ECC Arquitectura y Python revisan estas fronteras sin escrituras paralelas.
@@ -194,3 +198,6 @@ El constructor leía control_storage_slots antes del preflight y podía esperar 
 El contador available_slots es el mínimo de unidades estándar de entrega y puede ser0 por storage aunque un comando RAM/CPU quepa: se usa comprobación positiva por componentes con capacidad reciente. Un registro separado evita receivers falsos y crédito shared/data accidental; ningún comando puede obtener un préstamo SQL. El control actual financia PG pero tiene footprint RAM/CPU0, por lo que esta reserva no resuelve el bootstrap de un actor nuevo. La presión recorre solo pendientes relevantes en orden de secuencia, con mezcla lineal.
 
 El productor diagnóstico anterior sumaba solo deliveries y storage-only: un comando legítimo rompía el validador y la ruta devolvía503 en el RED privado. Añadir campos a v1 extra=forbid rompería consumidores estrictos; se elige versión2 y409 explícito para v1 incompatible. Un wirev1 congelado antes del cambio y casos de URL reales contrastan compatibilidad. El fallo de fábrica None del recorrido completo H2.1 exigió conservar la llamada anterior, sin cambiar su test; los consumidores/fábricas se buscan antes del siguiente congelado.
+
+
+H2.2b.2, revisión de implementación: finish y publicación del reply se serializan con el guard del ledger para que snapshot/admisión no vean cargo liberado con Future pendiente. No se ejecutan SQL ni callbacks de aplicación bajo ese guard. Los errores de retirada conservan el cargo y el error primario. Ready/recuperación/capacidad son señales distintas; el arnés observa el ciclo real y cierra en finally únicamente cuando falta prueba de retiro. [Resultados y límites](composition-t014-original-control-owner.md).

@@ -1,5 +1,13 @@
 # Admisión dinámica y capacidad distribuida — Implementation Plan
 
+## Corte H2.2b.2 — original_control_owner
+
+1. Añadir un puerto interno de despacho de CommandReservation a CommandThread exacto ya registrado y vivo del mismo ledger. Marcarlo iniciado antes de publicar; entrada/rechazo/finish solo en el worker enlazado. Conservar start/finish heredados y el cargo de infraestructura hasta su join.
+2. Crear services/original_control_owner.py con OriginalControlConfig, OriginalControlOwner y error fijo de indisponibilidad. Composición explícita de bootstrap/owner/control/certificado/claves públicas/policy loader/coste de comando/reloj/resource factory; ninguna configuración ambiental crea financiación implícita.
+3. El entrypoint fijo crea canal/sesión/monitor bound en el hilo. Ready y resultado son Futures privados protegidos frente a cancelación. Buzón de registros refresh, con coste antes de publicación; diagnóstico cached comparte la proyección v1/v2. El ciclo de control usa el coste positivo de infraestructura, no un grant normal de coste cero.
+4. Retener dueño/resultados al parar o perder observación. Rechazar cola sin SQL al fallar/poison; respetar finalización física del canal y separar join del hilo de retiro de crédito SQL/custodia. No cerrar sobre participantes externos activos ni informar de retiro si falta evidencia. Poll/espera de cierre async sin executor por solicitante.
+5. Implementación ECC aislada en worktree Linux, sin commits ni PG del agente. Lead integra/revisa en main y ejecuta pruebas reales serializadas con productor root firmado/PG reutilizados: un driver/backend/worker en refreshes repetidos, >20 solicitudes, presión/cancelación/poison/shutdown. Tipos/formato/contratos/composición y recibos exactos antes de aceptación. Preservar pendientes globales y guards SQL/shared.
+
 ## Corte H2.2b.1 — traspaso antes del hilo
 
 1. Ampliar CommandReservation en services/delivery_admission.py con lanzamiento financiado de un callback interno tipado; conservar start/finish actuales para comandos que no crean hilo. Extraer la comprobación de capacidad común sin alterar su semántica.

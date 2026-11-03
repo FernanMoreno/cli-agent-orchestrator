@@ -1,5 +1,13 @@
 # Claude Code: análisis y pendientes
 
+**2026-11-03 · T014.R.H2.2b.2: actor original de control validado por componente.**
+
+Un hilo, canal y backend PostgreSQL; buzón tipado con admisión por recursos, ciclos periódicos con la recuperación de política intacta y cancelación sin liberación prematura. El cierre exige pruebas positivas del canal y del hilo. La retirada del cargo y la publicación de la respuesta son atómicas para los observadores del ledger.
+
+**320 pruebas aprobadas**, sin fallos, errores ni omisiones; 10 advertencias en 20 módulos. Conserva 286 casos previos relevantes y añade 34 (26 unitarios y 8 nativos). Cuatro Python y dos fuentes coinciden con el archivo ejecutado; tipos de 459 archivos, arquitectura 5/0 y PostgreSQL limpio. Los diagnósticos anteriores de 3 fallos/5 pases y 1 fallo/319 pases se conservan como fallidos y no se suman.
+
+La capacidad de cómputo de estas pruebas es sintética: no acredita 25 modelos ni M1. Siguen pendientes el emisor, la integración CLI/runtime, shared, custodia, M1/M2/M3, SDK/UI y los diez gates originales. [Validación](../specs/041-resource-aware-network-admission/validation-t014-original-control-owner.json), [composición](../specs/041-resource-aware-network-admission/composition-t014-original-control-owner.md).
+
 **2026-10-29 · T229: descubrimiento nativo no vacío aceptado en su alcance.**
 Claude2.1.303 recibe al compañero esperado y excluye dos señuelos reales por
 grupo/sesión y al propio agente. Caso126,44s/1894archivos, filas HTTP/nativo

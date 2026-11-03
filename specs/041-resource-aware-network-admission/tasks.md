@@ -1,5 +1,13 @@
 # Tasks: Admisión dinámica y capacidad distribuida
 
+## T014.R.H2.2b.2 — propietario y buzón tipado (validado por componente)
+
+- [x] H2B2-01 Especificación/plan/contratos, impacto Graphify privado e inspección de bootstrap/monitor/root/session y consumidores.
+- [x] H2B2-02 RED/GREEN aislados de despacho y actor en test/services/test_original_control_owner.py; no PG concurrente con el lead.
+- [x] H2B2-03 Implementar src/cli_agent_orchestrator/services/original_control_owner.py y puerto interno de despacho en delivery_admission.py; sin autoridad implícita ni cambio de defaults productivos.
+- [x] H2B2-04 Integrar código revisado en main; RED/GREEN y composición real en test/postgres/test_original_control_owner.py, mismo worker/canal/backend, saturación y cierre conservador.
+- [x] H2B2-05 Formato/tipos/regresión aplicable/arquitectura, revisión ECC/Claude read, diff/grafo/conocimiento/recibos y pendientes. No cerrar emisor/CLI/shared/custodia ni los diez gates originales por este componente.
+
 ## T014.R.H2.2b.1 — prerrequisito de arranque del propietario (validado por componente)
 
 - [x] H2B1-01 Contrastar conocimiento, spec/plan/contratos y grafo privado antes de implementación; verificar callers en fuente.
@@ -292,3 +300,6 @@ T014.R.H2.1/H2.2a (2026-11-03), componentes controlados validados: envelope/boot
 
 
 T014.R.H2.2b.1 (2026-11-03), traspaso financiado de hilo validado por componente: cargo RAM/CPU iniciado antes de Thread.start, entrada exacta con generación/frescura/capacidad, resultado separado de salida y retiro solo tras retorno/join físicos. Stop/presión/cancelación no devuelven cargos despachados; error de start conserva handle y coste, sin reintento/refund si falta observación de entrada/salida. Espera async shield sin executor por solicitante; join es síncrono. **1671 PASS**, 0 fallos/errores/omisiones, 16 advertencias, 121 módulos; conserva 1.654 IDs y añade 17. Una fuente/dos Python ejecutados exactos, tipos458/frío, formato/arquitectura aprobados y mismo PG18.6 limpio tras cierre. Hilos reales con costes sintéticos, no modelos ni M1 físico. Actor/buzón/financiación externa/CLI/shared/custodia/M1/M2/M3/SDK/UI y diez gates siguen pendientes. [Validación](validation-t014-funded-command-thread.json), [composición](composition-t014-funded-command-thread.md).
+
+
+T014.R.H2.2b.2 (2026-11-03), actor original opt-in validado por componente: un hilo/canal/backend PG, buzón tipado financiado por recursos, ciclos periódicos con recuperación de política intacta, cancelación sin refund y cierre/join positivos. Retirada/respuesta atómicas para observadores del ledger; errores de inicio/despacho y cierre corregidos. **320 PASS**,0 fallos/errores/omisiones,10 advertencias,20 módulos:286 IDs previos relevantes+34 nuevos (26 unitarios/8 nativos). Cuatro Python/dos fuentes archivadas exactas, tipos459/frío, arquitectura5/0 y PG18.6 limpio. Primer diagnóstico3fallos/5pases conservado como fallo de arnés; no se suma. Observaciones compute sintéticas; no25 modelos ni M1. Emisor/CLI/shared/custodia/M1/M2/M3/SDK/UI y diez gates originales siguen pendientes. [Validación](validation-t014-original-control-owner.json), [composición](composition-t014-original-control-owner.md).

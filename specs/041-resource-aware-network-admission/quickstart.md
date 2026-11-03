@@ -1,5 +1,9 @@
 # Validation guide — 041
 
+H2.2b.2, resultado 2026-11-03:320 PASS/20 módulos;286 IDs previos relevantes+34 nuevos. El primer ciclo ready no acredita capacidad: esperar la señal del monitor real con recuperación intacta. PostgreSQL, cancelación y poison contrastados; evitar repetir close sobre un actor retirado cuyo error terminal es esperado. [Recibo](validation-t014-original-control-owner.json), [composición y límites](composition-t014-original-control-owner.md).
+
+H2.2b.2: mantener separadas las pruebas unitarias del actor con contextos instrumentados y el recorrido root firmado/PostgreSQL real. Verificar mismo PID/Thread/task/session/driver/backend y más de veinte solicitudes, no veinte modelos. Observar cargo de mensajes antes de visibilidad, denegación por recursos, cancelación/poison, readiness sin capacidad y cierre sin crédito prematuro. Startup ausente/otro ledger/shared-unready no abre SQL. Reutilizar keeper/perfil PG y serializar los casos reales; no usar los ejemplos unitarios como emisor productivo.
+
 H2.2b.1: antes de la regresión, reproducir API ausente en test/services/test_admission_command_thread.py. Usar barreras/eventos, no sleeps, para observar cargo previo a entrada, retorno previo a salida, start fallido y join tardío. Conservar pruebas de falta de recursos, presión y capacidad desconocida. No interpretar hilos de callback como modelos ni como actor/CLI productivos. Declarar separadamente las pruebas PostgreSQL reutilizadas y los casos nuevos sin SQL.
 
 1. Leer spec/plan/tasks y el manifiesto del intento. Verificar main, estado git, memoria y dueño/identidad exacta del PostgreSQL existente. No iniciar contenedores alternativos ni modelos.
