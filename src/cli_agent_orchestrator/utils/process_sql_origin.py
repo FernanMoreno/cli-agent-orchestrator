@@ -43,6 +43,7 @@ class _State:
     startup_spent: bool = False
     startup_grant: _StartupOpening | None = None
     root_required: bool = False
+    root_control_activation_spent: bool = False
     ever_admitted: bool = False
     broker: _SqlBroker | None = None
     broker_installed: bool = False
@@ -126,6 +127,8 @@ def _successor(state: _State, pid: int) -> _State:
         startup_failed=state.startup_failed,
         startup_spent=state.startup_required,
         root_required=state.root_required,
+        # A fork cannot inherit an unspent activation as a second consumer.
+        root_control_activation_spent=True,
         ever_admitted=state.ever_admitted,
     )
 
@@ -378,6 +381,25 @@ def _check_root_sql_startup_pending() -> None:
             or state.sealed
         ):
             raise SqlStartupPermissionUnavailable("root SQL startup is unavailable")
+
+
+def _claim_root_control_activation() -> None:
+    """Consume the independent pre-SQL compute activation once in this process."""
+    state = _process_state()
+    with state.guard:
+        _latch_sql_mode(state)
+        if (
+            not state.root_required
+            or state.startup_failed
+            or state.startup_spent
+            or state.startup_grant is not None
+            or state.broker_installed
+            or state.sealed
+            or state.ever_admitted
+            or state.root_control_activation_spent
+        ):
+            raise SqlStartupPermissionUnavailable("root control activation is unavailable")
+        state.root_control_activation_spent = True
 
 
 def _install_root_sql_startup_permission(permission: VerifiedSqlStartupPermission) -> None:

@@ -1,0 +1,480 @@
+{
+  "schema": "caos.resource-admission.validation.v1",
+  "date": "2026-11-03",
+  "component": "T014.R.H2.3",
+  "status": "validated-opt-in-signed-pre-sql-control-activation",
+  "base_head": "08a3421481aa84496607a24098f977f627057f64",
+  "global_acceptance": false,
+  "acceptance": {
+    "phase": "root-activation-regression",
+    "passed": 503,
+    "baseline_relevant_passed": 365,
+    "baseline_accepted_union": 1705,
+    "new_distinct_cases": 47,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "modules": 30,
+    "warnings": 10,
+    "seconds": 341.349,
+    "available_mib": 11158,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "1f0302076696a4d59f4a68ab283997c2c625260075858d161eedf0d79fc16a24",
+    "source_archive_matches": 16,
+    "production_archive_matches": 12,
+    "source_files": [
+      {
+        "sha256": "195bae0cedf770336fa23368de801ff605a689a687fae9ef0f19c2a809b55cf0",
+        "path": "src/cli_agent_orchestrator/models/resource_compute.py"
+      },
+      {
+        "sha256": "a9b7a42f615f46dff5cfe27741ad278b6d33db833a96ac6ca32531a005b138c3",
+        "path": "src/cli_agent_orchestrator/models/root_control_activation.py"
+      },
+      {
+        "sha256": "3f8328e63504830f10cff4a006945d6d7a30e733cdaa921d42955346f2161e9d",
+        "path": "src/cli_agent_orchestrator/models/sql_root_genesis.py"
+      },
+      {
+        "sha256": "c75e2d21e22d1fb774f515bd464447c6bd1e1a05d315b7d92c96693f7bd9a2e7",
+        "path": "src/cli_agent_orchestrator/services/root_control_activation.py"
+      },
+      {
+        "sha256": "3932ae56ca4854041e6f7fb830b252c292523c3390d0c39f29b0af16325fa6b4",
+        "path": "src/cli_agent_orchestrator/services/admission_bootstrap.py"
+      },
+      {
+        "sha256": "b4eba42a9a670eebd86f26c9c0d6e957da8d5340ceb0d62f976b6670298337bf",
+        "path": "src/cli_agent_orchestrator/services/admission_monitor.py"
+      },
+      {
+        "sha256": "c213aed7364de7c14c80bdfdc248906372c5d1b246e77bcc294d078a7c202080",
+        "path": "src/cli_agent_orchestrator/runtime_channel/root_control.py"
+      },
+      {
+        "sha256": "2d36220785d27e7c5bd07ca9461a53d91adced04dff6d75f292e41766d28d78e",
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py"
+      },
+      {
+        "sha256": "83afd34fbd404f6fa4a80898e7d7dbcf09830279c3d90cb5b9781d9fa81a965c",
+        "path": "src/cli_agent_orchestrator/services/admission_policy.py"
+      },
+      {
+        "sha256": "2ff6b57c5b0a6da4a37fa5b25c19e3739bd8df11e367ccf559d1666140359c11",
+        "path": "src/cli_agent_orchestrator/services/original_control_owner.py"
+      },
+      {
+        "sha256": "49fc1f3497b4d3673187c5683778a91b7a29e5627e7c1f82964c5e247e5ff58b",
+        "path": "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py"
+      },
+      {
+        "sha256": "c23ac59177e2f0f46f353c90e96f044ee03b655a5c68196948686d9ac93a0bbd",
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py"
+      },
+      {
+        "sha256": "82f37041399335c698ba80e6f97c4437bdced07e877d64658b66776f93d9ede4",
+        "path": "test/services/test_root_control_activation.py"
+      },
+      {
+        "sha256": "3ed3abe09dd568e74ba11f0e895d5ff3740c20b5f94b6632b92b855db3a2072b",
+        "path": "test/services/test_root_control_startup.py"
+      },
+      {
+        "sha256": "dd2c2b6a0aa9d8b5d45d283b032ceb98f6da7179dc040e0dfdb7e7b5e573d60a",
+        "path": "test/runtime_channel/test_root_control.py"
+      },
+      {
+        "path": "test/postgres/test_root_control_activation.py",
+        "sha256": "481307343d83b5ffbfc6527ad4c8c3809fc97ac71bc9e546a9a6a35983567243"
+      }
+    ],
+    "foreign_files_preserved": 12,
+    "coverage": {
+      "owned_source": {
+        "src/cli_agent_orchestrator/models/resource_compute.py": {
+          "covered_lines": 37,
+          "num_statements": 42,
+          "percent_covered": 88.0952380952381,
+          "percent_covered_display": "88",
+          "missing_lines": 5,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/models/root_control_activation.py": {
+          "covered_lines": 223,
+          "num_statements": 260,
+          "percent_covered": 85.76923076923077,
+          "percent_covered_display": "86",
+          "missing_lines": 37,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/models/sql_root_genesis.py": {
+          "covered_lines": 172,
+          "num_statements": 218,
+          "percent_covered": 78.89908256880734,
+          "percent_covered_display": "79",
+          "missing_lines": 46,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/services/root_control_activation.py": {
+          "covered_lines": 157,
+          "num_statements": 191,
+          "percent_covered": 82.19895287958116,
+          "percent_covered_display": "82",
+          "missing_lines": 34,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/services/admission_bootstrap.py": {
+          "covered_lines": 201,
+          "num_statements": 239,
+          "percent_covered": 84.10041841004184,
+          "percent_covered_display": "84",
+          "missing_lines": 38,
+          "excluded_lines": 2
+        },
+        "src/cli_agent_orchestrator/services/admission_monitor.py": {
+          "covered_lines": 435,
+          "num_statements": 473,
+          "percent_covered": 91.9661733615222,
+          "percent_covered_display": "92",
+          "missing_lines": 38,
+          "excluded_lines": 4
+        },
+        "src/cli_agent_orchestrator/runtime_channel/root_control.py": {
+          "covered_lines": 149,
+          "num_statements": 177,
+          "percent_covered": 84.18079096045197,
+          "percent_covered_display": "84",
+          "missing_lines": 28,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/services/delivery_admission.py": {
+          "covered_lines": 839,
+          "num_statements": 1111,
+          "percent_covered": 75.51755175517552,
+          "percent_covered_display": "76",
+          "missing_lines": 272,
+          "excluded_lines": 6
+        },
+        "src/cli_agent_orchestrator/services/admission_policy.py": {
+          "covered_lines": 117,
+          "num_statements": 120,
+          "percent_covered": 97.5,
+          "percent_covered_display": "98",
+          "missing_lines": 3,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/services/original_control_owner.py": {
+          "covered_lines": 469,
+          "num_statements": 533,
+          "percent_covered": 87.99249530956848,
+          "percent_covered_display": "88",
+          "missing_lines": 64,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py": {
+          "covered_lines": 78,
+          "num_statements": 90,
+          "percent_covered": 86.66666666666667,
+          "percent_covered_display": "87",
+          "missing_lines": 12,
+          "excluded_lines": 0
+        },
+        "src/cli_agent_orchestrator/utils/process_sql_origin.py": {
+          "covered_lines": 196,
+          "num_statements": 288,
+          "percent_covered": 68.05555555555556,
+          "percent_covered_display": "68",
+          "missing_lines": 92,
+          "excluded_lines": 0
+        }
+      },
+      "package_percent": 24.981170917854993,
+      "scope": "30 selected modules; not whole-package/global acceptance"
+    },
+    "sql_schema_versions_preserved": 5,
+    "resource_schema_versions_preserved": 7,
+    "global_acceptance": false,
+    "central_api_integrated": false,
+    "deployment_funded_producer": false,
+    "opt_in_sdk_and_cli": true,
+    "shared_activation": false,
+    "unchanged_neighbor_cases": 91,
+    "unchanged_neighbor_modules": [
+      "test/services/test_admission_resources.py",
+      "test/services/test_admission_policy.py"
+    ],
+    "unchanged_neighbors_match_head": true
+  },
+  "checks": {
+    "format": [
+      {
+        "name": "black",
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "black",
+          "--check",
+          "src/cli_agent_orchestrator/models/resource_compute.py",
+          "src/cli_agent_orchestrator/models/root_control_activation.py",
+          "src/cli_agent_orchestrator/models/sql_root_genesis.py",
+          "src/cli_agent_orchestrator/services/root_control_activation.py",
+          "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+          "src/cli_agent_orchestrator/services/admission_monitor.py",
+          "src/cli_agent_orchestrator/runtime_channel/root_control.py",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "src/cli_agent_orchestrator/services/admission_policy.py",
+          "src/cli_agent_orchestrator/services/original_control_owner.py",
+          "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+          "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+          "test/services/test_root_control_activation.py",
+          "test/services/test_root_control_startup.py",
+          "test/runtime_channel/test_root_control.py",
+          "test/postgres/test_root_control_activation.py"
+        ],
+        "exit_code": 0,
+        "source_hashes": {
+          "src/cli_agent_orchestrator/models/resource_compute.py": "195bae0cedf770336fa23368de801ff605a689a687fae9ef0f19c2a809b55cf0",
+          "src/cli_agent_orchestrator/models/root_control_activation.py": "a9b7a42f615f46dff5cfe27741ad278b6d33db833a96ac6ca32531a005b138c3",
+          "src/cli_agent_orchestrator/models/sql_root_genesis.py": "3f8328e63504830f10cff4a006945d6d7a30e733cdaa921d42955346f2161e9d",
+          "src/cli_agent_orchestrator/services/root_control_activation.py": "c75e2d21e22d1fb774f515bd464447c6bd1e1a05d315b7d92c96693f7bd9a2e7",
+          "src/cli_agent_orchestrator/services/admission_bootstrap.py": "3932ae56ca4854041e6f7fb830b252c292523c3390d0c39f29b0af16325fa6b4",
+          "src/cli_agent_orchestrator/services/admission_monitor.py": "b4eba42a9a670eebd86f26c9c0d6e957da8d5340ceb0d62f976b6670298337bf",
+          "src/cli_agent_orchestrator/runtime_channel/root_control.py": "c213aed7364de7c14c80bdfdc248906372c5d1b246e77bcc294d078a7c202080",
+          "src/cli_agent_orchestrator/services/delivery_admission.py": "2d36220785d27e7c5bd07ca9461a53d91adced04dff6d75f292e41766d28d78e",
+          "src/cli_agent_orchestrator/services/admission_policy.py": "83afd34fbd404f6fa4a80898e7d7dbcf09830279c3d90cb5b9781d9fa81a965c",
+          "src/cli_agent_orchestrator/services/original_control_owner.py": "2ff6b57c5b0a6da4a37fa5b25c19e3739bd8df11e367ccf559d1666140359c11",
+          "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py": "49fc1f3497b4d3673187c5683778a91b7a29e5627e7c1f82964c5e247e5ff58b",
+          "src/cli_agent_orchestrator/utils/process_sql_origin.py": "c23ac59177e2f0f46f353c90e96f044ee03b655a5c68196948686d9ac93a0bbd",
+          "test/services/test_root_control_activation.py": "82f37041399335c698ba80e6f97c4437bdced07e877d64658b66776f93d9ede4",
+          "test/services/test_root_control_startup.py": "3ed3abe09dd568e74ba11f0e895d5ff3740c20b5f94b6632b92b855db3a2072b",
+          "test/runtime_channel/test_root_control.py": "dd2c2b6a0aa9d8b5d45d283b032ceb98f6da7179dc040e0dfdb7e7b5e573d60a",
+          "test/postgres/test_root_control_activation.py": "481307343d83b5ffbfc6527ad4c8c3809fc97ac71bc9e546a9a6a35983567243"
+        }
+      },
+      {
+        "name": "isort",
+        "argv": [
+          "uv",
+          "run",
+          "--offline",
+          "--no-sync",
+          "--project",
+          ".",
+          "isort",
+          "--check-only",
+          "src/cli_agent_orchestrator/models/resource_compute.py",
+          "src/cli_agent_orchestrator/models/root_control_activation.py",
+          "src/cli_agent_orchestrator/models/sql_root_genesis.py",
+          "src/cli_agent_orchestrator/services/root_control_activation.py",
+          "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+          "src/cli_agent_orchestrator/services/admission_monitor.py",
+          "src/cli_agent_orchestrator/runtime_channel/root_control.py",
+          "src/cli_agent_orchestrator/services/delivery_admission.py",
+          "src/cli_agent_orchestrator/services/admission_policy.py",
+          "src/cli_agent_orchestrator/services/original_control_owner.py",
+          "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+          "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+          "test/services/test_root_control_activation.py",
+          "test/services/test_root_control_startup.py",
+          "test/runtime_channel/test_root_control.py",
+          "test/postgres/test_root_control_activation.py"
+        ],
+        "exit_code": 0,
+        "source_hashes": {
+          "src/cli_agent_orchestrator/models/resource_compute.py": "195bae0cedf770336fa23368de801ff605a689a687fae9ef0f19c2a809b55cf0",
+          "src/cli_agent_orchestrator/models/root_control_activation.py": "a9b7a42f615f46dff5cfe27741ad278b6d33db833a96ac6ca32531a005b138c3",
+          "src/cli_agent_orchestrator/models/sql_root_genesis.py": "3f8328e63504830f10cff4a006945d6d7a30e733cdaa921d42955346f2161e9d",
+          "src/cli_agent_orchestrator/services/root_control_activation.py": "c75e2d21e22d1fb774f515bd464447c6bd1e1a05d315b7d92c96693f7bd9a2e7",
+          "src/cli_agent_orchestrator/services/admission_bootstrap.py": "3932ae56ca4854041e6f7fb830b252c292523c3390d0c39f29b0af16325fa6b4",
+          "src/cli_agent_orchestrator/services/admission_monitor.py": "b4eba42a9a670eebd86f26c9c0d6e957da8d5340ceb0d62f976b6670298337bf",
+          "src/cli_agent_orchestrator/runtime_channel/root_control.py": "c213aed7364de7c14c80bdfdc248906372c5d1b246e77bcc294d078a7c202080",
+          "src/cli_agent_orchestrator/services/delivery_admission.py": "2d36220785d27e7c5bd07ca9461a53d91adced04dff6d75f292e41766d28d78e",
+          "src/cli_agent_orchestrator/services/admission_policy.py": "83afd34fbd404f6fa4a80898e7d7dbcf09830279c3d90cb5b9781d9fa81a965c",
+          "src/cli_agent_orchestrator/services/original_control_owner.py": "2ff6b57c5b0a6da4a37fa5b25c19e3739bd8df11e367ccf559d1666140359c11",
+          "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py": "49fc1f3497b4d3673187c5683778a91b7a29e5627e7c1f82964c5e247e5ff58b",
+          "src/cli_agent_orchestrator/utils/process_sql_origin.py": "c23ac59177e2f0f46f353c90e96f044ee03b655a5c68196948686d9ac93a0bbd",
+          "test/services/test_root_control_activation.py": "82f37041399335c698ba80e6f97c4437bdced07e877d64658b66776f93d9ede4",
+          "test/services/test_root_control_startup.py": "3ed3abe09dd568e74ba11f0e895d5ff3740c20b5f94b6632b92b855db3a2072b",
+          "test/runtime_channel/test_root_control.py": "dd2c2b6a0aa9d8b5d45d283b032ceb98f6da7179dc040e0dfdb7e7b5e573d60a",
+          "test/postgres/test_root_control_activation.py": "481307343d83b5ffbfc6527ad4c8c3809fc97ac71bc9e546a9a6a35983567243"
+        }
+      }
+    ],
+    "cold_mypy": {
+      "exit_code": 0,
+      "source_count": 463,
+      "source_preserved": true,
+      "new_suppressions": false
+    },
+    "main_unittest": {
+      "passed": 111,
+      "overlapping": true
+    },
+    "first_native": {
+      "passed": 8,
+      "seconds": 69.37,
+      "overlapping": true
+    },
+    "architecture": {
+      "contracts_kept": 5,
+      "contracts_broken": 0
+    },
+    "postgres": {
+      "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+      "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+      "service_profile": "cao-spec021-local-postgres-v3",
+      "lease_owner_pid": 6160,
+      "lease_owner_start_ticks": "273049",
+      "server_version_prefix": "18.6",
+      "other_clients": 0,
+      "test_databases": 0,
+      "test_roles": 0,
+      "live_reuse_lease_verified": true,
+      "container_stopped": false
+    }
+  },
+  "graphify": {
+    "private": true,
+    "partial": true,
+    "source_files": [
+      {
+        "path": "src/cli_agent_orchestrator/clients/admission_bootstrap_repository.py",
+        "sha256": "49fc1f3497b4d3673187c5683778a91b7a29e5627e7c1f82964c5e247e5ff58b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/funded_control_session.py",
+        "sha256": "fa1a1bedf798f798c6dca68ab09da8b3e75ce3c3ddea6cb367e41e7864dd1357"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/clients/sql_intent_repository.py",
+        "sha256": "0a2a4cbd62569f01182ff15910b72bcba597695d3a0b8f8573599f190c5a49ec"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_compute.py",
+        "sha256": "195bae0cedf770336fa23368de801ff605a689a687fae9ef0f19c2a809b55cf0"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/resource_envelope.py",
+        "sha256": "2ede51fd1f9b70f47f6abb5da7ac074e53c7ec53a08c48fdcdee61b24f68553a"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/root_control_activation.py",
+        "sha256": "a9b7a42f615f46dff5cfe27741ad278b6d33db833a96ac6ca32531a005b138c3"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/models/sql_root_genesis.py",
+        "sha256": "3f8328e63504830f10cff4a006945d6d7a30e733cdaa921d42955346f2161e9d"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/runtime_channel/root_control.py",
+        "sha256": "c213aed7364de7c14c80bdfdc248906372c5d1b246e77bcc294d078a7c202080"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_bootstrap.py",
+        "sha256": "3932ae56ca4854041e6f7fb830b252c292523c3390d0c39f29b0af16325fa6b4"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+        "sha256": "b4eba42a9a670eebd86f26c9c0d6e957da8d5340ceb0d62f976b6670298337bf"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_policy.py",
+        "sha256": "83afd34fbd404f6fa4a80898e7d7dbcf09830279c3d90cb5b9781d9fa81a965c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/admission_resources.py",
+        "sha256": "1fe7bb830cd5f76dec2256cf8740130e3b529748f80c7a1ce96205de68ccaeff"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/delivery_admission.py",
+        "sha256": "2d36220785d27e7c5bd07ca9461a53d91adced04dff6d75f292e41766d28d78e"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+        "sha256": "d660d00a37cac7a2e0de7cd739550f238e26e15df1feebe6701bf9508af8c47b"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/original_control_owner.py",
+        "sha256": "2ff6b57c5b0a6da4a37fa5b25c19e3739bd8df11e367ccf559d1666140359c11"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_control_activation.py",
+        "sha256": "c75e2d21e22d1fb774f515bd464447c6bd1e1a05d315b7d92c96693f7bd9a2e7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/root_sql_control.py",
+        "sha256": "a43786e58bc9e85a69fa4d1f146d8914675f6c1eefc531460f3896f6b544663c"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/services/sql_root_genesis.py",
+        "sha256": "4f7e1feb19780e7d51144e8b8c9685f8fd83d2c8a3fe6aa4ab759762e9dca6a7"
+      },
+      {
+        "path": "src/cli_agent_orchestrator/utils/process_sql_origin.py",
+        "sha256": "c23ac59177e2f0f46f353c90e96f044ee03b655a5c68196948686d9ac93a0bbd"
+      },
+      {
+        "path": "test/postgres/test_root_control_activation.py",
+        "sha256": "481307343d83b5ffbfc6527ad4c8c3809fc97ac71bc9e546a9a6a35983567243"
+      },
+      {
+        "path": "test/runtime_channel/test_root_control.py",
+        "sha256": "dd2c2b6a0aa9d8b5d45d283b032ceb98f6da7179dc040e0dfdb7e7b5e573d60a"
+      },
+      {
+        "path": "test/services/test_root_control_activation.py",
+        "sha256": "82f37041399335c698ba80e6f97c4437bdced07e877d64658b66776f93d9ede4"
+      },
+      {
+        "path": "test/services/test_root_control_startup.py",
+        "sha256": "3ed3abe09dd568e74ba11f0e895d5ff3740c20b5f94b6632b92b855db3a2072b"
+      }
+    ],
+    "nodes": 852,
+    "edges": 2792,
+    "failed_sources": []
+  },
+  "reviews": {
+    "ecc_luna_max": [
+      "architecture",
+      "database",
+      "python"
+    ],
+    "claude_read_job": "97ffd6baad334d1dba513d35cae5b931",
+    "static_reviews_only": true,
+    "actionable_findings_remaining": 0,
+    "note": "Claude omitted runtime CLI from its stated review scope; lead read CLI and actual native CLI case passed. Its no-caller statement applies only to the central deployment producer."
+  },
+  "behavior": {
+    "external_deployment_keyring": true,
+    "separate_compute_signature": true,
+    "same_funded_migration_owner_issuer": true,
+    "one_use_signing_and_process_claims": true,
+    "actual_linux_pre_sql_compute": true,
+    "storage_unknown_before_sql": true,
+    "post_sample_binding_revalidated": true,
+    "exact_envelope_first_cycle": true,
+    "sdk_consumer": true,
+    "opt_in_process_consumer": true,
+    "no_fixed_agent_or_delivery_count": true
+  },
+  "pending": [
+    "funded deployment supervisor and secure packet delivery",
+    "central API pre-SQL wiring",
+    "shared activation and custody/reconciliation",
+    "physical model capacity M1/M2/M3",
+    "remaining SDK/UI integration and ten original gates"
+  ],
+  "private_receipts": "/home/felni/.cache/caos-root-activation-20261103",
+  "knowledge": {
+    "operation_id": "markdown-20261103-root-control-activation",
+    "pages": 3,
+    "strict_lint_issues": 0
+  }
+}

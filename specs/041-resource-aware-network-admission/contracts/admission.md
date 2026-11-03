@@ -259,3 +259,9 @@ GET /admission/diagnostics?version=2 devuelve version2 y operations.commands={in
 
 
 ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=invalid_diagnostics_query y no-store, sin reflejar entradas ni etiquetarlos como envelope. El resto de rutas de recursos conserva invalid_resource_envelope. Separar la política de validación de la ruta diagnóstica y documentar/probar el DTO422; mantener JWTadmin y la forma v1/v2. Primero reproducir el cuerpo incorrecto en el test ASGI, después corregir sin rebajar el status ni la cobertura.
+
+## H2.3 — autoridad de activación separada
+
+RootControlActivation lleva certificado SQL v1, ResourceEnvelopeRecord completo, costes positivos startup/refresh RAM/CPU (cero SQL), versión/kind/key_id/firma de dominio separado y tamaño acotado. Se rechazan claves duplicadas/desconocidas, bools como cantidades, NaN/inf, binding cruzado y envelope inactivo/incompleto. La firma se verifica con keyring externo; datos o firma SQL por sí solos no emiten cómputo.
+
+La reserva startup-only es interna, sellada, PID/ledger/generación ligados; nunca se obtiene desde requests ordinarios ni habilita normal/shared admission. One-use preflight se conserva aparte de startup_spent/ever_admitted y no se rearma por fallo, expiración o fork. Readback esperado compara el envelope entero antes de observación/capacidad/ready. Una revisión distinta falla cerrada incluso si eleva presupuesto.

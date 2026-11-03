@@ -112,6 +112,48 @@ class ResourceEnvelopeRepository:
         with self._connect(target, readonly=True) as reader:
             return self._read_latest_from(reader, target, instance_id)
 
+    def read_latest_owner_funded(
+        self,
+        channel: Connection,
+        target: DatabaseTarget,
+        instance_id: str,
+    ) -> ResourceEnvelopeRecord | None:
+        """Read existing envelope authority on the original funded owner channel.
+
+        This is issuer-only composition. It does not open a new connection,
+        create a table, repair metadata, or turn the envelope into SQL credit.
+        """
+        if (
+            type(channel) is not Connection
+            or type(target) is not DatabaseTarget
+            or target.scope != "main"
+            or channel.target.identity != target.identity
+            or channel.target.store_id != target.store_id
+        ):
+            raise StorageAdmissionUnavailable()
+        channel._check_funded_worker()
+        instance_id = str(UUID(instance_id))
+        with channel.funded_transaction() as owner:
+            owner.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            verify_component(owner, RESOURCE_ENVELOPE_MIGRATIONS)
+            ownership = owner.execute(
+                """SELECT n.nspowner=r.oid AND c.relowner=r.oid
+                FROM pg_catalog.pg_namespace n
+                JOIN pg_catalog.pg_class c ON c.relnamespace=n.oid
+                JOIN pg_catalog.pg_roles r ON r.rolname=current_user
+                WHERE n.nspname=%s AND c.relname=%s""",
+                (target.schema, RESOURCE_ENVELOPE_TABLE),
+            ).fetchone()
+            if ownership is None or ownership[0] is not True:
+                raise SchemaMismatch("Funded resource reader must own its namespace and table")
+            row = owner.execute(
+                sql.SQL(
+                    "SELECT * FROM {} WHERE instance_id=%s ORDER BY revision DESC LIMIT 1"
+                ).format(sql.Identifier(target.schema, RESOURCE_ENVELOPE_TABLE)),
+                (instance_id,),
+            ).fetchone()
+            return None if row is None else _record(row)
+
     def append(
         self,
         target: DatabaseTarget,

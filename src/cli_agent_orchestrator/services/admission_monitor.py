@@ -13,6 +13,7 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
 )
 from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
+from cli_agent_orchestrator.models.resource_envelope import ResourceEnvelopeRecord
 from cli_agent_orchestrator.services.admission_bootstrap import (
     AttestationLoadResult,
     ResourceBootstrap,
@@ -178,6 +179,9 @@ class AdmissionMonitor:
     Construction is trusted server wiring. An optional local storage supplier
     adds a separate domain after external/retiring use, before this ledger's leases.
     Sampling never replaces the PG sampler, including after an uncertain open.
+    An optional expected envelope pins only the bootstrap cycle: its authority
+    reads must match before the first sample and before publication. Later cycles
+    return to the normal dynamic authority view.
     """
 
     def __init__(
@@ -194,6 +198,7 @@ class AdmissionMonitor:
         resource_factory: Callable[[VerifiedResourceAttestation], ResourceSampler] | None = None,
         authority_state: AuthorityMutationState | None = None,
         control_session: FundedControlSession | None = None,
+        expected_envelope: ResourceEnvelopeRecord | None = None,
     ):
         if control_session is not None:
             if type(control_session) is not FundedControlSession or storage_control is None:
@@ -202,12 +207,21 @@ class AdmissionMonitor:
             storage_control.check_current_operation()
         if not isinstance(scope_id, str) or not scope_id.strip():
             raise ValueError("monitor requires an operator source scope")
+        if expected_envelope is not None and (
+            type(expected_envelope) is not ResourceEnvelopeRecord
+            or not expected_envelope.active
+            or not expected_envelope.claims.complete_hierarchy
+        ):
+            raise StorageAdmissionUnavailable()
         if owner.control_storage_slots != int(storage_control is not None) or (
             storage_control is not None and not storage_control.belongs_to(owner)
         ):
             raise ValueError("monitor requires its exact process storage control permit")
         self._control_session = control_session
         self._storage_control = storage_control
+        self._expected_envelope = expected_envelope
+        self._bootstrap_pin_active = expected_envelope is not None
+        self._bootstrap_validated = expected_envelope is None
         self.owner = owner
         self._policy_loader = policy_loader
         self._bootstrap = bootstrap
@@ -258,6 +272,12 @@ class AdmissionMonitor:
     def storage_control(self) -> StorageControlPermit | None:
         """Trusted runtime composition only; the permit is not a capacity claim."""
         return self._storage_control
+
+    @property
+    def bootstrap_validated(self) -> bool:
+        """Whether the expected root envelope passed the complete first cycle."""
+        with self._lifecycle_guard:
+            return self._bootstrap_validated
 
     def set_on_change(self, callback: Callable[[], None]) -> None:
         with self._lifecycle_guard:
@@ -447,9 +467,17 @@ class AdmissionMonitor:
             self._refresh_guard.release()
 
     def _load_authority(self) -> AttestationLoadResult:
+        expected = self._expected_envelope if self._bootstrap_pin_active else None
         if self._control_session is None:
-            return self._bootstrap.load_current()
-        return self._bootstrap.load_current(control_session=self._control_session)
+            if expected is None:
+                return self._bootstrap.load_current()
+            return self._bootstrap.load_current(expected_envelope=expected)
+        if expected is None:
+            return self._bootstrap.load_current(control_session=self._control_session)
+        return self._bootstrap.load_current(
+            control_session=self._control_session,
+            expected_envelope=expected,
+        )
 
     def _sample_pressure(self) -> PostgresPressureSample:
         if self._control_session is None:
@@ -464,10 +492,33 @@ class AdmissionMonitor:
         configuration = loaded.configuration
         if configuration is None:
             return self._invalidate(generation, "policy_unavailable")
+        bootstrap_pin = self._bootstrap_pin_active
         attestation = self.control_call(self._load_authority).attestation
         if not is_verified_resource_attestation(attestation):
+            if bootstrap_pin:
+                raise StorageAdmissionUnavailable()
             return self._invalidate(generation, "authority_unavailable", reset_resources=True)
         assert attestation is not None
+        if bootstrap_pin:
+            expected = self._expected_envelope
+            if (
+                expected is None
+                or attestation.binding != expected.binding
+                or attestation.claims != expected.claims
+                or attestation.revision != expected.revision
+            ):
+                raise StorageAdmissionUnavailable()
+            # Validate the same exact row twice before changing the ledger or
+            # starting either pressure or Linux resource sampling.
+            preflight = self.control_call(self._load_authority).attestation
+            if (
+                not is_verified_resource_attestation(preflight)
+                or preflight is None
+                or preflight.binding != expected.binding
+                or preflight.claims != expected.claims
+                or preflight.revision != expected.revision
+            ):
+                raise StorageAdmissionUnavailable()
         budget = ResourceAmounts(
             attestation.claims.memory_budget_bytes,
             attestation.claims.cpu_budget_millicores,
@@ -534,7 +585,7 @@ class AdmissionMonitor:
             self._last_resource_probe = CachedResourceProbe(generation, resource_sample)
         sample = resource_sample.observation
         checked = self.control_call(self._load_authority).attestation
-        if (
+        authorities_match = (
             not is_verified_resource_attestation(checked)
             or checked is None
             or (
@@ -542,8 +593,24 @@ class AdmissionMonitor:
                 or checked.claims != attestation.claims
                 or checked.revision != attestation.revision
             )
-        ):
+        )
+        if bootstrap_pin:
+            expected = self._expected_envelope
+            if (
+                authorities_match
+                or expected is None
+                or checked is None
+                or checked.binding != expected.binding
+                or checked.claims != expected.claims
+                or checked.revision != expected.revision
+            ):
+                raise StorageAdmissionUnavailable()
+            with self._lifecycle_guard:
+                self._bootstrap_pin_active = False
+                self._bootstrap_validated = True
+        elif authorities_match:
             return self._invalidate(generation, "authority_unavailable", reset_resources=True)
+        assert checked is not None
         now = self._clock()
         validate_clock(now)
         if any(
@@ -657,7 +724,7 @@ class AdmissionMonitor:
                     await runner
                 except asyncio.CancelledError:
                     task = asyncio.current_task()
-                    if task is not None and task.cancelling():
+                    if task is not None and getattr(task, "cancelling")():
                         raise
                 except Exception as error:
                     failure = error

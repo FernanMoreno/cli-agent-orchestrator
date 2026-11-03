@@ -303,3 +303,13 @@ T014.R.H2.2b.1 (2026-11-03), traspaso financiado de hilo validado por componente
 
 
 T014.R.H2.2b.2 (2026-11-03), actor original opt-in validado por componente: un hilo/canal/backend PG, buzón tipado financiado por recursos, ciclos periódicos con recuperación de política intacta, cancelación sin refund y cierre/join positivos. Retirada/respuesta atómicas para observadores del ledger; errores de inicio/despacho y cierre corregidos. **320 PASS**,0 fallos/errores/omisiones,10 advertencias,20 módulos:286 IDs previos relevantes+34 nuevos (26 unitarios/8 nativos). Cuatro Python/dos fuentes archivadas exactas, tipos459/frío, arquitectura5/0 y PG18.6 limpio. Primer diagnóstico3fallos/5pases conservado como fallo de arnés; no se suma. Observaciones compute sintéticas; no25 modelos ni M1. Emisor/CLI/shared/custodia/M1/M2/M3/SDK/UI y diez gates originales siguen pendientes. [Validación](validation-t014-original-control-owner.json), [composición](composition-t014-original-control-owner.md).
+
+## T014.R.H2.3 — activación preSQL (componente opt-in validado)
+
+- [x] H23-01 Contrastar autoridad/keyring/caller, conocimiento, spec/plan/contratos e impacto Graphify antes de código.
+- [x] H23-02 Implementar paquete/firmas y emisor owner-funded ligado a envelope postcommit; preservar SQL5/resource7 y certificado v1.
+- [x] H23-03 Implementar startup-only RAM/CPU, reclamo por proceso y consumidor sin storage ficticio ni datos habilitados antes del ciclo PG.
+- [x] H23-04 Comparar envelope exacto en el primer canal y añadir entrada SDK/proceso opt-in; no atribuirle integración API/emisor de despliegue inexistentes.
+- [x] H23-05 Validar negativos/consumidores, PostgreSQL y fuente física aplicable; recibos, arquitectura/revisión/diff/conocimiento/documentación. Mantener diez gates globales abiertos.
+
+Resultado H23: [validación](validation-t014-root-control-activation.json) y [composición](composition-t014-root-control-activation.md). Emisor de servicio y consumidor SDK/proceso aceptados; supervisor financiado de despliegue/API central, shared, custodia y diez gates originales pendientes.

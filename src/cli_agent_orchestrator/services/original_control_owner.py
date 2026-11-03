@@ -27,6 +27,12 @@ from cli_agent_orchestrator.models.admission_control import (
     AdmissionDiagnostics,
     AdmissionDiagnosticsV2,
 )
+from cli_agent_orchestrator.models.resource_envelope import ResourceEnvelopeRecord
+from cli_agent_orchestrator.models.root_control_activation import (
+    is_verified_compute_startup_basis,
+    is_verified_compute_startup_sample,
+    is_verified_root_control_activation,
+)
 from cli_agent_orchestrator.models.sql_root_genesis import SignedRootSqlOpening
 from cli_agent_orchestrator.services.admission_bootstrap import (
     ResourceBootstrap,
@@ -90,6 +96,7 @@ class OriginalControlConfig:
     command_footprint: ResourceAmounts
     clock: Callable[[], float]
     resource_factory: Callable[[VerifiedResourceAttestation], ResourceSampler] | None = None
+    expected_envelope: ResourceEnvelopeRecord | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -107,6 +114,15 @@ class OriginalControlConfig:
             or self.command_footprint.storage_slots != 0
             or not callable(self.clock)
             or (self.resource_factory is not None and not callable(self.resource_factory))
+            or (
+                self.expected_envelope is not None
+                and (
+                    type(self.expected_envelope) is not ResourceEnvelopeRecord
+                    or not self.expected_envelope.active
+                    or not self.expected_envelope.claims.complete_hierarchy
+                    or self.expected_envelope.binding != self.certificate.record.subject
+                )
+            )
             or not isinstance(self.trusted_keys, Mapping)
         ):
             raise OriginalControlUnavailable()
@@ -125,6 +141,41 @@ class _Refresh:
     result: concurrent.futures.Future[MonitorResult]
 
 
+def _startup_basis_matches_config(
+    startup: CommandReservation,
+    config: OriginalControlConfig,
+) -> bool:
+    basis = startup._startup_basis
+    if basis is None:
+        return True
+    if (
+        not is_verified_compute_startup_basis(basis)
+        or not basis.belongs_to(config.owner, generation=config.owner._generation)
+        or not is_verified_compute_startup_sample(basis.sample)
+        or not is_verified_root_control_activation(basis.sample.activation)
+    ):
+        return False
+    signed_activation = basis.sample.activation.activation
+    startup_footprint = signed_activation.startup_footprint
+    refresh_footprint = signed_activation.refresh_footprint
+    return (
+        basis.envelope == config.expected_envelope
+        and signed_activation.certificate == config.certificate
+        and startup._footprint
+        == ResourceAmounts(
+            startup_footprint.memory_bytes,
+            startup_footprint.cpu_millicores,
+            startup_footprint.storage_slots,
+        )
+        and config.command_footprint
+        == ResourceAmounts(
+            refresh_footprint.memory_bytes,
+            refresh_footprint.cpu_millicores,
+            refresh_footprint.storage_slots,
+        )
+    )
+
+
 class OriginalControlOwner:
     """A single synchronous native worker and a resource-bounded refresh mailbox."""
 
@@ -141,6 +192,7 @@ class OriginalControlOwner:
                 or startup._footprint.memory_bytes <= 0
                 or startup._footprint.cpu_millicores <= 0
                 or startup._footprint.storage_slots != 0
+                or not _startup_basis_matches_config(startup, config)
             ):
                 raise OriginalControlUnavailable()
         self._config = config
@@ -475,33 +527,82 @@ class OriginalControlOwner:
         with _witness_exit(FundedControlSession(channel), self._mark_session_exited) as session:
             with self._guard:
                 self._session_entered = True
+            expected = config.expected_envelope
+            if expected is not None:
+                target = config.bootstrap._repository.resolve_target()
+                binding = config.bootstrap._capture(target)
+                latest = config.bootstrap._repository.read_latest(
+                    target,
+                    expected.binding.instance_id,
+                    control_session=session,
+                )
+                if (
+                    not config.bootstrap.matches_primary_target(target)
+                    or binding != expected.binding
+                    or latest != expected
+                    or latest is None
+                    or not latest.active
+                    or latest.revision != expected.revision
+                    or latest.claims != expected.claims
+                    or latest.binding != expected.binding
+                ):
+                    raise OriginalControlUnavailable()
             postgres = PostgresPressureSampler(clock=config.clock)
             if config.resource_factory is not None:
-                monitor = AdmissionMonitor(
-                    config.owner,
-                    policy_loader=config.policy_loader,
-                    storage_control=config.control,
-                    bootstrap=config.bootstrap,
-                    postgres=postgres,
-                    scope_id=config.scope_id,
-                    clock=config.clock,
-                    control_session=session,
-                    resource_factory=config.resource_factory,
-                )
+                if expected is None:
+                    monitor = AdmissionMonitor(
+                        config.owner,
+                        policy_loader=config.policy_loader,
+                        storage_control=config.control,
+                        bootstrap=config.bootstrap,
+                        postgres=postgres,
+                        scope_id=config.scope_id,
+                        clock=config.clock,
+                        control_session=session,
+                        resource_factory=config.resource_factory,
+                    )
+                else:
+                    monitor = AdmissionMonitor(
+                        config.owner,
+                        policy_loader=config.policy_loader,
+                        storage_control=config.control,
+                        bootstrap=config.bootstrap,
+                        postgres=postgres,
+                        scope_id=config.scope_id,
+                        clock=config.clock,
+                        control_session=session,
+                        resource_factory=config.resource_factory,
+                        expected_envelope=expected,
+                    )
             else:
-                monitor = AdmissionMonitor(
-                    config.owner,
-                    policy_loader=config.policy_loader,
-                    storage_control=config.control,
-                    bootstrap=config.bootstrap,
-                    postgres=postgres,
-                    scope_id=config.scope_id,
-                    clock=config.clock,
-                    control_session=session,
-                )
+                if expected is None:
+                    monitor = AdmissionMonitor(
+                        config.owner,
+                        policy_loader=config.policy_loader,
+                        storage_control=config.control,
+                        bootstrap=config.bootstrap,
+                        postgres=postgres,
+                        scope_id=config.scope_id,
+                        clock=config.clock,
+                        control_session=session,
+                    )
+                else:
+                    monitor = AdmissionMonitor(
+                        config.owner,
+                        policy_loader=config.policy_loader,
+                        storage_control=config.control,
+                        bootstrap=config.bootstrap,
+                        postgres=postgres,
+                        scope_id=config.scope_id,
+                        clock=config.clock,
+                        control_session=session,
+                        expected_envelope=expected,
+                    )
             with self._guard:
                 self._monitor = monitor
             monitor.refresh()
+            if expected is not None and not monitor.bootstrap_validated:
+                raise OriginalControlUnavailable()
             if not self._ready.done():
                 self._ready.set_result(None)
             self._serve(monitor)

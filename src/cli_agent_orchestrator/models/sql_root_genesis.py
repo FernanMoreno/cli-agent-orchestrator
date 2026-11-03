@@ -14,6 +14,7 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
+from typing import NoReturn, SupportsIndex
 from uuid import UUID
 from weakref import WeakKeyDictionary
 
@@ -214,18 +215,19 @@ class ConfirmedRootSqlOpening:
     _token: object
     _active: bool
     _claimed: bool
+    _activation_claimed: bool
     _factory: object
 
     def __init__(self) -> None:
         raise TypeError("confirmed root SQL opening requires a committed live issuer")
 
-    def __copy__(self):
+    def __copy__(self) -> NoReturn:
         raise TypeError("confirmed root SQL opening is not transferable")
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("confirmed root SQL opening is not transferable")
 
-    def __reduce_ex__(self, protocol):
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         raise TypeError("confirmed root SQL opening is not serializable")
 
     def check(self) -> None:
@@ -247,6 +249,13 @@ class ConfirmedRootSqlOpening:
             raise ValueError("root SQL opening signing is single use")
         object.__setattr__(self, "_claimed", True)
 
+    def claim_activation_sign(self) -> None:
+        """Consume the distinct activation signing attempt without refund."""
+        self.check()
+        if getattr(self, "_activation_claimed", None) is not False:
+            raise ValueError("root control activation signing is single use")
+        object.__setattr__(self, "_activation_claimed", True)
+
 
 def _issue_confirmed_root_sql_opening(
     record: RootSqlOpeningIntent,
@@ -266,6 +275,7 @@ def _issue_confirmed_root_sql_opening(
         ("_token", token),
         ("_active", True),
         ("_claimed", False),
+        ("_activation_claimed", False),
         ("_factory", _CAP_FACTORY),
     ):
         object.__setattr__(value, name, field_value)

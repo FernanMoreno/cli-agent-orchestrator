@@ -21,12 +21,23 @@ from cli_agent_orchestrator.clients.storage_admission import (
     physical_storage_scope,
     storage_close_uncertainty,
 )
+from cli_agent_orchestrator.models.root_control_activation import (
+    VerifiedComputeStartupBasis,
+    VerifiedComputeStartupSample,
+    VerifiedRootControlActivation,
+    _issue_verified_compute_startup_basis,
+    is_verified_compute_startup_basis,
+    is_verified_compute_startup_sample,
+    is_verified_root_control_activation,
+)
 from cli_agent_orchestrator.services.admission_policy import (
     AdmissionDecision,
     AdmissionPolicy,
     CapacityObservation,
     CapacityReason,
+    ComputeObservation,
     ResourceAmounts,
+    compute_capacity,
     evaluate_capacity,
     validate_clock,
 )
@@ -118,6 +129,7 @@ class CommandReservation:
     _start_task: object | None
     _thread_worker: object | None
     _actor_thread: "CommandThread[None] | None"
+    _startup_basis: VerifiedComputeStartupBasis | None
 
     def __init__(
         self,
@@ -125,6 +137,8 @@ class CommandReservation:
         key: int,
         generation: int,
         footprint: ResourceAmounts,
+        *,
+        startup_basis: VerifiedComputeStartupBasis | None = None,
     ) -> None:
         object.__setattr__(self, "_owner", owner)
         object.__setattr__(self, "_key", key)
@@ -136,6 +150,7 @@ class CommandReservation:
         object.__setattr__(self, "_start_task", None)
         object.__setattr__(self, "_thread_worker", None)
         object.__setattr__(self, "_actor_thread", None)
+        object.__setattr__(self, "_startup_basis", startup_basis)
 
     def __copy__(self) -> NoReturn:
         raise TypeError("command reservation is not transferable")
@@ -160,6 +175,30 @@ class CommandReservation:
 
     def _fits_locked(self, now: float) -> bool:
         owner = self._owner
+        if self._startup_basis is not None:
+            basis = self._startup_basis
+            if not is_verified_compute_startup_basis(basis) or not basis.belongs_to(
+                owner, generation=owner._generation
+            ):
+                return False
+            memory_budget, cpu_budget = basis.budget
+            capacity = compute_capacity(
+                owner._policy,
+                basis.observation,
+                now=now,
+                budget_memory_bytes=memory_budget,
+                budget_cpu_millicores=cpu_budget,
+            )
+            if capacity is None:
+                return False
+            other_committed = owner._committed - self._footprint
+            return (
+                self._footprint.memory_bytes
+                <= max(0, capacity.memory_bytes - other_committed.memory_bytes)
+                and self._footprint.cpu_millicores
+                <= max(0, capacity.cpu_millicores - other_committed.cpu_millicores)
+                and self._footprint.storage_slots == 0
+            )
         decision = owner._current_decision(now, charged=False)
         if decision.reason not in {"capacity_available", "resource_exhausted"}:
             return False
@@ -1463,6 +1502,75 @@ class DeliveryAdmission:
                 return CommandAdmissionAttempt(None, "resource_exhausted")
             key = next(self._sequence)
             reservation = CommandReservation(self, key, self._generation, footprint)
+            self._committed = self._committed + footprint
+            self._commands[key] = reservation
+            self._pending_commands[key] = reservation
+            return CommandAdmissionAttempt(reservation, "capacity_available")
+
+    def _reserve_root_control_startup(
+        self,
+        activation: VerifiedRootControlActivation,
+        *,
+        compute_sample: VerifiedComputeStartupSample,
+        now: float,
+    ) -> CommandAdmissionAttempt:
+        """Private one-use startup reservation; never publishes storage capacity."""
+        validate_clock(now)
+        if (
+            not is_verified_root_control_activation(activation)
+            or not is_verified_compute_startup_sample(compute_sample)
+            or compute_sample.activation is not activation
+            or compute_sample.envelope != activation.activation.envelope
+            or type(compute_sample.observation) is not ComputeObservation
+            or self._pid != os.getpid()
+        ):
+            return CommandAdmissionAttempt(None, "unknown_capacity")
+        observation = compute_sample.observation
+        footprint_record = activation.activation.startup_footprint
+        footprint = ResourceAmounts(
+            footprint_record.memory_bytes,
+            footprint_record.cpu_millicores,
+            footprint_record.storage_slots,
+        )
+        with self._guard:
+            if (
+                not self._accepting
+                or self._control_permit is None
+                or self._shared_required
+                or self._committed != ResourceAmounts()
+                or self._commands
+                or self._leases
+                or not activation._bind_startup_owner(self)
+            ):
+                return CommandAdmissionAttempt(None, "unknown_capacity")
+            claims = activation.activation.envelope.claims
+            capacity = compute_capacity(
+                self._policy,
+                observation,
+                now=now,
+                budget_memory_bytes=claims.memory_budget_bytes,
+                budget_cpu_millicores=claims.cpu_budget_millicores,
+            )
+            if capacity is None:
+                return CommandAdmissionAttempt(None, "unknown_capacity")
+            if (
+                footprint.memory_bytes > capacity.memory_bytes
+                or footprint.cpu_millicores > capacity.cpu_millicores
+            ):
+                return CommandAdmissionAttempt(None, "resource_exhausted")
+            basis = _issue_verified_compute_startup_basis(
+                compute_sample,
+                owner=self,
+                generation=self._generation,
+            )
+            key = next(self._sequence)
+            reservation = CommandReservation(
+                self,
+                key,
+                self._generation,
+                footprint,
+                startup_basis=basis,
+            )
             self._committed = self._committed + footprint
             self._commands[key] = reservation
             self._pending_commands[key] = reservation

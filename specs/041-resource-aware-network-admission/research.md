@@ -201,3 +201,9 @@ El productor diagnóstico anterior sumaba solo deliveries y storage-only: un com
 
 
 H2.2b.2, revisión de implementación: finish y publicación del reply se serializan con el guard del ledger para que snapshot/admisión no vean cargo liberado con Future pendiente. No se ejecutan SQL ni callbacks de aplicación bajo ese guard. Los errores de retirada conservan el cargo y el error primario. Ready/recuperación/capacidad son señales distintas; el arnés observa el ciclo real y cierra en finally únicamente cuando falta prueba de retiro. [Resultados y límites](composition-t014-original-control-owner.md).
+
+## Decisión H2.3: resolver el ciclo antes del primer TCP
+
+Inspección ECC/lead: cao-server ejecuta init_db antes de runtime_from_environment; el monitor legacy necesita SQL antes de observar capacidad. Sus credenciales runtime no son owner del journal SQL5. funded_bridge no tiene caller productivo y su grant hijo no es root ni RAM/CPU. Por tanto no se promueve el endpoint admin ni se traslada su conexión temporal al actor.
+
+Un paquete firmado separado transporta autoridad explícita del emisor owner-funded; la medida local sigue siendo necesaria. Storage desconocido no se convierte en cero conocido: el arranque utiliza un tipo/reserva solo RAM/CPU y conserva la admisión normal desconocida. Keyring y canal emisor siguen entradas reales del despliegue, no se fabrican desde settings/peer identity. El primer readback impide aceptar una revisión revocada/cambiada tras emisión.

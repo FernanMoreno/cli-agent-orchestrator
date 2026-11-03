@@ -188,3 +188,7 @@ H2.1 mantiene el estado del monitor y su sesión en una única vida síncrona. L
 ### H2.2a — reserva efímera de comando
 
 CommandReservation es una identidad registrada opaca de un owner y una generación, con footprint RAM/CPU, estado reserved→started→released y worker capturado al iniciar. Pending puede cancelarse; started permanece cargado hasta finish del worker. No se persiste en SQLite ni se interpreta como metadato PG: es contabilidad efímera de CPU/RAM, mientras operación/deuda persistente conserva PostgreSQL. Snapshot añade command_inflight/command_started y conserva componentes de datos/storage/control. DiagnosticV2 añade un subobjeto commands; DiagnosticV1 mantiene su forma y rechaza explícitamente lo que no puede representar.
+
+## H2.3 — paquete, prueba verificada y base de arranque
+
+Paquete firmado: certificado SQL + envelope completo/revisión + dos huellas compute positivas, dominio y versión propios. Prueba opaca verificada: PID, sujeto y objetivo, incapaz de copiarse/serializarse o emitirse desde datos sin verificación. Base startup-only: cantidades RAM/CPU medidas frescas y presupuesto firmado, ligada al ledger/generación y a una única reserva; storage continúa desconocido. El cargo comparte los contadores incrementales existentes y se retira mediante el mismo CommandThread físico. No hay schema ni tabla nueva en este corte.

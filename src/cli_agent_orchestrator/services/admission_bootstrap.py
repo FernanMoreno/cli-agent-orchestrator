@@ -394,9 +394,18 @@ class ResourceBootstrap:
             session.check_target(session.target)
 
     def load_current(
-        self, *, control_session: FundedControlSession | None = None
+        self,
+        *,
+        control_session: FundedControlSession | None = None,
+        expected_envelope: ResourceEnvelopeRecord | None = None,
     ) -> AttestationLoadResult:
         self._check_control(control_session)  # Before config, clocks, captures or SQL.
+        if expected_envelope is not None and (
+            type(expected_envelope) is not ResourceEnvelopeRecord
+            or not expected_envelope.active
+            or not expected_envelope.claims.complete_hierarchy
+        ):
+            raise StorageAdmissionUnavailable()
         try:
             at = self._clock()
             validate_clock(at)
@@ -404,6 +413,8 @@ class ResourceBootstrap:
             if control_session is not None:
                 control_session.check_target(target)
             binding = self._capture(target)
+            if expected_envelope is not None and binding != expected_envelope.binding:
+                raise StorageAdmissionUnavailable()
             if binding.instance_id != self._server_instance():
                 return AttestationLoadResult(None, "binding_changed")
             latest = (
@@ -413,11 +424,15 @@ class ResourceBootstrap:
                     target, binding.instance_id, control_session=control_session
                 )
             )
+            if expected_envelope is not None and latest != expected_envelope:
+                raise StorageAdmissionUnavailable()
             if latest is None:
                 return AttestationLoadResult(None, "authority_missing")
             if not latest.active:
                 return AttestationLoadResult(None, "authority_revoked")
             if latest.binding != binding or self._capture(target) != binding:
+                if expected_envelope is not None:
+                    raise StorageAdmissionUnavailable()
                 return AttestationLoadResult(None, "binding_changed")
             if not latest.claims.complete_hierarchy:
                 return AttestationLoadResult(None, "hierarchy_unverified")

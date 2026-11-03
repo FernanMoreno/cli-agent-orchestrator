@@ -616,3 +616,11 @@ TDD privado en worktree: stdlib unittest RED antes de implementación y GREEN; s
 
 
 ECC H2.2a: los errores de query del diagnóstico usan HTTP422 con detail.code=invalid_diagnostics_query y no-store, sin reflejar entradas ni etiquetarlos como envelope. El resto de rutas de recursos conserva invalid_resource_envelope. Separar la política de validación de la ruta diagnóstica y documentar/probar el DTO422; mantener JWTadmin y la forma v1/v2. Primero reproducir el cuerpo incorrecto en el test ASGI, después corregir sin rebajar el status ni la cobertura.
+
+## Corte H2.3 — paquete y consumidor previo a SQL
+
+1. Contratos inmutables de paquete firmado y capacidad opaca de verificación, con límites de wire y validación estricta. Conservar certificados SQL v1.
+2. Servicio emisor: autenticar antes de credenciales/I/O; usar canal original owner funded y envelope protegido, emitir certificado postcommit y firma separada sin grants/migraciones nuevas.
+3. Puerto privado de reserva startup-only RAM/CPU en ledger existente y reclamo irreversible por proceso; no producir observación de storage ni abrir admisión de datos.
+4. Consumidor SDK mide Linux sin SQL, crea la reserva y actor exactos; expected envelope se relee dentro del primer canal antes de ready/monitor. Entrada de proceso con trust/policy explícitos, EOF/stop y cierre conservador.
+5. RED/GREEN, consumidores heredados, contrato/PG real serializado con identidad/memoria, formato/tipos y composición; separar medición física, observaciones controladas y despliegue aún pendiente.

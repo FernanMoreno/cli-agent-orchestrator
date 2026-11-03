@@ -4,6 +4,9 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
+from cli_agent_orchestrator.models.resource_compute import ComputeObservation as ComputeObservation
+from cli_agent_orchestrator.models.resource_compute import ResourceHeadroom as ResourceHeadroom
+
 Coverage = Literal["known", "partial", "unknown"]
 CapacityReason = Literal[
     "capacity_available",
@@ -91,20 +94,6 @@ class AdmissionPolicy:
 
 
 @dataclass(frozen=True)
-class ResourceHeadroom:
-    """One domain's paired quantities; reserves must use this domain's limit."""
-
-    available_units: int
-    limit_units: int
-
-    def __post_init__(self) -> None:
-        _integer("available_units", self.available_units)
-        _integer("limit_units", self.limit_units, minimum=1)
-        if self.available_units > self.limit_units:
-            raise ValueError("domain headroom cannot exceed its limit")
-
-
-@dataclass(frozen=True)
 class CapacityObservation:
     """Available quantities at one process-local monotonic instant in seconds.
 
@@ -160,6 +149,49 @@ class CapacityObservation:
                 or (limit is not None and limit != min(d.limit_units for d in domains))
             ):
                 raise ValueError("aggregate quantities must match their domain observations")
+
+
+def compute_capacity(
+    policy: AdmissionPolicy,
+    observation: ComputeObservation,
+    *,
+    now: float,
+    budget_memory_bytes: int,
+    budget_cpu_millicores: int,
+) -> ResourceAmounts | None:
+    """Return only policy-adjusted RAM/CPU headroom, or None if unusable.
+
+    This deliberately has no storage field and cannot be converted into a
+    complete CapacityObservation. A root startup charge therefore never turns
+    its unknown data/storage admission state into a known capacity claim.
+    """
+    validate_clock(now)
+    if (
+        type(policy) is not AdmissionPolicy
+        or type(observation) is not ComputeObservation
+        or isinstance(budget_memory_bytes, bool)
+        or type(budget_memory_bytes) is not int
+        or budget_memory_bytes <= 0
+        or isinstance(budget_cpu_millicores, bool)
+        or type(budget_cpu_millicores) is not int
+        or budget_cpu_millicores <= 0
+        or now < observation.observed_at
+        or now - observation.observed_at > policy.max_sample_age_s
+    ):
+        return None
+    memory = min(
+        _available_units(domain.available_units, domain.limit_units, policy.memory_reserve_percent)
+        for domain in observation.memory_domains
+    )
+    cpu = min(
+        _available_units(domain.available_units, domain.limit_units, policy.cpu_reserve_percent)
+        for domain in observation.cpu_domains
+    )
+    return ResourceAmounts(
+        min(memory, budget_memory_bytes),
+        min(cpu, budget_cpu_millicores),
+        0,
+    )
 
 
 @dataclass(frozen=True)

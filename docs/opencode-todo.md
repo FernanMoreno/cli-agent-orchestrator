@@ -1,5 +1,11 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-11-03 · T014.R.H2.3: activación firmada preSQL validada como componente opt-in.**
+
+Emisor sobre canal propietario ya financiado y consumidor SDK/proceso implementados: firma de cómputo separada del certificado SQL, trust externo, reclamo único, RAM/CPU Linux reales antes de SQL con storage desconocido y envelope exacto hasta validar el primer ciclo. Sin techo fijo nuevo de agentes/entregas.
+
+**503 pruebas aprobadas**, cero fallos/errores/omisiones, 10 advertencias en 30 módulos; 365 casos del baseline, 91 adicionales de política/recursos sin cambios y 47 nuevos (39 unitarios/8 nativos). Incluye CLI real, revocación, replay y revisión entre readback y monitor. Tipos de 463 fuentes, arquitectura 5/0, archivo ejecutado exacto y PostgreSQL limpio. No acredita concurrencia de modelos ni M1. El supervisor financiado de despliegue, API central preSQL, shared, custodia, integración SDK/UI restante y diez gates globales siguen pendientes. [Validación](../specs/041-resource-aware-network-admission/validation-t014-root-control-activation.json), [composición](../specs/041-resource-aware-network-admission/composition-t014-root-control-activation.md).
+
 **2026-11-03 · T014.R.H2.2b.2: actor original de control validado por componente.**
 
 Un hilo, canal y backend PostgreSQL; buzón tipado con admisión por recursos, ciclos periódicos con la recuperación de política intacta y cancelación sin liberación prematura. El cierre exige pruebas positivas del canal y del hilo. La retirada del cargo y la publicación de la respuesta son atómicas para los observadores del ledger.
