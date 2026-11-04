@@ -205,7 +205,13 @@ def test_assign_elastic_releases_when_assignment_fails(monkeypatch, elastic_cont
 
     _, remote = elastic_context
     remote.return_value = {"success": False, "state": "refused"}
-    with patch.object(service.requests, "delete", return_value=Mock(status_code=200)) as delete:
+    with patch.object(
+        service.requests,
+        "delete",
+        return_value=Mock(
+            status_code=200, json=lambda: {"released": True, "workload_present": False}
+        ),
+    ) as delete:
         payload = service.ElasticAssignmentRequest(
             operation_key="refused-key-1", agent_profile="developer", message="Implement it"
         )

@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
-import binascii
 import json
 import math
 import os
 import signal
-import stat
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -31,6 +28,11 @@ from cli_agent_orchestrator.models.root_control_activation import (
     ROOT_CONTROL_ACTIVATION_MAX_BYTES,
 )
 from cli_agent_orchestrator.models.root_control_protocol import ROOT_CONTROL_FD_ENV
+from cli_agent_orchestrator.security.private_root_configuration import (
+    _unique_object,
+    read_private_root_document,
+    read_root_trusted_keys,
+)
 from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
 from cli_agent_orchestrator.services.admission_settings import (
     AdmissionPolicyLoader,
@@ -56,89 +58,12 @@ _MAX_COMMAND_BYTES = 4096
 _MAX_CLOSE_TIMEOUT_S = 30.0
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON field")
-        result[key] = value
-    return result
-
-
 def _read_private_document(path: Path, *, maximum_bytes: int) -> Mapping[str, object]:
-    if not path.is_absolute():
-        raise ValueError("configuration paths must be absolute")
-    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        before = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_uid != os.geteuid()
-            or before.st_mode & 0o077
-            or before.st_size > maximum_bytes
-        ):
-            raise PermissionError("configuration must be a bounded private owner file")
-        payload = bytearray()
-        while len(payload) <= maximum_bytes:
-            block = os.read(descriptor, min(4096, maximum_bytes + 1 - len(payload)))
-            if not block:
-                break
-            payload.extend(block)
-        after = os.fstat(descriptor)
-        if len(payload) > maximum_bytes or (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-            before.st_ctime_ns,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-            after.st_ctime_ns,
-        ):
-            raise ValueError("configuration changed while being read")
-    finally:
-        os.close(descriptor)
-    try:
-        document = json.loads(
-            payload.decode("utf-8"),
-            object_pairs_hook=_unique_object,
-            parse_constant=lambda token: (_ for _ in ()).throw(
-                ValueError(f"invalid JSON constant: {token}")
-            ),
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
-        raise ValueError("configuration JSON is invalid") from error
-    if type(document) is not dict or any(type(key) is not str for key in document):
-        raise ValueError("configuration must be a JSON object")
-    return document
+    return read_private_root_document(path, maximum_bytes=maximum_bytes)
 
 
 def _read_trusted_keys(path: Path) -> Mapping[str, Ed25519PublicKey]:
-    document = _read_private_document(path, maximum_bytes=_MAX_TRUST_BYTES)
-    if (
-        set(document) != {"version", "keys"}
-        or type(document["version"]) is not int
-        or document["version"] != 1
-        or type(document["keys"]) is not dict
-        or not document["keys"]
-        or len(document["keys"]) > 64
-    ):
-        raise ValueError("trusted-key document schema is invalid")
-    keys: dict[str, Ed25519PublicKey] = {}
-    for key_id, encoded in document["keys"].items():
-        if type(key_id) is not str or type(encoded) is not str or len(key_id) > 64:
-            raise ValueError("trusted-key entry is invalid")
-        try:
-            raw = base64.b64decode(encoded.encode("ascii"), validate=True)
-        except (UnicodeEncodeError, binascii.Error, ValueError) as error:
-            raise ValueError("trusted-key entry is invalid") from error
-        if len(raw) != 32 or base64.b64encode(raw).decode("ascii") != encoded:
-            raise ValueError("trusted-key entry is invalid")
-        keys[key_id] = Ed25519PublicKey.from_public_bytes(raw)
-    return keys
+    return read_root_trusted_keys(path)
 
 
 def _read_activation_line(stream: BinaryIO) -> bytes:

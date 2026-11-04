@@ -94,6 +94,7 @@ class RootDeploymentConfig:
     refresh_footprint: ResourceAmounts = field(repr=False)
     clock: Callable[[], float] = field(repr=False)
     timeout_s: float = 30.0
+    credential_preflight: Callable[[], None] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -109,6 +110,7 @@ class RootDeploymentConfig:
             or not isinstance(self.env, Mapping)
             or not callable(self.key_supplier)
             or not callable(self.clock)
+            or (self.credential_preflight is not None and not callable(self.credential_preflight))
         ):
             raise ValueError("Root deployment configuration is invalid")
         arguments = tuple(self.argv)
@@ -742,6 +744,8 @@ class RootDeploymentRuntime:
                 if not lease_valid:
                     raise RuntimeError("control lease is unavailable")
                 try:
+                    if config.credential_preflight is not None:
+                        config.credential_preflight()
                     selected_target = config.target.migration_target()
                     connection = connect(selected_target)
                     if type(connection) is not Connection:
@@ -1049,6 +1053,8 @@ class RootDeploymentRuntime:
             self._reason = None
         journal_id, intent_id, session_id = command.values
         try:
+            if self._config.credential_preflight is not None:
+                self._config.credential_preflight()
             deployment.activate(
                 journal_id=journal_id,
                 intent_id=intent_id,

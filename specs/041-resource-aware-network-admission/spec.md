@@ -447,3 +447,24 @@ Aceptación: contrato estricto versionado de launch/status/activate/refresh/stop
 
 
 **2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](validation-t014-root-operator-api.json), [composición](composition-t014-root-operator-api.md).
+
+
+## T014.R.H2.4d — perfil confiable, firma externa y financiación sin duplicación
+
+US8: el compositor/SDK puede construir un RootDeploymentRuntime desde un perfil estricto y archivos externos de firma/confianza/política, conservando un owner/control entregados por una autoridad independiente. El perfil no aporta claims, presupuestos, observaciones ni claves en el JSON de despliegue y no instala automáticamente runtime en la API.
+
+FR-H24D-01: lector privado acotado y estable compartido entre host e hijo; confianza pública con codec existente y signer Ed25519 externo, sin creación/renovación/escrituras ni reutilización de credenciales peer. Errores del signer fijos sin paths, entradas ni causas privadas.
+FR-H24D-02: preflight en el worker ya financiado antes de su primer connect; comprobar key_id y clave pública coincidentes con trust. Revalidar antes del intento de activación; cambios/fallos posteriores al commit siguen el contrato de retención existente. Defaults mantienen firmas de llamadas existentes.
+FR-H24D-03: perfil version1 estricto, footprints RAM/CPU positivos y storage0, paths absolutos, scope válido y deadlines existentes. Constructor/assembler inertes, comando Root CLI explícito y entorno copiado de composición confiable; sin lectura de credenciales ni procesos al construir. Mismo perfil/codec para SDK y futuro UI; no endpoint HTTP para secretos.
+FR-H24D-04: un productor nuevo de financiación deberá acreditar origen, partición disjunta, binding/target, freshness, SQL y crédito antes de efectos. Linux/política, registro, copia de envelope o préstamo del monitor no sustituyen autoridad. Mientras ese productor no exista, el ensamblador exige funding externo y no declara instalación productiva.
+
+Aceptación: negativas de permisos/symlink/FIFO/límites/JSON/clave/trust, constructor sin I/O, preflight antesSQL y antesissuer, archivo cambiante/rotación y retención poscommit; recorrido Root CLI/PG por ensamblador real sin quitar el caso H24c ni sus748IDs. La configuración externa y keys de fixture no acreditan autoridad productiva, IdP ni M1/M2/M3.
+
+## T015.R.1 — respuestas estructuradas del broker elástico
+
+US9: una asignación ordinaria consume una respuesta de lease validada antes del primer envío remoto. Los campos worker_id, target_host, working_directory y session_name deben ser strings canónicos no vacíos; worker_id es un único segmento seguro de URL. Se conservan IDs opacos heredados como worker-1 y el productor actual de8hex. Los campos informativos adicionales del broker se ignoran y nunca se propagan/persisten como autoridad o secretos. Una identidad de worker válida se conserva para inspección aunque falle otro campo; una identidad malformada no se usa para cleanup.
+
+La devolución de la plaza tras un rechazo remoto exige una respuesta exitosa y un recibo JSON estricto con released=true y workload_present=false. Un HTTP200/404 por sí solo, un cuerpo ausente/no canónico o workload presente no prueba retirada: el intento queda reconcile, sin repetir asignación, y conserva la identidad validada. No se convierte esta validación en prueba de observación/reserva del destino, ni en aceptación T015/M3.
+
+
+**2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).

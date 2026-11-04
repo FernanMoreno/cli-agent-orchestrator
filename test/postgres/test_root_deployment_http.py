@@ -66,6 +66,23 @@ def test_external_envelope_writer_privileges_preflight(shared, monkeypatch):
 async def test_http_operator_launch_provision_activate_refresh_and_close(
     shared, auth_enabled_env, rsa_keys, monkeypatch, tmp_path
 ):
+    await _http_operator_flow(
+        shared, auth_enabled_env, rsa_keys, monkeypatch, tmp_path, using_profile=False
+    )
+
+
+@pytest.mark.asyncio
+async def test_profile_assembler_launches_actual_root_cli_with_external_signer(
+    shared, auth_enabled_env, rsa_keys, monkeypatch, tmp_path
+):
+    await _http_operator_flow(
+        shared, auth_enabled_env, rsa_keys, monkeypatch, tmp_path, using_profile=True
+    )
+
+
+async def _http_operator_flow(
+    shared, auth_enabled_env, rsa_keys, monkeypatch, tmp_path, *, using_profile
+):
     from cli_agent_orchestrator.api import root_deployment_routes as routes
     from cli_agent_orchestrator.services import root_deployment_runtime as module
 
@@ -165,24 +182,88 @@ async def test_http_operator_launch_provision_activate_refresh_and_close(
         return native_connect(selected, *args, **kwargs)
 
     monkeypatch.setattr(module, "connect", observe_connect)
-    runtime = module.RootDeploymentRuntime(
-        module.RootDeploymentConfig(
+    if using_profile:
+        from dataclasses import asdict
+
+        from cli_agent_orchestrator.models.root_deployment_profile import RootDeploymentProfile
+        from cli_agent_orchestrator.services.root_deployment_assembly import (
+            assemble_root_deployment,
+            load_root_deployment_profile,
+        )
+
+        signer_file = tmp_path / "external-root-signer.json"
+        signer_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "key_id": "test-root-http",
+                    "private_key_base64": base64.b64encode(
+                        key.private_bytes(
+                            serialization.Encoding.Raw,
+                            serialization.PrivateFormat.Raw,
+                            serialization.NoEncryption(),
+                        )
+                    ).decode("ascii"),
+                }
+            )
+        )
+        signer_file.chmod(0o600)
+        profile = RootDeploymentProfile(
+            version=1,
+            signing_key_file=str(signer_file),
+            trust_file=str(trust),
+            policy_file=str(policy),
+            scope="root/http",
+            **{
+                name: asdict(footprint)
+                for name in (
+                    "worker_footprint",
+                    "child_footprint",
+                    "command_footprint",
+                    "startup_footprint",
+                    "refresh_footprint",
+                )
+            },
+            timeout_s=10.0,
+            close_timeout_s=5.0,
+        )
+        profile_file = tmp_path / "deployment-profile.json"
+        profile_file.write_text(profile.model_dump_json())
+        profile_file.chmod(0o600)
+        runtime = assemble_root_deployment(
+            load_root_deployment_profile(profile_file),
             bootstrap=issuer,
             owner=ledger,
             control=permit,
             target=target,
-            argv=argv,
             env=environment,
-            key_supplier=lambda: ("test-root-http", key),
-            worker_footprint=footprint,
-            child_footprint=footprint,
-            command_footprint=footprint,
-            startup_footprint=footprint,
-            refresh_footprint=footprint,
             clock=lambda: 1.0,
-            timeout_s=30,
         )
-    )
+        assert runtime._config.argv[:3] == (
+            sys.executable,
+            "-m",
+            "cli_agent_orchestrator.runtime_channel.root_control",
+        )
+        assert runtime._config.credential_preflight is not None
+    else:
+        runtime = module.RootDeploymentRuntime(
+            module.RootDeploymentConfig(
+                bootstrap=issuer,
+                owner=ledger,
+                control=permit,
+                target=target,
+                argv=argv,
+                env=environment,
+                key_supplier=lambda: ("test-root-http", key),
+                worker_footprint=footprint,
+                child_footprint=footprint,
+                command_footprint=footprint,
+                startup_footprint=footprint,
+                refresh_footprint=footprint,
+                clock=lambda: 1.0,
+                timeout_s=30,
+            )
+        )
     app = FastAPI()
     app.include_router(routes.router)
     routes.configure_root_deployment(app, runtime)

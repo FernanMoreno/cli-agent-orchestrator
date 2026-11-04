@@ -8,3 +8,5 @@ El subject es descriptivo para el operador autorizado; no es permiso. Cancelaci�
 
 
 **2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](../validation-t014-root-operator-api.json), [composición](../composition-t014-root-operator-api.md).
+
+El compositor opcional usa [perfil estricto y signer externo](root-deployment-profile.md); no hay cambios en los cuerpos HTTP ni en la financiación externa requerida. [Validación conjunta](../validation-profile-elastic-broker.json).

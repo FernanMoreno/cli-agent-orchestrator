@@ -11,6 +11,11 @@ from pydantic import Field
 
 from cli_agent_orchestrator.clients import database
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
+from cli_agent_orchestrator.models.elastic_broker import (
+    ElasticWorkerIdentity,
+    ElasticWorkerLease,
+    ElasticWorkerRelease,
+)
 from cli_agent_orchestrator.services import assignment_service as intents
 from cli_agent_orchestrator.services import terminal_service
 from cli_agent_orchestrator.utils.agent_profiles import load_agent_profile
@@ -95,8 +100,11 @@ async def _owned(parent_id, payload, *, owner):
             body,
         )
         response.raise_for_status()
-        lease = response.json()
-        worker_id = str(lease["worker_id"])
+        raw_lease = response.json()
+        # Preserve a safe inspection identity even if other coordinates are
+        # malformed. Neither a malformed lease nor a lost reply may be replayed.
+        worker_id = ElasticWorkerIdentity.model_validate(raw_lease).worker_id
+        lease = ElasticWorkerLease.model_validate(raw_lease)
         worker_message = (
             payload.message
             + "\n\n[Elastic lifecycle: finish all tools before final prose. When work is complete call complete_assignment with the final result; do not use send_message for the final result.]"
@@ -106,14 +114,14 @@ async def _owned(parent_id, payload, *, owner):
             agent_profile=payload.agent_profile,
             worker_message=worker_message,
             current_terminal_id=parent_id,
-            working_directory=str(lease["working_directory"]),
+            working_directory=lease.working_directory,
             use_worktree=False,
             engine=payload.engine,
             model=payload.model,
-            target_host=str(lease["target_host"]),
+            target_host=lease.target_host,
             ready_wait_seconds=readiness_wait_seconds(),
             callback_url=callback_url,
-            remote_session_name=str(lease["session_name"]),
+            remote_session_name=lease.session_name,
             operation_key=identity,
         )
         result = {
@@ -132,7 +140,12 @@ async def _owned(parent_id, payload, *, owner):
                 headers={"X-CAO-Broker-Token": broker_token},
                 timeout=(REMOTE_CONNECT_TIMEOUT, _mcp_timeout()),
             )
-            result["worker_released"] = released.status_code < 400 or released.status_code == 404
+            if not 200 <= released.status_code < 300:
+                raise ValueError("broker retirement is unconfirmed")
+            # HTTP acceptance and generic 404 do not establish physical
+            # absence. The broker's typed positive receipt is required.
+            ElasticWorkerRelease.model_validate(released.json())
+            result["worker_released"] = True
     except Exception:
         result = {
             "assignment_id": identity,

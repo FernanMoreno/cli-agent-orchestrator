@@ -352,3 +352,25 @@ Dependencias: C01→C02/C03 (archivos separados; C03 usa contrato acordado)→C0
 
 
 **2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](validation-t014-root-operator-api.json), [composición](composition-t014-root-operator-api.md).
+
+
+## T014.R.H2.4d — componentes validados; financiación disjunta pendiente
+
+- [x] H24D-01 Conocimiento, inventario de autoridad/firma, spec→plan→tasks e impacto Graphify antes de implementación.
+- [x] H24D-02 [P] [US8] Compartir lector/codec Root y cargar signer externo privado con comparación trust en security/private_root_configuration.py, runtime_channel/root_control.py y test/security/test_private_root_configuration.py.
+- [x] H24D-03 [P] [US8] Perfil estricto/assembler inerte en models/root_deployment_profile.py, services/root_deployment_assembly.py y test/services/test_root_deployment_assembly.py.
+- [x] H24D-04 [US8] Conectar preflight opcional financiado antesSQL/issuer y validar negativos/recorrido CLI-PostgreSQL preservando casos previos.
+- [ ] H24D-05 [US8] Resolver productor de financiación disjunta verificable antesefectos; no copiar claims ni convertir measurements en grants. Registrar inputs externos y límites pendientes si no existe fuente.
+- [x] H24D-06 [US8] Regresión/composición/tipos/revisiones, recibos/documentos/Obsidian y commit/push main de cambios aceptados. Mantener gates globales abiertos.
+
+Dependencias: D01→D02/D03 (archivos distintos; cambios simultáneos solo en worktrees separados)→D04→D06. D05 se investiga en paralelo read-only; su ausencia nunca se sustituye por configuración permisiva ni se presenta como autoridad instalada.
+
+## T015.R.1 — recibos tipados del broker (validado por componente)
+
+- [x] EBR-01 Conocimiento/source del productor y consumidor, spec→plan→tasks, grafo y decisión TDD.
+- [x] EBR-02 Reproducir coerción de leases y falsa retirada en test/services/test_elastic_broker_contract.py con la fixture PostgreSQL existente.
+- [x] EBR-03 Implementar modelos puros models/elastic_broker.py y validación antes de remote/cleanup en services/elastic_assignment_service.py; conservar identidad segura, estado incierto y no replay.
+- [x] EBR-04 Verificar contrato real en fixture de release, límites/readiness heredados y regresión conjunta, composición/tipos/revisión/documentos. T015/T016/M3 permanecen abiertos.
+
+
+**2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).

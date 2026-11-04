@@ -234,3 +234,17 @@ La exclusión del control lane impide reutilizar el del sampler API. La afinidad
 
 
 **2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](validation-t014-root-operator-api.json), [composición](composition-t014-root-operator-api.md).
+
+## H24d — elección del ensamblaje (2026-11-04)
+
+Se conserva el runtime owner-bound H24c. El perfil público estricto describe archivos externos, scope, footprints y deadlines; el assembler confiable recibe el funding existente y no lo construye ni clona. Constructor sin I/O; lectura explícita del perfil separada. Signer privado Ed25519 y trust público comparten lector con CLI, comparan key_id/clave pública y no escriben ni generan nada. Preflight bajo el worker financiado, antesconnect, y de nuevo antesissuer; defaultNone conserva flujo y llamadas previas. La lectura posterior del supplier sigue protegida por retención poscommit si una rotación ocurre entre comprobaciones.
+
+Alternativas rechazadas: reutilizar peer_private_key genera/mezcla identidadpeer; fabricar storage0/known para habilitar commands oculta ausencia de autoridad; política/Linux sin grant no financia SQL; copiar claims del actor OriginalControlOwner reutiliza startup one-shot de otro PID. Extender actor con comandos no resuelve por sí mismo credenciales reader frente a migration owner. Se mantiene investigación del productor de financiación con Claude/ECC y se implementan los componentes seguros en paralelo.
+
+
+### Frontera de financiación confirmada por fuente
+
+El actor original abre el destino primary/runtime (root_sql_control.py:168); su funding valida conexión nativa y destino exactos. El issuer usa además comprobaciones de ownership en read_latest_owner_funded y record_root_opening. Un canal reader financiado no se convierte en migration owner por añadir un mensaje. Se rechaza esa inferencia de la segunda revisión. Partición/escrow o paquete propio del issuer requieren contrato explícito y fuente externa; no se ha implementado ni instalado ese productor en H24d. El signer/perfil no se presentan como sustituto.
+
+
+**2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).

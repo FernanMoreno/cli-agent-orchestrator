@@ -1,5 +1,11 @@
 # Claude Code: análisis y pendientes
 
+**2026-11-04 · perfil/signer Root y recibos de broker validados por componente.**
+
+El perfil y el compositor son estrictos e inertes; la credencial externa se valida bajo cargo antes de SQL/issuer. La asignación elástica usa leases/recibos tipados y conserva reconcile sin repetir efectos ante ambigüedad. No persiste release_token ni interpreta HTTP200/404 como cierre.
+
+**829 pruebas aprobadas**,10 advertencias en61 módulos:748 casos anteriores+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root CLI/PG reales; tipos474, arquitectura5/0,13 Python/7 fuentes exactos y PostgreSQL limpio. El broker HTTP está simulado; presupuestos y grants son fixtures. Siguen pendientes financiación disjunta productiva, cuotas, T015/T016, M1/M2/M3, SDK/UI y diez gates originales. [Validación](../specs/041-resource-aware-network-admission/validation-profile-elastic-broker.json), [composición](../specs/041-resource-aware-network-admission/composition-profile-elastic-broker.md).
+
 **2026-11-04 · T014.R.H2.4c: operador Root y API validados opt-in.**
 
 JWT admin y misma identidad, worker/canal SQL originales financiados, controles estrictos acotados y cierre protegido antes del teardown API. Reserva retirada y respuesta publicadas atómicamente; fase cached no acredita ausencia de activación. Sin nuevo máximo agregado fijo de agentes/entregas.
