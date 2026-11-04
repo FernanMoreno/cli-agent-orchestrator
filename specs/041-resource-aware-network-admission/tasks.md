@@ -339,3 +339,16 @@ Resultado H24a: [validación](validation-t014-funded-process.json) y [composici�
 
 
 **2026-11-04 · H24b validado como componente interno opt-in.** Root CLI, publisher y transporte privado autenticado conectados a proceso financiado y activación en dos fases. Emisor único sobre su conexión original; provisión externa para subject vivo, gate de reentrada y registros/cargos conservados. 626PASS/10advertencias/39módulos,572IDs previos+54nuevos;3recorridos Root/PG reales. Tipos467, arquitectura5/0,14Python/8fuentes archivo-exactos y PostgreSQL0/0/0. Sin nuevo techo agregado fijo. El primer diagnóstico2fallos/2pases fue un defecto del arnés de préstamo SQL y se conserva fallido. No acepta autoridad productiva/API, shared, custodia, modelos, M1/M2/M3, SDK/UI restante ni los diez gates originales. [Validación](validation-t014-root-control-deployment.json), [composición](composition-t014-root-control-deployment.md).
+
+
+## T014.R.H2.4c — caller del operador y API (validado opt-in)
+
+- [x] H24C-01 Conocimiento/spec/plan/tasks, impacto Graphify verificado y decisión TDD antes de código.
+- [x] H24C-02 [US7] Runtime owner-bound financiado, conexión original persistente, controles acotados y retención ante cancelación/fallo en services/root_deployment_runtime.py y test/services/test_root_deployment_runtime.py.
+- [x] H24C-03 [US7] Contrato estricto/router JWTadmin y composición opt-in en models/root_deployment_control.py, api/root_deployment_routes.py, api/main.py y test/api/test_root_deployment_routes.py.
+- [x] H24C-04 [US7] Verificar caller real y fronteras de autoridad/funding/AfterCommit, tipos/arquitectura/composición/revisión y actualizar validación/documentos/conocimiento; mantener instalación productiva y diez gates explícitamente separados.
+
+Dependencias: C01→C02/C03 (archivos separados; C03 usa contrato acordado)→C04. No ejecución intensiva simultánea.
+
+
+**2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](validation-t014-root-operator-api.json), [composición](composition-t014-root-operator-api.md).

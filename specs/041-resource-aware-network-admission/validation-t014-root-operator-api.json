@@ -1,0 +1,176 @@
+{
+  "schema": "caos.spec041.root-operator-api.validation.v1",
+  "date": "2026-11-04",
+  "task": "T014.R.H2.4c",
+  "status": "accepted_opt_in_operator_api",
+  "tests": {
+    "passed": 748,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "warnings": 10,
+    "modules": 53,
+    "seconds": 505.856,
+    "available_mib": 10024,
+    "baseline_relevant_passed": 626,
+    "new_distinct_cases": 58,
+    "additional_existing_cases": 64
+  },
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/api/main.py",
+      "sha256": "sha256:68a28ca3226a97b1867c191995dab528d30118d2871123ec6ff66ccda1d846fe"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/api/root_deployment_routes.py",
+      "sha256": "sha256:02bc56d6f7a89703be9ef4ecc08f93bc3d1f0ae2e25ea8daef0fd66d2f8b029d"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/root_deployment_control.py",
+      "sha256": "sha256:dc1ada069b91a8c8129adb06157be278c773321dddd7d7daa0f54c1bc8d8ac0f"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/root_deployment_runtime.py",
+      "sha256": "sha256:3875a831eed62e8d17a2eb2b82d33078983ff00d3c0a2e1bcbe03553af10e4ee"
+    },
+    {
+      "path": "test/api/test_plugin_lifespan.py",
+      "sha256": "sha256:3c5dbee961cc79d7081d2ecf976d852ee7af3d55e71e1c6c4e1e9649a8912fcf"
+    },
+    {
+      "path": "test/api/test_root_deployment_lifespan.py",
+      "sha256": "sha256:00ede304bbcfe86818607f358ffd9409bbfce6405986b804b621cbf904f8cb01"
+    },
+    {
+      "path": "test/api/test_root_deployment_routes.py",
+      "sha256": "sha256:5f48b798ddddc1824b26aa3d51ca2206c2fdef8eb734175ed7318d40e08ded59"
+    },
+    {
+      "path": "test/api/test_work_dispatcher_lifespan.py",
+      "sha256": "sha256:7270d2fcd9927c1b3a29f7932f45fb20b54b87b5d93367cc58ea47d9176ce383"
+    },
+    {
+      "path": "test/postgres/test_root_deployment_http.py",
+      "sha256": "sha256:83035462fe9a683e2364a31c656c5b5491cd54f915bcc696b2d6b254a121b9d1"
+    },
+    {
+      "path": "test/services/test_root_deployment_authority.py",
+      "sha256": "sha256:8e10c86fd125d248c6956c4b305cf475b8a25f0080047b6eb15031c52bd3c8ba"
+    },
+    {
+      "path": "test/services/test_root_deployment_runtime.py",
+      "sha256": "sha256:21e52d1ae708de49ea2447f59f963ef7108d4ec8174f80a5c897875968a1f18d"
+    },
+    {
+      "path": "test/services/test_workflow_retention.py",
+      "sha256": "sha256:37ae4043621e47f6122978041342d8629205edc4d3330c46f30cf1f5484da932"
+    }
+  ],
+  "preservation": {
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "3a741f5201369c293f10a28b2ae991cda78a27425b935b2b8e80d8d21fea2c72",
+    "source_archive_matches": 12,
+    "production_archive_matches": 4,
+    "foreign_files_preserved": 12,
+    "sql_schema_versions_preserved": 5,
+    "resource_schema_versions_preserved": 7
+  },
+  "coverage": {
+    "owned_source": {
+      "src/cli_agent_orchestrator/api/main.py": {
+        "covered_lines": 1406,
+        "num_statements": 4533,
+        "percent_covered": 31.016986543128173,
+        "percent_covered_display": "31",
+        "missing_lines": 3127,
+        "excluded_lines": 8
+      },
+      "src/cli_agent_orchestrator/api/root_deployment_routes.py": {
+        "covered_lines": 91,
+        "num_statements": 108,
+        "percent_covered": 84.25925925925925,
+        "percent_covered_display": "84",
+        "missing_lines": 17,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/models/root_deployment_control.py": {
+        "covered_lines": 25,
+        "num_statements": 26,
+        "percent_covered": 96.15384615384616,
+        "percent_covered_display": "96",
+        "missing_lines": 1,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/services/root_deployment_runtime.py": {
+        "covered_lines": 638,
+        "num_statements": 920,
+        "percent_covered": 69.34782608695652,
+        "percent_covered_display": "69",
+        "missing_lines": 282,
+        "excluded_lines": 0
+      }
+    },
+    "package_percent": 30.402750491159136,
+    "scope": "53 selected modules; not whole-project acceptance"
+  },
+  "checks": {
+    "cold_mypy_source_files": 470,
+    "black_and_isort_files": 12,
+    "architecture_contracts_kept": 5,
+    "architecture_contracts_broken": 0,
+    "postgres_clean": [
+      0,
+      0,
+      0
+    ],
+    "private_graph_source_verified": true
+  },
+  "native": {
+    "actual_root_cli_journeys": 4,
+    "new_http_root_journeys": 1,
+    "root_parent_capacity": "synthetic positive fixture budgets",
+    "JWT": "test issuer/signing keys; production validator",
+    "operator_provisioning": "separate funded fixture worker",
+    "global_model_acceptance": false
+  },
+  "reviews": {
+    "claude_read_jobs": [
+      "3feb5e61b6c44a16b04b572f134d467c",
+      "eb804f145d6d4672b7c600a14d9a9291",
+      "ac3916ce87e042049b16e04bcc83174b"
+    ],
+    "ECC": "Luna Max architecture/ownership/Python/security reviews; static only"
+  },
+  "diagnostics": {
+    "late_metadata_witness": "RED1/GREEN47; superseded by current source",
+    "cached_phase_shutdown": "RED3/GREEN32 focused; source-bound receipts preserved",
+    "legacy_fixtures": "3 Work failures: missing storage scope; plugin wait had no release under existing shield",
+    "atomic_reply": "independent RED observed released charge with pending reply; GREEN plus three success/error/rejection regressions",
+    "interrupted_candidates": "retained as interrupted, excluded from accepted counts",
+    "finish_false_fault_model": "daemon substitute in one controlled accounting test; not real process retirement acceptance"
+  },
+  "scope": {
+    "root_operator_API_opt_in": true,
+    "trusted_external_composition_required": true,
+    "productive_authority_installed": false,
+    "API_PID_converted_to_Root": false,
+    "shared_activation": false,
+    "descendant_custody": false,
+    "global_acceptance": false,
+    "original_gates_still_open": [
+      "T013",
+      "T014",
+      "T015",
+      "T016",
+      "T018",
+      "T019",
+      "T020",
+      "T021",
+      "T022",
+      "T023"
+    ]
+  },
+  "private_receipts": "/home/felni/.cache/caos-root-operator-20261104"
+}

@@ -177,13 +177,14 @@ class TestPluginRegistryLifespan:
         """Caller cancellation propagates after plugin teardown and telemetry shutdown."""
 
         teardown_started = asyncio.Event()
+        teardown_release = asyncio.Event()
         teardown_order: list[str] = []
 
         class BlockingPlugin(CaoPlugin):
             async def teardown(self) -> None:
                 teardown_order.append("blocking")
                 teardown_started.set()
-                await asyncio.Future()
+                await teardown_release.wait()
 
         class HealthyPlugin(CaoPlugin):
             async def teardown(self) -> None:
@@ -222,11 +223,18 @@ class TestPluginRegistryLifespan:
             lifespan_context = lifespan(app)
             await lifespan_context.__aenter__()
             shutdown_task = asyncio.create_task(lifespan_context.__aexit__(None, None, None))
-            await teardown_started.wait()
-            shutdown_task.cancel()
-
-            with pytest.raises(asyncio.CancelledError):
-                await shutdown_task
+            try:
+                await teardown_started.wait()
+                shutdown_task.cancel()
+                await asyncio.sleep(0)
+                assert not shutdown_task.done()
+                assert teardown_order == ["blocking"]
+                teardown_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await shutdown_task
+            finally:
+                teardown_release.set()
+                await asyncio.gather(shutdown_task, return_exceptions=True)
 
             assert teardown_order[:2] == ["blocking", "healthy"]
             shutdown_telemetry.assert_called_once_with()

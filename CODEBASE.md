@@ -32,7 +32,7 @@ to use.
 | `src/cli_agent_orchestrator/ops_mcp_server/` | External operations MCP tools |
 | `src/cli_agent_orchestrator/services/` | Session, terminal, inbox, workflow, memory, event, configuration, and plugin services |
 | `src/cli_agent_orchestrator/backends/` | Terminal-backend abstraction and tmux/herdr implementations |
-| `src/cli_agent_orchestrator/clients/` | SQLite and tmux clients used by services and backends |
+| `src/cli_agent_orchestrator/clients/` | PostgreSQL and tmux clients used by services and backends |
 | `src/cli_agent_orchestrator/providers/` | Provider adapters for interactive agent CLIs |
 | `src/cli_agent_orchestrator/models/` | Pydantic domain and API models |
 | `src/cli_agent_orchestrator/schemas/` | Shipped schemas, including agent-profile validation |
@@ -90,8 +90,11 @@ contract supplies the operation.
 
 ## Persistence and event flow
 
-`clients/database.py` owns SQLite access for sessions, terminals, inbox
-messages, and related state. Paths and defaults are centralized in
+`clients/database.py` uses PostgreSQL through SQLAlchemy and the admission-aware
+`clients/postgres/storage_pool.py` for sessions, terminals, inbox messages, and
+related state. Native repositories use `clients/postgres/` directly. PostgreSQL
+targets and explicit migration credentials are resolved by
+`clients/postgres/config.py`. Paths and defaults are centralized in
 `constants.py`; unified runtime configuration is resolved by
 `services/config_service.py` and `services/settings_service.py`.
 

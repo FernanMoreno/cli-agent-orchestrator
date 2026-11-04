@@ -1,0 +1,10 @@
+# Control de despliegue Root opt-in
+
+Contrato canónico: modelos Pydantic `models/root_deployment_control.py`; FastAPI genera OpenAPI desde esos modelos. Configuración confiable usa `configure_root_deployment(app, runtime)` antes de servir; sin runtime las operaciones autenticadas devuelven503. No se ofrece configuración de argv/env/claves/presupuesto por HTTP.
+
+Todas las rutas requieren JWT admin nuevo; el runtime exige la misma identidad que inició el despliegue. `GET /admission/root` lee estado retenido sin SQL. `POST /admission/root/launch`, `/refresh`, `/stop` aceptan RootDeploymentCommand. `/activate` acepta RootDeploymentActivation con IDs canónicos de provisión externa previa. Version1 estricta; extras y booleanos se rechazan. Todas devuelven RootDeploymentStatus o error fijo, con Cache-Control:no-store.
+
+El subject es descriptivo para el operador autorizado; no es permiso. Cancelación de petición no cancela/replica la operación física. Un control ya en vuelo produce indisponibilidad; no se forma cola ilimitada. Cerrado no significa que créditos SQL o descendientes estén retirados. El host conserva runtime/handles ante cierre físico no demostrado. La instalación del issuer, su financiación disjunta, signer/trust y provisión externa siguen como prerrequisitos; este contrato no convierte el proceso API legacy en Root.
+
+
+**2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](../validation-t014-root-operator-api.json), [composición](../composition-t014-root-operator-api.md).

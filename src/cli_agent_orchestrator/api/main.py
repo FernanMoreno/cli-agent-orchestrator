@@ -1683,7 +1683,7 @@ async def _initialize_managed_workflow_runtime(app: FastAPI, repository, gateway
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _application_lifespan(app: FastAPI):
     """Application lifespan events."""
     _start_graph_builds(app)
     from cli_agent_orchestrator.api.browser_auth_routes import configure_browser_auth
@@ -2186,6 +2186,42 @@ async def lifespan(app: FastAPI):
             raise asyncio.CancelledError
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Own optional Root retirement across startup, requests and API teardown."""
+    attempted = False
+    root_failure: BaseException | None = None
+
+    async def retire_root() -> None:
+        nonlocal attempted, root_failure
+        if attempted:
+            return
+        attempted = True
+        try:
+            await close_root_deployment(app)
+        except BaseException as error:
+            root_failure = error
+            # Keep the owner and original error, without logging private causes.
+            logger.warning("Root deployment shutdown unconfirmed; owner retained")
+
+    try:
+        async with _application_lifespan(app):
+            try:
+                yield
+            finally:
+                # Fence and join Root before the ordinary API retirement. A
+                # disjoint Root failure must not skip that independent cleanup.
+                await retire_root()
+    except BaseException:
+        # Includes failures in the earliest startup prefix and API teardown.
+        await retire_root()
+        raise
+    else:
+        await retire_root()
+        if root_failure is not None:
+            raise root_failure
+
+
 def get_plugin_registry(request: Request) -> PluginRegistry:
     """Return the plugin registry stored on the FastAPI application state."""
 
@@ -2225,9 +2261,14 @@ app = FastAPI(
 )
 from cli_agent_orchestrator.api.admission_routes import router as admission_router
 from cli_agent_orchestrator.api.browser_auth_routes import router as browser_auth_router
+from cli_agent_orchestrator.api.root_deployment_routes import (
+    close_root_deployment,
+)
+from cli_agent_orchestrator.api.root_deployment_routes import router as root_deployment_router
 
 app.include_router(browser_auth_router)
 app.include_router(admission_router)
+app.include_router(root_deployment_router)
 from cli_agent_orchestrator.api.local_coordination_routes import router as local_coordination_router
 
 app.include_router(local_coordination_router)

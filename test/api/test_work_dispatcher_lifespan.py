@@ -3,6 +3,7 @@
 import asyncio
 import contextvars
 import threading
+from contextlib import contextmanager
 from test.api.test_work_launch_composition import composed_server
 from types import SimpleNamespace
 
@@ -352,10 +353,22 @@ async def test_abandon_registered_handoff_closes_and_joins_reconciliation(monkey
     trace_token = trace_id.set("registered-abandon-context")
 
     class Port:
+        storage_active = False
+
+        @contextmanager
+        def _storage_scope(self):
+            assert not self.storage_active
+            self.storage_active = True
+            try:
+                yield
+            finally:
+                self.storage_active = False
+
         def close(self):
             port_closed.set()
 
         def _finish_resource(self):
+            assert not self.storage_active
             assert reconcile_finished.is_set()
 
     class FakeWorkService:
@@ -368,6 +381,7 @@ async def test_abandon_registered_handoff_closes_and_joins_reconciliation(monkey
             assert actor_id == "principal"
             assert trace_id.get() == "registered-abandon-context"
             assert port_closed.is_set()
+            assert prepared.port.storage_active
             reconcile_started.set()
             assert reconcile_release.wait(timeout=5)
             reconcile_finished.set()
@@ -469,11 +483,23 @@ async def test_cancelled_preparation_retains_worker_if_cleanup_task_creation_fai
     fail_cleanup_creation = False
 
     class Port:
+        storage_active = False
+
+        @contextmanager
+        def _storage_scope(self):
+            assert not self.storage_active
+            self.storage_active = True
+            try:
+                yield
+            finally:
+                self.storage_active = False
+
         def close(self):
             assert worker_finished.is_set()
             port_closed.set()
 
         def _finish_resource(self):
+            assert not self.storage_active
             assert worker_finished.is_set()
             assert reconciled.is_set()
 
@@ -497,6 +523,7 @@ async def test_cancelled_preparation_retains_worker_if_cleanup_task_creation_fai
             assert actor_id == "principal"
             assert trace_context.get() == "admitted-work-context"
             assert port_closed.is_set()
+            assert port.storage_active
             assert worker_finished.is_set()
             reconciled.set()
 

@@ -610,8 +610,10 @@ def test_sweep_has_a_production_caller_in_the_api_module():
     # The startup helper exists and calls the sweep.
     assert hasattr(api_main, "_sweep_workflow_runs_at_startup")
     assert "sweep_runs" in inspect.getsource(api_main._sweep_workflow_runs_at_startup)
-    # ...and the lifespan schedules that helper.
-    assert "_sweep_workflow_runs_at_startup" in inspect.getsource(api_main.lifespan)
+    # The outer lifetime delegates to the application startup, which schedules
+    # the helper. Keep both links when checking reachability through the wrapper.
+    assert "_application_lifespan(app)" in inspect.getsource(api_main.lifespan)
+    assert "_sweep_workflow_runs_at_startup" in inspect.getsource(api_main._application_lifespan)
 
 
 def test_startup_sweep_helper_invokes_sweep_runs(monkeypatch):

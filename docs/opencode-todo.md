@@ -1,5 +1,11 @@
 # OpenCode v1 y v2: análisis y pendientes
 
+**2026-11-04 · T014.R.H2.4c: operador Root y API validados opt-in.**
+
+JWT admin y misma identidad, worker/canal SQL originales financiados, controles estrictos acotados y cierre protegido antes del teardown API. Reserva retirada y respuesta publicadas atómicamente; fase cached no acredita ausencia de activación. Sin nuevo máximo agregado fijo de agentes/entregas.
+
+**748 pruebas aprobadas**, cero fallos/errores/omisiones, 10 advertencias en 53 módulos:626 IDs anteriores,58 casos Root nuevos y64 casos existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP); tipos de 470 fuentes, arquitectura 5/0 y12 Python/4 fuentes exactos. PostgreSQL limpio; fallos/interrupts previos conservados y excluidos. La composición confiable todavía debe aportar financiación y firmante/trust productivos; no acepta M1/M2/M3, modelos, shared/custodia, SDK/UI restante ni los diez gates originales. [Validación](../specs/041-resource-aware-network-admission/validation-t014-root-operator-api.json), [composición](../specs/041-resource-aware-network-admission/composition-t014-root-operator-api.md).
+
 **2026-11-04 · T014.R.H2.4b: Root CLI/transporte y composición interna validados opt-in.**
 
 Publisher antes de SQL, canal privado autenticado, subject del padre y activación en dos fases sobre la conexión original. Emisor único, controles no reentrantes, registro poscommit/handle retenidos y retiro de CPU/RAM solo tras salida/cierre positivos; ACK no devuelve créditos SQL. Sin nuevo máximo fijo de agentes/entregas.

@@ -188,3 +188,16 @@ Este corte permanece opt-in. La instalación productiva de autoridad, la conexi�
 
 
 Si el cierre del descriptor Root falla o no se demuestra, conservar el mismo handle y cargo; cleanup puede completar el cierre, pero join no devuelve esa reserva. No reiniciar el estado para borrar la deuda. Este testigo físico es distinto del error RPC cuyo cierre sí fue confirmado.
+
+
+## H24c — validación del caller de operador (en curso)
+
+1. Preparar por composición confiable un ledger/carril de control propio, presupuesto disjunto y evidencia de recursos vigente; signer/trust-file concordantes y argv/política fijos. No copiar el ledger del sampler API ni inventar claims desde una variable de entorno. Construir RootDeploymentConfig y RootDeploymentRuntime, e instalar con configure_root_deployment(app, runtime) antes de servir. Sin esta composición, la API permanece indisponible para Root.
+2. Usar JWT admin válido en cada petición. Consultar GET /admission/root; lanzar con POST /admission/root/launch y comando versionado; guardar el sujeto autenticado. Este PID nuevo todavía no abre SQL. El PID legacy del API no queda convertido en Root.
+3. Un operador externo, con financiación propia, registra explícitamente el envelope de ese binding mediante ResourceEnvelopeRepository.append y provisiona el conjunto completo de cuotas/créditos/journal. No hacerlo dentro del préstamo vivo del issuer ni abrir conexiones de reparación. La prueba nueva mantiene esta fase explícita con autoridad de fixture declarada.
+4. POST /admission/root/activate envía solo IDs canónicos ya provisionados; después refresh/stop. El emisor usa la misma conexión original. Comprobar 0 backend hijo antes de activar y 1 después, atribución al principal verificado, rechazo de otro operador y único connect del runtime.
+5. Probar cancelación/busy/apagado/retiro físico, incluyendo admisión saturada/cerrada, finish False y cierre SQL incierto. No equiparar cleanup o ACK con join ni reemitir activación tras incertidumbre. Ejecutar primero controles offline y luego test/postgres/test_root_deployment_http.py con prerrequisitos PostgreSQL de docs/postgresql.md, origen de paquete/fixtures y memoria6144MiB verificados.
+6. Conservar selección626 previa, casos nuevos, tipos completos, arquitectura/composición, revisiones y hashes antes de declarar aceptación interna. JWT/JWKS, firmante, provisión y presupuesto padre de fixture no acreditan instalación productiva, modelos ni capacidad M1/M2/M3.
+
+
+**2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](validation-t014-root-operator-api.json), [composición](composition-t014-root-operator-api.md).

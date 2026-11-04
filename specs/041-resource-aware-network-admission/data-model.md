@@ -206,3 +206,15 @@ H24b: RootSqlSubject puro con alias de servicio compatible; frames Root inmutabl
 ### Testigo físico de cierre Root
 
 _root_close_uncertain pertenece al supervisor exacto y solo cambia de False a True. Un fallo/poscondición no demostrada de cierre Root lo conserva incluso si se absorbe el error primario o un reintento cierra. CommandProcess lo incorpora como incertidumbre terminal en aborto y retiro. No forma parte del subject ni concede autoridad; no se reinicia al cerrar ni permite refund por ACK/cleanup. El error RPC con cierre confirmado conserva su camino de join.
+
+
+## H24c — control del operador
+
+RootDeploymentConfig es composición interna inmutable: capacidades existentes de bootstrap/ledger/permiso/canal objetivo, argv/env, proveedor de firma y huellas positivas de worker, child y comandos. No es DTO. El worker ya financiado incluye su señal/Future de cierre acotados; terminar recursos admitidos no solicita un permiso nuevo cuando el nodo está saturado o la admisión ya cerró.
+
+RootDeploymentRuntime conserva un solo worker, conexión original y deployment; reclamar instalación es atómico y de un solo uso. Las peticiones son comandos tipados publicados tras su cargo y ligados al worker. Los estados/subject/IDs descriptivos no autorizan operaciones; el principal se revalida por petición y se compara con el iniciador. El cierre requiere prueba positiva de proceso, canal, lease de control y thread; el rescate físico sin join conserva owner/cargos y no convierte deuda en estado closed.
+
+El contrato público procede de RootDeploymentCommand, RootDeploymentActivation y RootDeploymentStatus en models/root_deployment_control.py, sin repetir sus esquemas. No cambiar SQL5/resource7 ni convertir snapshots de estado en permisos.
+
+
+**2026-11-04 · H24c validado: operador y API Root opt-in.** Runtime financiado con un worker/conexión original persistentes, JWT admin/identidad estable, comandos estrictos, cancelación retenida y cierre antes del teardown API. Publicación de respuesta y retiro del cargo atómicos; fase cached no prueba que nunca se activó. 748 PASS/10 advertencias/53 módulos:626 IDs conservados+58 nuevos+64existentes adicionales. Cuatro recorridos Root/PG reales (uno nuevo HTTP), tipos de 470 fuentes, arquitectura 5/0,12 Python/4 fuentes archivo-exactos y PostgreSQL 0/0/0. Composición confiable externa aún necesaria; sin autoridad productiva instalada, M1/M2/M3 ni aceptación de modelos/global. Diez gates abiertos. [Validación](validation-t014-root-operator-api.json), [composición](composition-t014-root-operator-api.md).
