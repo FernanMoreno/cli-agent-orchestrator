@@ -692,3 +692,10 @@ Agree pure `models/admission_policy_control.py` contract first. Independently im
 ## T023 delivery plan
 
 After source-verified web Graphify impact, implement independent lossless policy API client/decoder hook and Settings UI in separate worktrees with agreed DTOs. Integrate into main after T022 source acceptance. Preserve central browserFetch and existing Settings controls. Verify typed protocol, human review/CAS/conflict/history/unsupported browser/remote-context guards, frontend regression/build, actual authenticated browser→HTTP→PostgreSQL roundtrip, architecture/composition and durable evidence. Generated build output is not source acceptance. No model/physical-capacity/global claims from UI tests.
+
+Align the web CI test job with Node 22 and an explicit native JSON capability check. Validate that an engine without those capabilities fails the positive preflight; retain all unsupported-browser contract tests and leave unrelated CI jobs unchanged.
+
+
+## T023 accepted local consumer (2026-11-04)
+
+Local auth/node ownership fences the volatile draft, review, synchronous busy/read guards and pending inspection. Explicit navigation exit preserves the inspection gate; a different authority cannot inherit the draft. Policy quantities/revisions/cursors use bigint and native source/raw JSON; durations remain finite numbers. Mutation start/ACK invalidates applied revision until fresh status. Backend authority, CAS/audit and profile selection are unchanged. [Validated scope and results](validation-policy-studio.json); [composition review](composition-policy-studio.md).

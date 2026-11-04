@@ -22,7 +22,7 @@ Aceptación: barreras con hilos reales prueban cargo antes de la primera instruc
 
 **Created**: 2026-10-30
 
-**Status**: Implementation in progress — T001–T012 y T017 validados por componentes. T013/T014 parcialmente integrados; C1 sella productores y C2a verifica la salida del hijo propio, sin retirar créditos. Quedan cuotas, recuperación completa, distribución T015/T016, presupuesto físico T018, aceptación M1/M2/M3 T019/T020, gates T021 y configuración SDK/UI T022/T023.
+**Status**: Implementation in progress — T001–T012, T017, T022 y T023 validados en sus alcances. T013/T014 siguen parcialmente integrados; financiación productiva, cuotas, presupuesto físico/distribución y M1/M2/M3 continúan pendientes en T013–T016 y T018–T021.
 
 **Input**: Sustituir las cuatro entregas simultáneas fijas por admisión según recursos, presión de PostgreSQL y capacidad de cada nodo, conservando el orden por receptor. Cada máquina necesita límites; la red debe sumar nodos y repartir trabajo sin un número global fijo de agentes.
 
@@ -488,3 +488,7 @@ The real Settings tab adds a separate admission policy section using the T022 ba
 Display persisted and applied revisions separately; unknown application is not capacity. The nine-field draft uses explicit units, exact signed64-bit integers and finite duration floats, with review of the full candidate and expected revision before an explicit write. Empty state requires all values; no hidden copied defaults or grants. Conflict409 preserves the draft and demands explicit reload/review; uncertain mutation failures never retry and require explicit status inspection. Revocation is confirmed, history is bounded keyset paging. Async/auth/navigation changes must not apply a stale result to another scope or silently discard pending mutation ownership.
 
 JavaScript must not round valid backend integer quantities or revisions. Use standard source-aware JSON.parse and JSON.rawJSON with bigint and decimal form strings; require both native capabilities and fail safely before policy requests if unavailable. No regex JSON parser, arbitrary max-safe-integer protocol cap, or silent numeric fallback. Duration semantics stay IEEE float. Mandatory actual Chromium acceptance covers large integer response/input/request/database roundtrip; unsupported capability coverage is explicit. Authorization remains solely on the server; no new token/credential storage flow.
+
+The complete web CI suite must exercise the positive exact-integer contract on an engine with native source/raw JSON support. Select Node 22 for that job and verify capabilities explicitly; keep negative unsupported-engine tests rather than skipping positive cases or introducing a parser fallback.
+
+T023 local administration acceptance:569 frontend cases retain all531 baseline IDs; native Chromium/HTTP/JWKS/PostgreSQL2/2, types/build and composition5/0. See [validation](validation-policy-studio.json) and [composition](composition-policy-studio.md). No resource or global acceptance is implied.

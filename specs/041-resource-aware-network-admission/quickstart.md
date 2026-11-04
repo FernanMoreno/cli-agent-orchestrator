@@ -231,3 +231,14 @@ with httpx.Client(base_url=api_url, timeout=30) as transport:
 ```
 
 A conflict requires explicit read/review, never blind replay. An uncertain write requires status inspection. Compare saved and applied revisions separately; unknown applied state does not attest capacity. Seed is a separate explicit admin action at revision zero from the configured server-private source; SDK requests contain no filesystem path. UI integration remains T023.
+
+
+## T023 — real Settings administration
+
+Use Node22 with native JSON source/raw support for the web tests. Build the actual UI with the existing web toolchain and open Settings on the local server configured for the T022 PostgreSQL policy backend. The new admission section is separate from agent-directory settings. Review all values and the expected revision before confirming; a policy never grants physical capacity. Remote selection requires an explicit return to local scope.
+
+The browser acceptance case is `test/postgres/test_admission_policy_browser.py`; it is marked `e2e` and `postgres` and requires explicit preparation. Its five environment inputs are `CAO_ADMISSION_BROWSER_DIST`, `CAO_ADMISSION_BROWSER_MANIFEST`, `CAO_ADMISSION_BROWSER_NODE`, `CAO_ADMISSION_BROWSER_PLAYWRIGHT_MODULE`, and `CAO_ADMISSION_BROWSER_CHROMIUM`, all absolute paths. The manifest contains `source_files` and `artifacts` maps from relative paths to SHA256 hex, `output`, `source_preserved: true`, and `build_exit_code: 0`. Generate it around a successful build with unchanged pre/post source hashes; missing or changed inputs fail rather than skip. Use the existing verified PostgreSQL reuse fixture and keep the6144MiB minimum. No operator login is changed; the test uses an ephemeral signed JWT and browser context.
+
+Keep HOME private and Chromium TMPDIR short inside the owned pytest root: `tmp_path_factory.mktemp("cb")` avoids the SingletonSocket path failure. For new harnesses first probe startup without credentials using the same binary/environment mapping; capture detailed launch diagnostics there, while the authenticated run emits only sanitized structured receipts. In-app exit retains the draft/inspection only in memory; refreshing the page does not persist that state.
+
+Accepted:569 frontend cases,531 baseline IDs intact, types/build,2 real HTTP/PostgreSQL cases including Chromium, architecture5/0 and PostgreSQL0/0/0. The earlier565-case frontend freeze and1failed/1passed native attempt remain historical. [Receipt](validation-policy-studio.json), [review](composition-policy-studio.md). Productive resource funding, quotas, M1/M2/M3 and eight original gates remain separate.

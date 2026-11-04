@@ -106,13 +106,15 @@ export async function fetchJSON<T>(
     direct?: boolean;
     /** Read Problem.code only for endpoints that use the interaction contract. */
     captureProblemCode?: boolean;
+    /** Decode successful text with a route-specific strict codec when supplied. */
+    decodeSuccess?: (text: string) => T;
   },
 ): Promise<T> {
   const epoch = nodeEpoch;
   const authSignal = browserAuthSignal();
   const signal = nodeSignal();
   const controller = new AbortController();
-  const { captureProblemCode, ...requestOptions } = opts ?? {};
+  const { captureProblemCode, decodeSuccess, ...requestOptions } = opts ?? {};
   const timeout = setTimeout(
     () => controller.abort(),
     opts?.timeoutMs ?? 10000,
@@ -141,11 +143,7 @@ export async function fetchJSON<T>(
       try {
         const body = await res.json();
         if (body && typeof body.detail === "string") detail = body.detail;
-        if (
-          captureProblemCode &&
-          body &&
-          typeof body.code === "string"
-        )
+        if (captureProblemCode && body && typeof body.code === "string")
           kind = body.code;
         if (body && body.detail && typeof body.detail === "object") {
           detailMeta = body.detail as Record<string, unknown>;
@@ -180,6 +178,7 @@ export async function fetchJSON<T>(
     if (authSignal.aborted) throw new Error("La sesión ha cambiado");
     if (!opts?.direct && epoch !== nodeEpoch)
       throw new Error("Node selection changed");
+    if (decodeSuccess) return decodeSuccess(text);
     if (text.trim() === "") return undefined as T;
     return JSON.parse(text) as T;
   } finally {
@@ -554,7 +553,9 @@ export interface ProviderInteractionCapability {
   execution_mode: string;
   emits_explicit: boolean;
   detects_native: boolean;
-  responds_native: Array<"text" | "single_choice" | "multi_choice" | "choice_or_text" | "approval">;
+  responds_native: Array<
+    "text" | "single_choice" | "multi_choice" | "choice_or_text" | "approval"
+  >;
   manual_reason: string | null;
   required_mcp_tools?: string[];
 }
@@ -1350,16 +1351,20 @@ export const api = {
         captureProblemCode: true,
       },
     ),
-  cancelInteraction: (questionId: string, expectedVersion: number, reason: string) =>
-    fetchJSON<void>(
-      `/interactions/${encodeURIComponent(questionId)}/cancel`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
-        body: JSON.stringify({ reason }),
-        captureProblemCode: true,
+  cancelInteraction: (
+    questionId: string,
+    expectedVersion: number,
+    reason: string,
+  ) =>
+    fetchJSON<void>(`/interactions/${encodeURIComponent(questionId)}/cancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "If-Match": `"${expectedVersion}"`,
       },
-    ),
+      body: JSON.stringify({ reason }),
+      captureProblemCode: true,
+    }),
   reconcileInteraction: (
     questionId: string,
     expectedVersion: number,
@@ -1369,7 +1374,10 @@ export const api = {
       `/interactions/${encodeURIComponent(questionId)}/reconcile`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": `"${expectedVersion}"`,
+        },
         body: JSON.stringify(reconciliation),
         captureProblemCode: true,
       },
@@ -1385,7 +1393,10 @@ export const api = {
       `/interactions/${encodeURIComponent(questionId)}/delegation`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": `"${expectedVersion}"`,
+        },
         body: JSON.stringify({
           expected_assignment_id: expectedAssignmentId,
           reason,
@@ -1403,7 +1414,10 @@ export const api = {
       `/interactions/${encodeURIComponent(questionId)}/delegation`,
       {
         method: "DELETE",
-        headers: { "Content-Type": "application/json", "If-Match": `"${expectedVersion}"` },
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": `"${expectedVersion}"`,
+        },
         body: JSON.stringify({ reason }),
         captureProblemCode: true,
       },

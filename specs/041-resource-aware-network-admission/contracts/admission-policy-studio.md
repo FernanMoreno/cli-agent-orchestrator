@@ -1,4 +1,4 @@
-# Studio policy administration contract (T023; not yet implemented)
+# Studio policy administration contract (T023; local scope validated)
 
 The Settings route mounts a separate admission section. Policy endpoints always address the local server via central authenticated browserFetch with explicit direct routing. Show local scope/profile and block mutations under remote selection; selecting local is explicit. Browser auth, API JWT admin checks, policy CAS and target identity remain authoritative on the server. Do not add login/credential flows or claim remote forwarding exists.
 
@@ -6,6 +6,10 @@ Typed wire values match the T022 contract. Seven policy integers, revisions and 
 
 Client exports readonly AdmissionPolicyValues/Record/State/History and AdmissionPolicyUpdate/Revision plus admissionPolicyApi.get(signal?), update(body,signal?), revoke(body,signal?), history({limit?,before_revision?,signal?}). Body revision/quantities are bigint. history limit is a bounded presentation count, not an agent limit. All methods use no-store and no mutation retry. GET state and history preserve unknown versus persisted/applied distinctions. Fixed protocol/unsupported/authorization/conflict/unconfirmed messages never render backend body/exception text.
 
+The web CI job uses Node 22 and checks native source-aware parsing and raw JSON serialization before executing the complete tests. Older browser engines keep the explicit nonmutating refusal path; no JSON polyfill, rounded fallback or skipped positive contract tests are substituted. Other CI jobs and packaging runtimes are independent of this web-test requirement.
+
 Draft every field explicitly when no policy exists; do not silently persist copied defaults. Review all values, units, local profile and expected revision, then confirm PUT. Acknowledged save remains acknowledged if a later read fails. 409 preserves the draft and requires explicit reload before another review. Uncertain write blocks another mutation until explicit state inspection. Confirm revoke and retain history. Selected-node/auth/generation/unmount changes cannot relabel a stale reply as current state; use existing navigation/async ownership patterns.
 
 Tests include codec bounds and unsupported features, actual exact large integer browser roundtrip, review before effect, conflict/no replay/draft preservation, readonly/admin failures, uncertainty inspection, local-scope navigation guard and keyset pagination. Mock UI tests do not establish backend, graph, resource capacity or productive authority.
+
+Mutations invalidate the displayed applied revision until a fresh GET confirms it. A clean form reloads current values after conflict; only an edited draft is retained. Explicit in-app exit from any pending inspection preserves its mutation gate and volatile draft. Reloading the page is not durable draft storage.

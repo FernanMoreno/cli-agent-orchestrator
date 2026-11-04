@@ -1,0 +1,220 @@
+{
+  "schema": "caos.spec041.policy.studio.validation.v1",
+  "date": "2026-11-04",
+  "scope": "T023 local policy administration; no resource grants or global acceptance",
+  "test_base_head": "970c59808c477e211139e49fcf21601e9d0dc4b9",
+  "frontend": {
+    "passed": 569,
+    "failed": 0,
+    "skipped": 0,
+    "files": 50,
+    "baseline_ids_preserved": true,
+    "baseline_cases": 531,
+    "new_cases": 38,
+    "source_preserved": true
+  },
+  "frontend_types": "PASS",
+  "frontend_build": "PASS",
+  "frontend_source_files": 133,
+  "frontend_artifacts": 5,
+  "native": {
+    "phase": "admission-policy-studio-browser-r2",
+    "cases": {
+      "total": 2,
+      "failure": 0,
+      "error": 0,
+      "skipped": 0
+    },
+    "seconds": 58.54,
+    "pytest_seconds": 56.75,
+    "available_mib": 10489,
+    "warning_count": 5,
+    "browser_new_cases": 1,
+    "existing_HTTP_SDK_cases": 1,
+    "receipt": {
+      "appliedRevisionUnknown": true,
+      "browserPutRequests": 2,
+      "chromium": "153.0.8010.12",
+      "conflictStatus": 409,
+      "exactIntegerTokens": 6,
+      "exactJsonSupport": true,
+      "historyCursor": "9007199254741977",
+      "historyCursorExact": true,
+      "node": "v22.22.1",
+      "playwright": "1.63.0",
+      "revokeStatus": 200,
+      "saveStatus": 200
+    },
+    "source_archive_sha256": "677a62e626a559d8cef8d8784f5283dc0b13ed0c498fd7dbef2f96acc890f3b0",
+    "owned_test_files_archive_exact": 2,
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "coverage": {
+      "scope": "focused two-case native run; all src instrumented",
+      "totals": {
+        "covered_lines": 11025,
+        "num_statements": 62523,
+        "percent_covered": 17.633510868000577,
+        "percent_covered_display": "18",
+        "missing_lines": 51498,
+        "excluded_lines": 449
+      },
+      "global_coverage_gate": "not executed by this focused phase"
+    }
+  },
+  "architecture": {
+    "analyzed_files": 481,
+    "dependencies": 2219,
+    "kept": 5,
+    "broken": 0,
+    "command": "project-composition-check caos"
+  },
+  "postgres": {
+    "container_id": "58fb7628e1e34dfc595d9882240c8d66af4f345c5d34c92e50d9d39233281f86",
+    "image_id": "sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+    "service_profile": "cao-spec021-local-postgres-v3",
+    "lease_owner_pid": 6160,
+    "lease_owner_start_ticks": "273049",
+    "server_version_prefix": "18.6",
+    "other_clients": 0,
+    "test_databases": 0,
+    "test_roles": 0,
+    "live_reuse_lease_verified": true,
+    "container_stopped": false
+  },
+  "code_sources": [
+    {
+      "path": "web/src/api.ts",
+      "sha256": "sha256:2a2e47f5ea1fc4fcd8e3973edc69a67ca418b6f706c8f7c87b5f6ce6c363388a"
+    },
+    {
+      "path": "web/src/admissionPolicyApi.ts",
+      "sha256": "sha256:f934a711526c8f35d381081c33ec94b4e51cdc167703d4f6e2d4e410d068f599"
+    },
+    {
+      "path": "web/src/test/admission-policy-api.test.ts",
+      "sha256": "sha256:5f214f96385cb5740f53bb117fbec211ebd9fbc0b1038c4a18a4e87fa569ca33"
+    },
+    {
+      "path": "web/src/App.tsx",
+      "sha256": "sha256:cea084f94e57c46bc69d3f724bf2a31a87205668ce73e0e385a50078e52e7d25"
+    },
+    {
+      "path": "web/src/components/AdmissionPolicySettings.tsx",
+      "sha256": "sha256:b5ac654d43c3c2d5fdbec566e245a05c3be4c5da1933ce197b2ca018f3469b06"
+    },
+    {
+      "path": "web/src/test/admission-policy-settings.test.tsx",
+      "sha256": "sha256:d694690cc455459a09793f985279b68d0c4cd9b42db20e117564147983c29020"
+    },
+    {
+      "path": "test/postgres/test_admission_policy_browser.py",
+      "sha256": "sha256:2cc04ffbb364f2abafa62934edd6966a5eb57a029a8e164e40dbbdebfce3ccee"
+    },
+    {
+      "path": "test/fixtures/admission_policy_browser.mjs",
+      "sha256": "sha256:e1b5c74b443c32921782b2b6d2d408a5bef832edc94edf926a8232dd04f9bea2"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "sha256:1f0744e7381121481b21c591a6ed307828a7dd89a58e83284eb8d23e0511f800"
+    }
+  ],
+  "proof": {
+    "web_source_archive_sha256": "sha256:451ced89aa7afa5fd244a063c842fb003405d924bac464f85b5e6e9e0661caf7",
+    "build_manifest_sha256": "sha256:47ac58cd41a0c9e6716075b9d462fd25adba29c7de5a80c5aa06a9b9d6835970",
+    "owned_native_test_files_archive_exact": 2,
+    "web_sources_still_exact": 133,
+    "build_artifacts_still_exact": 5,
+    "foreign12_preserved": true
+  },
+  "reviews": {
+    "claude_read_round1": "3a7e6a9aa8d7417f8533c59b25a5a2b3",
+    "claude_read_round2": "57e69f19316441cf96e1510d92896f78",
+    "round2_blockers": 0,
+    "independent_Luna_read_reviews": true,
+    "lead_executable_validation": true
+  },
+  "ci": {
+    "yaml_valid": true,
+    "only_web_job_changed": true,
+    "web_node_major": 22,
+    "preflight_supported_node22": true,
+    "preflight_unsupported_feature_flag_rejected": true,
+    "ci_line22_23_3_supported": true,
+    "actual_node20_binary_executed": false,
+    "primary_source": "https://github.com/nodejs/node/blob/v20.20.0/deps/v8/src/flags/flag-definitions.h#L256-L260",
+    "source_sha256": "385ed3b089b31d1020f749b3b9a735612af7234605ffbbc87f105758eb47ce18"
+  },
+  "historical_attempts": [
+    {
+      "phase": "frontend-initial",
+      "passed": 565,
+      "status": "superseded before review corrections; not summed"
+    },
+    {
+      "phase": "admission-policy-studio-browser",
+      "passed": 1,
+      "failed": 1,
+      "status": "retained failed",
+      "cause": "Chromium SingletonSocket path exceeded Unix socket bound; corrected TMPDIR in owned pytest root"
+    },
+    {
+      "phase": "cleanup-control-initial",
+      "status": "failed before browser/PG",
+      "cause": "poll loop broke on first 50 ms silence; continues to unchanged deadline now"
+    }
+  ],
+  "limits": {
+    "default_file_policy_compatibility_retained": true,
+    "local_profile_only": true,
+    "remote_UI_administration": false,
+    "browser_drafts": "volatile module memory; retained for in-app navigation only",
+    "synthetic_large_history_rows": 21,
+    "synthetic_large_revision_not_real_mutation_count": true,
+    "real_node_version": "v22.22.1",
+    "real_Chromium_only": true,
+    "productive_authority_installed": false,
+    "new_resource_grants": false,
+    "provider_quotas": false,
+    "M1_M2_M3_acceptance": false,
+    "global_acceptance": false,
+    "prior_backend_1004_not_rerun": true,
+    "production_python_changed": false,
+    "remote_CI_execution_claimed": false
+  },
+  "remaining_original_gates": [
+    "T013",
+    "T014",
+    "T015",
+    "T016",
+    "T018",
+    "T019",
+    "T020",
+    "T021"
+  ],
+  "workflow": {
+    "Graphify": {
+      "private": true,
+      "partial": true,
+      "source_files": 12,
+      "nodes": 395,
+      "edges": 924,
+      "source_verified": true
+    },
+    "durable_knowledge": {
+      "operation": "markdown-20261104-policy-studio",
+      "paths": [
+        "wiki/concepts/Multiagent capacity evidence.md",
+        "wiki/index.md",
+        "wiki/log.md",
+        "wiki/hot.md"
+      ],
+      "strict_lint_issues": 0
+    },
+    "skill_source": "ai-stack-ecc-project-workflow; system-composition-review; verification-before-completion",
+    "ECC_source_commit": "b92f181b3b748d1abbc2afd94af6aa7d8c8fca29",
+    "final_native_fix_review": "Luna source/hash recheck of short owned TMPDIR; no blockers"
+  }
+}

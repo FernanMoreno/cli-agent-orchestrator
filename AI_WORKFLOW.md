@@ -115,6 +115,8 @@ When overriding an attribute already patched by another fixture, make the overri
 
 Resource fixtures must assert that each injected observation was accepted. A later sample needs a strictly increasing observation timestamp and a consistent consumer clock; calling an update does not prove it changed capacity. Model delivery counts and physical connection/session quantities separately, and retain explicit insufficient-resource cases when correcting a fixture.
 
+Before a new browser harness's authenticated run, probe startup without credentials using the same binary, module and HOME/TMPDIR mapping. Keep HOME private and Unix-socket temporary paths short inside the existing owned pytest root; do not reuse a long per-case HOME as Chromium TMPDIR. Capture full startup diagnostics only in the credential-free probe, and preserve the authenticated run's sanitized receipt. An empty short polling interval must continue until the original deadline, not become an early timeout.
+
 Use `verification-before-completion` before substantial completion.
 
 ### 6.1 Focused native/provider diagnostics

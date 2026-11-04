@@ -1,5 +1,14 @@
 # Claude Code: análisis y pendientes
 
+**2026-11-04 · T023: administración real de política en Studio validada.**
+
+Settings permite leer, revisar y guardar los nueve valores, resolver conflictos, revocar y consultar historial con enteros exactos. Autorización y CAS siguen en el servidor; el selector remoto exige volver explícitamente al ámbito local. La revisión aplicada queda desconocida al mutar hasta una lectura nueva. La salida de una inspección pendiente conserva el estado en memoria y no habilita otra escritura.
+
+**569 pruebas del frontend aprobadas**, sin fallos ni omisiones: los 531 casos anteriores se conservan y se añaden 38. Tipos y compilación pasan. La fase nativa tiene **2 casos aprobados**: Chromium real → HTTP/JWKS → PostgreSQL y el recorrido HTTP/SDK existente, con conflicto real, valores/cursor impares mayores que 2⁵³, revocación e historial. Cinco advertencias se conservan; PostgreSQL termina limpio y mantiene su contenedor/dueño. El primer intento fallido por la ruta de SingletonSocket queda documentado; no se suma a los éxitos.
+
+T023 cierra su alcance local; no instala autoridad productiva ni acredita cuotas, modelos o M1/M2/M3. Quedan ocho gates originales. [Validación](../specs/041-resource-aware-network-admission/validation-policy-studio.json), [composición](../specs/041-resource-aware-network-admission/composition-policy-studio.md).
+
+
 **2026-11-04 · T022: política PostgreSQL, API y SDK validados opt-in.**
 
 Configuración versionada por perfil/store, CAS/audit admin, lector runtime sin DML y contratos compartidos con SDK HTTP. Bootstrap Root previo a SQL separado de la política vigente; recomprobación antes de publicar y revisión aplicada distinta de guardada. Rechazos previos a escritura requieren prueba positiva; un commit con respuesta perdida se consulta sin replay ni borrado de incertidumbre.

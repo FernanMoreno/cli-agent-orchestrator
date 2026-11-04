@@ -64,7 +64,7 @@
 - [ ] T020 Ejecutar aceptación M2/M3 con coordinadores y nodos reales, reservas e identidad verificadas; registrar recibos en specs/041-resource-aware-network-admission/validation-network.json.
 - [ ] T021 Ejecutar suites aplicables, composición, revisión independiente, diff y verificación; actualizar documentos y conclusiones durables en specs/041-resource-aware-network-admission/tasks.md sin cerrar gates no ejecutados.
 - [x] T022 [US6] Extensión solicitada: API de configuración versionada/auditada en PostgreSQL y SDK tipado que compartan modelos, permisos, unidades y CAS. El SDK no modifica credenciales ni escribe archivos privados; el archivo de despliegue solo activa/siembra durante la transición. Validar igualdad HTTP/SDK y conflictos reales.
-- [ ] T023 [US6] Integrar los mismos contratos en la interfaz real de administración: lectura/edición, revisión previa, conflicto, revocación y cobertura/desconocido; controles autenticados y pruebas de navegador. Sin duplicar autoridad en el cliente ni presentar maqueta como ejecución. Depende de T009/T017/T022; la extensión permanece pendiente hasta su implementación y aceptación.
+- [x] T023 [US6] Integrar los mismos contratos en la interfaz real de administración: lectura/edición, revisión previa, conflicto, revocación y cobertura/desconocido; controles autenticados y pruebas de navegador. Sin duplicar autoridad en el cliente ni presentar maqueta como ejecución. Depende de T009/T017/T022; la extensión está implementada y validada en su alcance local mediante el recibo T023.
 
 ## Dependencies and Execution
 
@@ -389,10 +389,13 @@ Dependencias: D01→D02/D03 (archivos distintos; cambios simultáneos solo en wo
 ## T023.P — real policy administration UI (in progress)
 
 - [x] PS-01 Contract/spec→plan→tasks, source-verified Graphify impact, local scope and lossless signed64 decision.
-- [ ] PS-02 [P] Typed policy client and route-specific standard JSON codec, central auth/no retries/direct local routing; unit contracts and unsupported capability refusal.
-- [ ] PS-03 [P] Settings UI: exact nine-value draft, review/CAS/conflict/uncertain inspection, confirmed revoke, bounded history, persisted versus applied and explicit local selection.
-- [ ] PS-04 Integrate actual Settings route; frontend regression/types/build and authenticated real Chromium→HTTP→PostgreSQL acceptance including integers beyond2^53.
-- [ ] PS-05 Composition/review/diff/knowledge/receipts and accepted main commit/push; no physical resource/global acceptance implied.
+- [x] PS-02 [P] Typed policy client and route-specific standard JSON codec, central auth/no retries/direct local routing; unit contracts and unsupported capability refusal.
+- [x] PS-03 [P] Settings UI: exact nine-value draft, review/CAS/conflict/uncertain inspection, confirmed revoke, bounded history, persisted versus applied and explicit local selection.
+- [x] PS-04 Integrate actual Settings route; frontend regression/types/build on a native-capable Node 22 web CI job and authenticated real Chromium→HTTP→PostgreSQL acceptance including integers beyond2^53. Preserve explicit unsupported-engine tests.
+- [x] PS-05 Composition/review/diff/knowledge/receipts and accepted main commit/push; no physical resource/global acceptance implied.
 
 
 **2026-11-04 · T022 política PostgreSQL/API/SDK validada opt-in.** Historial independiente por perfil/store, lector runtime sin DML, CAS/audit admin y SDK HTTP con DTO estricto. Bootstrap Root previo a SQL separado; lectura/recomprobación financiadas, revisión aplicada solo tras publicación y rechazo pre-write solo con prueba positiva. Commit real con respuesta perdida se inspecciona sin replay. 1004PASS/10advertencias,829IDs conservados+90nuevos+85existentes; tipos478, arquitectura5/0,21Python/12fuentes exactos y PostgreSQL0/0/0. Fase dirigida14casos incluye8PG reales. Sin autoridad productiva, cuotas/M1/M2/M3/UI ni aceptación global. Nueve gates originales abiertos. [Validación](validation-policy-control.json), [composición](composition-policy-control.md). T023 continúa en worktrees aislados.
+
+
+**2026-11-04 · T023 local Studio administration validated.** 569frontendPASS/0fail/0skip, all531baseline IDs retained+38new; fulltypes/build,133source inputs and5artifacts exact. Native2/2 (new Chromium153.0.8010.12 realHTTP/JWKS/PostgreSQL plus existingHTTP/SDK), six exact numeric tokens and odd high cursor, real409/manualreload/revoke/history;5warnings retained. First nativeSingletonSocket failure and initialpoll-loop failure preserved, fixed without changing deadlines/memory/coverage or productionPython. Composition481/2219/5kept/0broken, Claude/Luna reviews, PostgreSQL0/0/0 samekeeper/container. No productive funding/quotas/models/M1/M2/M3/global acceptance. Eight original gates remain. [Validation](validation-policy-studio.json), [composition](composition-policy-studio.md).

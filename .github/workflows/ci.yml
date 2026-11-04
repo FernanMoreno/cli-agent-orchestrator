@@ -92,7 +92,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          # The admission policy contracts exercise native exact JSON tokens.
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
@@ -103,6 +104,21 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
         working-directory: web
+
+      - name: Check native exact JSON capabilities
+        working-directory: web
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          let source;
+          JSON.parse('9007199254740993', (_key, value, context) => {
+            source = context?.source;
+            return value;
+          });
+          assert.equal(source, '9007199254740993');
+          assert.equal(typeof JSON.rawJSON, 'function');
+          assert.equal(JSON.stringify(JSON.rawJSON(source)), source);
+          JS
 
       - name: Run tests
         run: npm test

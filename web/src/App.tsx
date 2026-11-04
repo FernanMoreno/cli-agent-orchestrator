@@ -8,6 +8,7 @@ import { FlowsPanel } from "./components/FlowsPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { ProfilesPanel } from "./components/ProfilesPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { AdmissionPolicySettings } from "./components/AdmissionPolicySettings";
 import { WorkflowsPanel } from "./components/WorkflowsPanel";
 import { BeadsPanel } from "./components/BeadsPanel";
 import { RalphPanel } from "./components/RalphPanel";
@@ -19,6 +20,7 @@ import { NodeSwitcher } from "./components/NodeSwitcher";
 import { CaoMark } from "./components/CaoMark";
 import {
   authSnapshot,
+  browserAuthSignal,
   initializeBrowserAuth,
   logoutBrowser,
   subscribeBrowserAuth,
@@ -65,6 +67,18 @@ type TabKey =
   | "questions"
   | "execution";
 
+const authAuthorityIds = new WeakMap<AbortSignal, number>();
+let nextAuthAuthorityId = 0;
+
+function authAuthorityKey(signal: AbortSignal): string {
+  let id = authAuthorityIds.get(signal);
+  if (id === undefined) {
+    id = ++nextAuthAuthorityId;
+    authAuthorityIds.set(signal, id);
+  }
+  return `authority-${id}`;
+}
+
 // Profiles sits between Home and Agents (#510): browsing/authoring profiles
 // precedes launching agents, and AgentPanel stays the launch picker. This was
 // a one-time Alt+N renumbering of the tabs after it; Workflows + Memory remain
@@ -80,17 +94,67 @@ type TabKey =
 // Shortcuts stay bound to this array order, independent of the grouping.
 const TABS: StudioDestination<TabKey>[] = [
   { key: "home", label: "Home", icon: <Home size={16} />, group: "work" },
-  { key: "profiles", label: "Profiles", icon: <Package size={16} />, group: "library" },
+  {
+    key: "profiles",
+    label: "Profiles",
+    icon: <Package size={16} />,
+    group: "library",
+  },
   { key: "agents", label: "Agents", icon: <Bot size={16} />, group: "work" },
-  { key: "flows", label: "Flows", icon: <Clock size={16} />, group: "operation" },
-  { key: "settings", label: "Settings", icon: <Settings size={16} />, group: "administration" },
-  { key: "memory", label: "Memory", icon: <Brain size={16} />, group: "library" },
-  { key: "workflows", label: "Workflows", icon: <Workflow size={16} />, group: "operation" },
-  { key: "plugins", label: "Plugins", icon: <Puzzle size={16} />, group: "library" },
-  { key: "beads", label: "Tasks", icon: <CheckCircle size={16} />, group: "work" },
-  { key: "ralph", label: "Ralph", icon: <Workflow size={16} />, group: "operation" },
-  { key: "questions", label: "Questions", icon: <CircleHelp size={16} />, group: "work" },
-  { key: "execution", label: "Execution map", icon: <Network size={16} />, group: "work" },
+  {
+    key: "flows",
+    label: "Flows",
+    icon: <Clock size={16} />,
+    group: "operation",
+  },
+  {
+    key: "settings",
+    label: "Settings",
+    icon: <Settings size={16} />,
+    group: "administration",
+  },
+  {
+    key: "memory",
+    label: "Memory",
+    icon: <Brain size={16} />,
+    group: "library",
+  },
+  {
+    key: "workflows",
+    label: "Workflows",
+    icon: <Workflow size={16} />,
+    group: "operation",
+  },
+  {
+    key: "plugins",
+    label: "Plugins",
+    icon: <Puzzle size={16} />,
+    group: "library",
+  },
+  {
+    key: "beads",
+    label: "Tasks",
+    icon: <CheckCircle size={16} />,
+    group: "work",
+  },
+  {
+    key: "ralph",
+    label: "Ralph",
+    icon: <Workflow size={16} />,
+    group: "operation",
+  },
+  {
+    key: "questions",
+    label: "Questions",
+    icon: <CircleHelp size={16} />,
+    group: "work",
+  },
+  {
+    key: "execution",
+    label: "Execution map",
+    icon: <Network size={16} />,
+    group: "work",
+  },
 ];
 
 function Snackbar() {
@@ -127,7 +191,7 @@ function Snackbar() {
   );
 }
 
-function Dashboard() {
+function Dashboard({ sessionKey }: { sessionKey: string }) {
   const [tab, setTab] = useState<TabKey>("home");
   const [manualTerminalRequest, setManualTerminalRequest] = useState<{
     terminalId: string;
@@ -217,7 +281,11 @@ function Dashboard() {
     const handler = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
       const index = e.shiftKey
-        ? (e.key === "1" ? 10 : e.key === "2" ? 11 : -1)
+        ? e.key === "1"
+          ? 10
+          : e.key === "2"
+            ? 11
+            : -1
         : e.key === "0"
           ? 9
           : /^[1-9]$/.test(e.key)
@@ -306,44 +374,54 @@ function Dashboard() {
           id={studioPanelId("studio")}
           aria-labelledby={studioTabId("studio", tab)}
         >
-        <ErrorBoundary>
-          <Suspense
-            fallback={
-              <div className="text-gray-500 text-sm py-12 text-center">
-                Loading...
-              </div>
-            }
-          >
-            {tab === "home" && (
-              <DashboardHome
-                onNavigate={(t) => requestTabChange(t as TabKey)}
-              />
-            )}
-            {tab === "profiles" && <ProfilesPanel />}
-            {tab === "agents" && (
-              <AgentPanel
-                manualTerminalId={manualTerminalRequest?.terminalId ?? null}
-                manualTerminalIncarnationId={manualTerminalRequest?.incarnationId ?? null}
-                onManualTerminalHandled={(terminalId, incarnationId) => {
-                  setManualTerminalRequest((current) =>
-                    current?.terminalId === terminalId && current.incarnationId === incarnationId
-                      ? null
-                      : current,
-                  );
-                }}
-              />
-            )}
-            {tab === "flows" && <FlowsPanel />}
-            {tab === "settings" && <SettingsPanel />}
-            {tab === "memory" && <MemoryPanel />}
-            {tab === "workflows" && <WorkflowsPanel />}
-            {tab === "beads" && <BeadsPanel />}
-            {tab === "ralph" && <RalphPanel />}
-            {tab === "plugins" && PLUGINS_TAB_ENABLED && <PluginsPanel />}
-            {tab === "execution" && <ExecutionMapPanel />}
-            {tab === "questions" && <QuestionsPanel onOpenManualTerminal={openManualTerminal} />}
-          </Suspense>
-        </ErrorBoundary>
+          <ErrorBoundary>
+            <Suspense
+              fallback={
+                <div className="text-gray-500 text-sm py-12 text-center">
+                  Loading...
+                </div>
+              }
+            >
+              {tab === "home" && (
+                <DashboardHome
+                  onNavigate={(t) => requestTabChange(t as TabKey)}
+                />
+              )}
+              {tab === "profiles" && <ProfilesPanel />}
+              {tab === "agents" && (
+                <AgentPanel
+                  manualTerminalId={manualTerminalRequest?.terminalId ?? null}
+                  manualTerminalIncarnationId={
+                    manualTerminalRequest?.incarnationId ?? null
+                  }
+                  onManualTerminalHandled={(terminalId, incarnationId) => {
+                    setManualTerminalRequest((current) =>
+                      current?.terminalId === terminalId &&
+                      current.incarnationId === incarnationId
+                        ? null
+                        : current,
+                    );
+                  }}
+                />
+              )}
+              {tab === "flows" && <FlowsPanel />}
+              {tab === "settings" && (
+                <>
+                  <SettingsPanel />
+                  <AdmissionPolicySettings sessionKey={sessionKey} />
+                </>
+              )}
+              {tab === "memory" && <MemoryPanel />}
+              {tab === "workflows" && <WorkflowsPanel />}
+              {tab === "beads" && <BeadsPanel />}
+              {tab === "ralph" && <RalphPanel />}
+              {tab === "plugins" && PLUGINS_TAB_ENABLED && <PluginsPanel />}
+              {tab === "execution" && <ExecutionMapPanel />}
+              {tab === "questions" && (
+                <QuestionsPanel onOpenManualTerminal={openManualTerminal} />
+              )}
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </main>
 
@@ -463,6 +541,7 @@ export default function App() {
       </main>
     );
   if (!fleetReady) return <main role="status">Comprobando nodos…</main>;
+  const sessionKey = `${auth.mode ?? "unknown"}:${auth.session?.session_id ?? "traditional"}:${authAuthorityKey(browserAuthSignal())}`;
   return (
     <>
       {auth.status === "unavailable" && (
@@ -470,9 +549,7 @@ export default function App() {
           {auth.message}
         </div>
       )}
-      <Dashboard
-        key={`${auth.session?.session_id ?? "traditional"}:${nodeEpoch}`}
-      />
+      <Dashboard key={`${sessionKey}:${nodeEpoch}`} sessionKey={sessionKey} />
     </>
   );
 }

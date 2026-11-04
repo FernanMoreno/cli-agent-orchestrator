@@ -226,3 +226,8 @@ El contrato público procede de RootDeploymentCommand, RootDeploymentActivation 
 ## T022 persistent policy (implementation contract)
 
 `AdmissionPolicyValues` contains the nine normalized policy tunables; `AdmissionPolicyRecord` adds profile UUID, revision, active, actor hash and database timestamp. `AdmissionPolicyUpdate` and `AdmissionPolicyRevision` carry CAS expectations. `AdmissionPolicyState` distinguishes persisted from actually applied; `AdmissionPolicyHistory` is bounded descending keyset pagination. The new main-store admission_policy component keys immutable history by `(profile_id,revision)`; scope is the configured store/schema plus base profile UUID, independent of process generations. See [contract](contracts/admission-policy-control.md).
+
+
+## T023 accepted local consumer (2026-11-04)
+
+Local auth/node ownership fences the volatile draft, review, synchronous busy/read guards and pending inspection. Explicit navigation exit preserves the inspection gate; a different authority cannot inherit the draft. Policy quantities/revisions/cursors use bigint and native source/raw JSON; durations remain finite numbers. Mutation start/ACK invalidates applied revision until fresh status. Backend authority, CAS/audit and profile selection are unchanged. [Validated scope and results](validation-policy-studio.json); [composition review](composition-policy-studio.md).
