@@ -732,6 +732,7 @@ _RUNTIME_ROLE_QUERY = """WITH role_flags AS MATERIALIZED (
                           '_cao_store_identity',
                           '_cao_import_receipts',
                           '_cao_resource_envelopes',
+                          '_cao_admission_policy_history',
                           '_cao_resource_domains',
                           '_cao_resource_domain_history',
                           '_cao_resource_members',
@@ -927,6 +928,7 @@ def protect_runtime_authority_tables(connection: Connection, target: DatabaseTar
     for protected_name, protected_label in (
         ("_cao_import_receipts", "import receipt"),
         ("_cao_resource_envelopes", "resource envelope"),
+        ("_cao_admission_policy_history", "admission policy history"),
         ("_cao_resource_domains", "resource domain"),
         ("_cao_resource_domain_history", "resource domain history"),
         ("_cao_resource_members", "resource membership"),

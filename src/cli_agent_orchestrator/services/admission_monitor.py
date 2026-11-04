@@ -11,6 +11,11 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeNotFound,
     EnvelopeRevisionConflict,
 )
+from cli_agent_orchestrator.clients.admission_policy_repository import (
+    PolicyNotFound,
+    PolicyRevisionConflict,
+    PolicyWriteNotStarted,
+)
 from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.models.resource_envelope import ResourceEnvelopeRecord
@@ -39,6 +44,7 @@ from cli_agent_orchestrator.services.admission_resources import (
 from cli_agent_orchestrator.services.admission_settings import (
     AdmissionConfiguration,
     AdmissionPolicyLoader,
+    PolicyLoadResult,
 )
 from cli_agent_orchestrator.services.delivery_admission import (
     AdmissionLedgerDiagnostic,
@@ -252,6 +258,9 @@ class AdmissionMonitor:
         self._on_change: Callable[[], None] | None = None
         self._last_postgres_probe: CachedPostgresProbe | None = None
         self._last_configuration: CachedAdmissionConfiguration | None = None
+        self._configured_policy_revision: int | None = None
+        self._applied_policy_revision: int | None = None
+        self._applied_policy_generation: int | None = None
         self._last_resource_probe: CachedResourceProbe | None = None
         self._last_cycle_result: CachedMonitorResult | None = None
 
@@ -279,6 +288,15 @@ class AdmissionMonitor:
         with self._lifecycle_guard:
             return self._bootstrap_validated
 
+    @property
+    def applied_policy_revision(self) -> int | None:
+        """Persistent policy revision confirmed by a published current generation."""
+        generation = self.owner.generation
+        with self._lifecycle_guard:
+            if self._applied_policy_generation != generation:
+                return None
+            return self._applied_policy_revision
+
     def set_on_change(self, callback: Callable[[], None]) -> None:
         with self._lifecycle_guard:
             if self._runner is not None or self._refresh_guard.locked():
@@ -296,6 +314,8 @@ class AdmissionMonitor:
             token = object()
             self._authority_tokens.add(token)
             self.owner.invalidate(expected_generation=self.owner.generation)
+            self._applied_policy_revision = None
+            self._applied_policy_generation = None
             return token
 
     def cancel_authority_change(self, token: object) -> None:
@@ -303,6 +323,8 @@ class AdmissionMonitor:
         with self._lifecycle_guard:
             self._authority_tokens.discard(token)
             self.owner.invalidate(expected_generation=self.owner.generation)
+            self._applied_policy_revision = None
+            self._applied_policy_generation = None
 
     @contextmanager
     def authority_change(self, token: object) -> Iterator[None]:
@@ -320,19 +342,29 @@ class AdmissionMonitor:
                     raise AuthorityChangeUnavailable("resource authority outcome is uncertain")
                 self._retired.clear()
                 self.owner.invalidate(expected_generation=self.owner.generation)
+                self._applied_policy_revision = None
+                self._applied_policy_generation = None
             # A refused physical preflight proves the callback never entered.
             # Only failures after this exact boundary can make its SQL uncertain.
             with self._control_operation():
                 entered = True
                 yield
         except BaseException as error:
-            if entered and type(error) not in (EnvelopeRevisionConflict, EnvelopeNotFound):
+            if entered and type(error) not in (
+                EnvelopeRevisionConflict,
+                EnvelopeNotFound,
+                PolicyRevisionConflict,
+                PolicyNotFound,
+                PolicyWriteNotStarted,
+            ):
                 with self._lifecycle_guard:
                     self._authority_state.uncertain = True
             raise
         finally:
             with self._lifecycle_guard:
                 self.owner.invalidate(expected_generation=self.owner.generation)
+                self._applied_policy_revision = None
+                self._applied_policy_generation = None
                 self._authority_tokens.discard(token)
             if acquired:
                 self._retired.set()
@@ -388,10 +420,24 @@ class AdmissionMonitor:
     ) -> MonitorResult:
         self.owner.invalidate(expected_generation=generation)
         self._recovery = _Recovery()
+        with self._lifecycle_guard:
+            self._applied_policy_revision = None
+            self._applied_policy_generation = None
         if reset_resources:
             self._resources = None
             self._resource_identity = None
         return MonitorResult(reason)
+
+    def _load_policy(self) -> PolicyLoadResult:
+        if not self._policy_loader.persistent:
+            # Preserve the established file-mode call shape for existing loaders.
+            return self._policy_loader.load(scope_id=self._scope_id)
+        return self.control_call(
+            lambda: self._policy_loader.load(
+                scope_id=self._scope_id,
+                control_session=self._control_session,
+            )
+        )
 
     def diagnostic(self, *, now: float) -> AdmissionMonitorDiagnostic:
         # Reject an inherited owner before taking a possibly inherited monitor lock.
@@ -440,6 +486,8 @@ class AdmissionMonitor:
                 return MonitorResult("stopping")
             if self._authority_state.uncertain:
                 self.owner.invalidate(expected_generation=self.owner.generation)
+                self._applied_policy_revision = None
+                self._applied_policy_generation = None
                 return MonitorResult("authority_uncertain")
             if self._authority_tokens:
                 return MonitorResult("authority_changing")
@@ -488,9 +536,10 @@ class AdmissionMonitor:
         generation = cycle.value
         cycle_at = self._clock()
         validate_clock(cycle_at)
-        loaded = self._policy_loader.load(scope_id=self._scope_id)
+        loaded = self._load_policy()
         configuration = loaded.configuration
-        if configuration is None:
+        persistent_policy = self._policy_loader.persistent
+        if configuration is None or (persistent_policy and loaded.status != "current"):
             return self._invalidate(generation, "policy_unavailable")
         bootstrap_pin = self._bootstrap_pin_active
         attestation = self.control_call(self._load_authority).attestation
@@ -531,8 +580,12 @@ class AdmissionMonitor:
             return MonitorResult("generation_changed")
         generation = configured  # Configuration CAS completed before resource I/O.
         cycle.value = configured  # A later exception must fence this exact generation.
-        changed = configuration != self._configuration
+        policy_revision_changed = (
+            persistent_policy and loaded.revision != self._configured_policy_revision
+        )
+        changed = configuration != self._configuration or policy_revision_changed
         self._configuration = configuration
+        self._configured_policy_revision = loaded.revision if persistent_policy else None
         self._interval = configuration.sample_interval_s
         identity = (attestation.binding, attestation.claims.root_is_host)
         if identity != self._resource_identity or self._resources is None:
@@ -605,12 +658,22 @@ class AdmissionMonitor:
                 or checked.revision != expected.revision
             ):
                 raise StorageAdmissionUnavailable()
-            with self._lifecycle_guard:
-                self._bootstrap_pin_active = False
-                self._bootstrap_validated = True
         elif authorities_match:
             return self._invalidate(generation, "authority_unavailable", reset_resources=True)
         assert checked is not None
+        if persistent_policy:
+            checked_policy = self._load_policy()
+            if checked_policy.configuration is None or checked_policy.status != "current":
+                return self._invalidate(generation, "policy_unavailable")
+            if (
+                checked_policy.revision != loaded.revision
+                or checked_policy.configuration != configuration
+            ):
+                return self._invalidate(generation, "policy_unavailable")
+        if bootstrap_pin:
+            with self._lifecycle_guard:
+                self._bootstrap_pin_active = False
+                self._bootstrap_validated = True
         now = self._clock()
         validate_clock(now)
         if any(
@@ -654,6 +717,8 @@ class AdmissionMonitor:
                 self._last_configuration = CachedAdmissionConfiguration(
                     generation, configuration, observation
                 )
+                self._applied_policy_revision = loaded.revision if persistent_policy else None
+                self._applied_policy_generation = generation if persistent_policy else None
         if not published:
             if self.owner.generation != generation:
                 self._recovery = _Recovery()
@@ -682,6 +747,8 @@ class AdmissionMonitor:
             self._last_cycle_at = None
             self._last_postgres_probe = None
             self._last_configuration = None
+            self._applied_policy_revision = None
+            self._applied_policy_generation = None
             self._last_resource_probe = None
             self._last_cycle_result = None
             self._recovery = _Recovery()
@@ -692,6 +759,8 @@ class AdmissionMonitor:
             self._lifecycle += 1
             self._stopped = True
             self.owner.stop_accepting()
+            self._applied_policy_revision = None
+            self._applied_policy_generation = None
 
     def stop_accepting(self) -> None:
         self._stop_admission()

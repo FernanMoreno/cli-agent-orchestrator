@@ -35,8 +35,7 @@ from cli_agent_orchestrator.security.private_root_configuration import (
 )
 from cli_agent_orchestrator.services.admission_bootstrap import scoped_process_bootstrap
 from cli_agent_orchestrator.services.admission_settings import (
-    AdmissionPolicyLoader,
-    read_private_operator_policy,
+    configured_policy_loader,
 )
 from cli_agent_orchestrator.services.original_control_owner import OriginalControlUnavailable
 from cli_agent_orchestrator.services.resource_process_supervisor import publish_resource_binding
@@ -172,9 +171,7 @@ def _run_stdio(parsed: argparse.Namespace) -> int:
         subject = current_root_sql_subject(bootstrap)
         _write_line(sys.stdout, {"type": "subject", "value": asdict(subject)})
         packet = _read_activation_line(sys.stdin.buffer)
-        policy_loader = AdmissionPolicyLoader(
-            source=lambda: read_private_operator_policy(parsed.policy_file)
-        )
+        policy_loader = configured_policy_loader(parsed.policy_file)
         actor = asyncio.run(
             prepare_original_control_owner(
                 packet=packet,
@@ -267,9 +264,7 @@ def _run_private(parsed_argv: Sequence[str] | None, endpoint: RootControlChildEn
                 packet=packet,
                 trusted_keys=trusted_keys,
                 bootstrap=bootstrap,
-                policy_loader=AdmissionPolicyLoader(
-                    source=lambda: read_private_operator_policy(parsed.policy_file)
-                ),
+                policy_loader=configured_policy_loader(parsed.policy_file),
                 scope_id=parsed.scope,
             )
         )

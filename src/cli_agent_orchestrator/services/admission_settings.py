@@ -7,10 +7,18 @@ import threading
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 
+from cli_agent_orchestrator.clients.postgres.config import ConfigurationError
+from cli_agent_orchestrator.clients.postgres.connection import DatabaseError
+from cli_agent_orchestrator.clients.postgres.migrations import SchemaMismatch
+from cli_agent_orchestrator.clients.storage_admission import StorageAdmissionUnavailable
 from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy, validate_clock
 from cli_agent_orchestrator.services.admission_postgres import PostgresPressurePolicy
+
+if TYPE_CHECKING:
+    from cli_agent_orchestrator.clients.admission_policy_repository import AdmissionPolicyRepository
+    from cli_agent_orchestrator.clients.funded_control_session import FundedControlSession
 
 
 @dataclass(frozen=True)
@@ -148,16 +156,71 @@ class AdmissionPolicyLoader:
     use a scope bound to its owner and source; a new scope starts without fallback.
     """
 
-    def __init__(self, *, source: Callable[[], Mapping[str, object]]):
+    def __init__(
+        self,
+        *,
+        source: Callable[[], Mapping[str, object]] | None = None,
+        repository: "AdmissionPolicyRepository | None" = None,
+    ):
+        if source is None and repository is None:
+            raise ValueError("operator policy requires an explicit source")
         self._source = source
+        self.repository = repository
+        self._bootstrap_loader = (
+            AdmissionPolicyLoader(source=source)
+            if repository is not None and source is not None
+            else None
+        )
         self._guard = threading.Lock()
         self._scope: str | None = None
         self._last: AdmissionConfiguration | None = None
         self._revision = 0
 
-    def load(self, *, scope_id: str) -> PolicyLoadResult:
+    @property
+    def persistent(self) -> bool:
+        return self.repository is not None
+
+    def load_bootstrap(self, *, scope_id: str) -> PolicyLoadResult:
+        """Pre-SQL startup settings; never read or credit a database revision."""
+        if not self.persistent:
+            return self.load(scope_id=scope_id)
+        if self._bootstrap_loader is None:
+            return PolicyLoadResult(None, "unavailable", "policy_unreadable", 0)
+        return self._bootstrap_loader.load(scope_id=scope_id)
+
+    def load(
+        self,
+        *,
+        scope_id: str,
+        control_session: "FundedControlSession | None" = None,
+    ) -> PolicyLoadResult:
         if not isinstance(scope_id, str) or not scope_id.strip():
             raise ValueError("operator policy requires a source scope identity")
+        if self.repository is not None:
+            # The caller owns the control operation and any original SQL session.
+            # Failed reads never inherit file configuration or an older DB row.
+            try:
+                record = self.repository.read_latest(
+                    self.repository.resolve_target(), control_session=control_session
+                )
+                if record is None or not record.active:
+                    return PolicyLoadResult(None, "unavailable", "policy_unreadable", 0)
+                candidate = parse_operator_policy(
+                    {"version": 1, "policy": record.policy.model_dump()}
+                )
+                return PolicyLoadResult(candidate, "current", "policy_valid", record.revision)
+            except StorageAdmissionUnavailable:
+                if control_session is not None:
+                    raise  # A refused original-session operation is an authority failure.
+                return PolicyLoadResult(None, "unavailable", "policy_unreadable", 0)
+            except (
+                OSError,
+                ValueError,
+                DatabaseError,
+                ConfigurationError,
+                SchemaMismatch,
+            ):
+                return PolicyLoadResult(None, "unavailable", "policy_unreadable", 0)
         with self._guard:
             if self._scope != scope_id:
                 self._scope = scope_id
@@ -165,6 +228,7 @@ class AdmissionPolicyLoader:
                 self._revision = 0
             failure: Literal["policy_invalid", "policy_unreadable"] | None = None
             try:
+                assert self._source is not None
                 candidate = parse_operator_policy(self._source())
             except OSError:
                 failure = "policy_unreadable"
@@ -181,3 +245,24 @@ class AdmissionPolicyLoader:
                 self._last = candidate
                 self._revision += 1
             return PolicyLoadResult(self._last, "current", "policy_valid", self._revision)
+
+
+def configured_policy_loader(path: Path | None) -> AdmissionPolicyLoader:
+    """Trusted deployment selector; it never supplies authority or repairs a store."""
+    selected = os.environ.get("CAO_ADMISSION_POLICY_STORE", "file")
+    if selected not in {"file", "postgres"}:
+        raise ValueError("invalid admission policy store")
+    if path is not None and not path.is_absolute():
+        raise ValueError("admission policy requires an absolute private source path")
+    source = None if path is None else lambda: read_private_operator_policy(path)
+    if selected == "file":
+        if source is None:
+            raise ValueError("file admission policy requires a private source")
+        return AdmissionPolicyLoader(source=source)
+    from cli_agent_orchestrator.clients.admission_policy_repository import AdmissionPolicyRepository
+    from cli_agent_orchestrator.services.local_peer_identity import get_persistent_instance_id
+
+    return AdmissionPolicyLoader(
+        source=source,
+        repository=AdmissionPolicyRepository(profile_id=get_persistent_instance_id()),
+    )

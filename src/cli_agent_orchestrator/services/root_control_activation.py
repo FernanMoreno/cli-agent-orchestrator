@@ -376,7 +376,11 @@ async def prepare_original_control_owner(
         _claim_root_control_activation()
         if not proof._claim_startup():
             raise RootControlActivationUnavailable()
-        loaded = policy_loader.load(scope_id=scope_id)
+        loaded = (
+            policy_loader.load_bootstrap(scope_id=scope_id)
+            if policy_loader.persistent
+            else policy_loader.load(scope_id=scope_id)
+        )
         if loaded.status != "current" or loaded.configuration is None:
             raise RootControlActivationUnavailable()
         configuration = loaded.configuration

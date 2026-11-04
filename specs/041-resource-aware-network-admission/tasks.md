@@ -63,7 +63,7 @@
 - [ ] T019 Congelar manifiesto e implementar/ejecutar aceptación M1 real con política dinámica, presión y recursos contrastados; registrar recibos en specs/041-resource-aware-network-admission/quickstart.md y validation-m1.json.
 - [ ] T020 Ejecutar aceptación M2/M3 con coordinadores y nodos reales, reservas e identidad verificadas; registrar recibos en specs/041-resource-aware-network-admission/validation-network.json.
 - [ ] T021 Ejecutar suites aplicables, composición, revisión independiente, diff y verificación; actualizar documentos y conclusiones durables en specs/041-resource-aware-network-admission/tasks.md sin cerrar gates no ejecutados.
-- [ ] T022 [US6] Extensión solicitada: API de configuración versionada/auditada en PostgreSQL y SDK tipado que compartan modelos, permisos, unidades y CAS. El SDK no modifica credenciales ni escribe archivos privados; el archivo de despliegue solo activa/siembra durante la transición. Validar igualdad HTTP/SDK y conflictos reales.
+- [x] T022 [US6] Extensión solicitada: API de configuración versionada/auditada en PostgreSQL y SDK tipado que compartan modelos, permisos, unidades y CAS. El SDK no modifica credenciales ni escribe archivos privados; el archivo de despliegue solo activa/siembra durante la transición. Validar igualdad HTTP/SDK y conflictos reales.
 - [ ] T023 [US6] Integrar los mismos contratos en la interfaz real de administración: lectura/edición, revisión previa, conflicto, revocación y cobertura/desconocido; controles autenticados y pruebas de navegador. Sin duplicar autoridad en el cliente ni presentar maqueta como ejecución. Depende de T009/T017/T022; la extensión permanece pendiente hasta su implementación y aceptación.
 
 ## Dependencies and Execution
@@ -374,3 +374,25 @@ Dependencias: D01→D02/D03 (archivos distintos; cambios simultáneos solo en wo
 
 
 **2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).
+
+
+## T022.P — persistent policy/API/SDK (in progress)
+
+- [x] PC-01 Scope/contracts/spec→plan→tasks, source-verified private Graphify and TDD decision.
+- [x] PC-02 [P] Pure strict policy DTOs and HTTP-only typed SDK; codec/transport contract tests.
+- [x] PC-03 [P] Additive PostgreSQL history component/repository, explicit migrations, protected ACL and real CAS/history/revoke tests.
+- [x] PC-04 Source selection, separate pre-SQL bootstrap, funded current/recheck reads, applied revision metadata and race/cancellation tests.
+- [x] PC-05 Authenticated GET/PUT/revoke/history/explicit seed, existing owned runtime and fixed errors; HTTP/SDK acceptance.
+- [x] PC-06 Full relevant checks/composition/reviews/diff/Graphify/knowledge/receipts, accepted main commit/push; original gates remain evidence-based.
+
+
+## T023.P — real policy administration UI (in progress)
+
+- [x] PS-01 Contract/spec→plan→tasks, source-verified Graphify impact, local scope and lossless signed64 decision.
+- [ ] PS-02 [P] Typed policy client and route-specific standard JSON codec, central auth/no retries/direct local routing; unit contracts and unsupported capability refusal.
+- [ ] PS-03 [P] Settings UI: exact nine-value draft, review/CAS/conflict/uncertain inspection, confirmed revoke, bounded history, persisted versus applied and explicit local selection.
+- [ ] PS-04 Integrate actual Settings route; frontend regression/types/build and authenticated real Chromium→HTTP→PostgreSQL acceptance including integers beyond2^53.
+- [ ] PS-05 Composition/review/diff/knowledge/receipts and accepted main commit/push; no physical resource/global acceptance implied.
+
+
+**2026-11-04 · T022 política PostgreSQL/API/SDK validada opt-in.** Historial independiente por perfil/store, lector runtime sin DML, CAS/audit admin y SDK HTTP con DTO estricto. Bootstrap Root previo a SQL separado; lectura/recomprobación financiadas, revisión aplicada solo tras publicación y rechazo pre-write solo con prueba positiva. Commit real con respuesta perdida se inspecciona sin replay. 1004PASS/10advertencias,829IDs conservados+90nuevos+85existentes; tipos478, arquitectura5/0,21Python/12fuentes exactos y PostgreSQL0/0/0. Fase dirigida14casos incluye8PG reales. Sin autoridad productiva, cuotas/M1/M2/M3/UI ni aceptación global. Nueve gates originales abiertos. [Validación](validation-policy-control.json), [composición](composition-policy-control.md). T023 continúa en worktrees aislados.

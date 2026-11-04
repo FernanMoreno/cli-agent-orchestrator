@@ -1,0 +1,304 @@
+{
+  "schema": "caos.spec041.policy.control.validation.v1",
+  "date": "2026-11-04",
+  "status": "accepted_opt_in_policy_API_and_SDK_component",
+  "task": "T022",
+  "tests": {
+    "passed": 1004,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "baseline_relevant_passed": 829,
+    "baseline_ids_preserved": true,
+    "new_policy_cases": 90,
+    "additional_existing_cases": 85,
+    "selectors": 77,
+    "seconds": 621.342,
+    "available_mib": 10200
+  },
+  "warnings": 10,
+  "production_source_files": 12,
+  "owned_python_files": 21,
+  "source_files": [
+    {
+      "path": "src/cli_agent_orchestrator/api/admission_routes.py",
+      "sha256": "sha256:56364bee7da4b7d1d7873ee8865908602257e29db621f618b3c15de6e60f89b9"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_policy_repository.py",
+      "sha256": "sha256:e0f4faf2b0e9c6237c775cac816e0bc6ab942bc162606b05410e91d009793114"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_policy_schema.py",
+      "sha256": "sha256:e378698ffc5b803a1d13c50f9c1671171a272745ceb67a1433978cdaa9a8e58e"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/admission_policy_sdk.py",
+      "sha256": "sha256:556f35e4a021597c4f1a3bc40d7ff6c944ae52a3da5dfe158071e9b5a469cb1c"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/migrations.py",
+      "sha256": "sha256:b078a73d8f60ba988db6b3a39a13b2caea3be5ab8b1d771d1f8f6ff1e87f642e"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/clients/postgres/registry.py",
+      "sha256": "sha256:15c792ebda4d26234ecbd95a591ea7be62343192fd50640455d47b4d4018ca1a"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/models/admission_policy_control.py",
+      "sha256": "sha256:f786229c83a1b6328085c8b364b3c75b4e89585a3c751facb67aec50c0e7eefc"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/runtime_channel/root_control.py",
+      "sha256": "sha256:853246f407fa8cedf758477735f9bcf94933b5d76899922dd05603f98fed8731"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_monitor.py",
+      "sha256": "sha256:ee76d9d168559dda99e7a6b3e56781111ac4639d0e9fc80af79d8602b55dc4c2"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/admission_settings.py",
+      "sha256": "sha256:55833ee98b8152eb586aef872596d41df0bf091b9a5c3cc48956d1dbe210e9ea"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/inbox_admission_runtime.py",
+      "sha256": "sha256:79bc17c9f19930f3b7fbe66a210c704c155bb7b1ea98ba08fdfac3ea1c4f399b"
+    },
+    {
+      "path": "src/cli_agent_orchestrator/services/root_control_activation.py",
+      "sha256": "sha256:116b704281d88c0553df6073b5ef2bfa01cd01a8237a0777b9b514256f26be93"
+    },
+    {
+      "path": "test/api/test_admission_policy_control.py",
+      "sha256": "sha256:7148eef839da05a0e692b83f66c769cba1f0c64db6f326538177db206a9d6875"
+    },
+    {
+      "path": "test/clients/test_admission_policy_sdk.py",
+      "sha256": "sha256:43389703c9d7c4593ab80cc022750aee2082461dc414e38c21ff6d23e9260a94"
+    },
+    {
+      "path": "test/models/test_admission_policy_control.py",
+      "sha256": "sha256:3dba48cbc869267e1f9be594927c44c7082e57d38c16a8dca96e7f1a2f18f99c"
+    },
+    {
+      "path": "test/postgres/test_admission_policy_bound_control.py",
+      "sha256": "sha256:0867788d1c683e9c9bf3840a5b8d319f7071e5ae6af7826b0b9fd18a048bdf47"
+    },
+    {
+      "path": "test/postgres/test_admission_policy_http.py",
+      "sha256": "sha256:fd4a205e484d9d135c29ed79a783898e4b61f3eca477f8e9870fe320752201e0"
+    },
+    {
+      "path": "test/postgres/test_admission_policy_repository.py",
+      "sha256": "sha256:d3c34556c68da1dae6ed678364e6bd78b87eddc4934f9087b60f9bd5787b3f30"
+    },
+    {
+      "path": "test/services/test_admission_policy_monitor.py",
+      "sha256": "sha256:f0eeaf40c9701d010e95b53c87e9124959696f843be53f4faa34f708daad6e87"
+    },
+    {
+      "path": "test/services/test_admission_policy_runtime.py",
+      "sha256": "sha256:934e16c65deb442ec9cc14d573dcc9a25bc27db6fabdb564d5b3316c62cee975"
+    },
+    {
+      "path": "test/services/test_admission_policy_store.py",
+      "sha256": "sha256:7dcce1259f656e33e86551d3934461c4e6fd37dee0853347ff673168a82e455b"
+    }
+  ],
+  "proof": {
+    "source_preserved": true,
+    "support_preserved": true,
+    "descriptor_closed": true,
+    "archive_sha256": "103936d40ed2330afa04aa9f41b175caba901b46b99401c206728fed50e38136",
+    "source_archive_matches": 21,
+    "production_archive_matches": 12,
+    "foreign12_preserved": true
+  },
+  "checks": {
+    "cold_mypy_source_files": 478,
+    "black_isort_files": 21,
+    "architecture_files": 481,
+    "architecture_dependencies": 2219,
+    "architecture_kept": 5,
+    "architecture_broken": 0,
+    "postgres_clean": [
+      0,
+      0,
+      0
+    ],
+    "private_partial_graph_files": 18,
+    "private_partial_graph_nodes": 584
+  },
+  "real_boundaries": {
+    "PostgreSQL_native_focused_phase_total": 14,
+    "PostgreSQL_cases_in_phase": 8,
+    "offline_cases_in_phase": 6,
+    "actual_HTTP_JWKS_SDK": true,
+    "actual_original_Root_backend_reuse": true,
+    "concurrent_CAS": true,
+    "actual_commit_lost_reply_readback_no_replay": true,
+    "runtime_DML_refused": true,
+    "SQL_5_resource_7_preserved": true,
+    "new_policy_component": 1
+  },
+  "corrections": {
+    "pre_SQL_bootstrap_separate_from_DB": true,
+    "controlled_current_and_recheck_reads": true,
+    "persisted_vs_published_revision": true,
+    "same_value_revision_resets_recovery": true,
+    "first_policy_recheck_failure_retains_bootstrap_pin": true,
+    "only_proven_prewrite_refusals_exempt_from_uncertainty": true,
+    "generic_uncertainty_never_auto_cleared": true,
+    "diagnostics_v1_v2_reason_contract_preserved": true
+  },
+  "diagnostics": {
+    "loader_initial_RED": 5,
+    "API_missing_routes_RED": 10,
+    "monitor_initial_RED": 7,
+    "monitor_initial_positive_controls": 2,
+    "bootstrap_pin_RED": 2,
+    "prewrite_RED": 2,
+    "first_cold_type_errors": 2,
+    "obsolete_reason_test_expectation_failures": 1,
+    "notes": "Failed/obsolete and prepared-only runs are retained separately; overlapping focused results are not added to final1004."
+  },
+  "reviews": {
+    "Claude_read_jobs": [
+      "4e51f1403919470ebeeab6561cd2e72f",
+      "c112080ece4d4a77a123957c6ee54766",
+      "22dfd060fa874cebafec3177fe410713"
+    ],
+    "final_Claude_source_review_no_blockers": true,
+    "ECC_Luna_Max_isolated_implementation_and_read_review": true,
+    "lead_full_source_exact_verification": true
+  },
+  "coverage": {
+    "owned": {
+      "src/cli_agent_orchestrator/api/admission_routes.py": {
+        "covered_lines": 147,
+        "num_statements": 186,
+        "percent_covered": 79.03225806451613,
+        "percent_covered_display": "79",
+        "missing_lines": 39,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/clients/admission_policy_repository.py": {
+        "covered_lines": 159,
+        "num_statements": 183,
+        "percent_covered": 86.88524590163935,
+        "percent_covered_display": "87",
+        "missing_lines": 24,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/clients/admission_policy_schema.py": {
+        "covered_lines": 3,
+        "num_statements": 3,
+        "percent_covered": 100.0,
+        "percent_covered_display": "100",
+        "missing_lines": 0,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/clients/admission_policy_sdk.py": {
+        "covered_lines": 85,
+        "num_statements": 92,
+        "percent_covered": 92.3913043478261,
+        "percent_covered_display": "92",
+        "missing_lines": 7,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/clients/postgres/migrations.py": {
+        "covered_lines": 268,
+        "num_statements": 287,
+        "percent_covered": 93.37979094076655,
+        "percent_covered_display": "93",
+        "missing_lines": 19,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/clients/postgres/registry.py": {
+        "covered_lines": 46,
+        "num_statements": 48,
+        "percent_covered": 95.83333333333333,
+        "percent_covered_display": "96",
+        "missing_lines": 2,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/models/admission_policy_control.py": {
+        "covered_lines": 74,
+        "num_statements": 78,
+        "percent_covered": 94.87179487179488,
+        "percent_covered_display": "95",
+        "missing_lines": 4,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/runtime_channel/root_control.py": {
+        "covered_lines": 181,
+        "num_statements": 222,
+        "percent_covered": 81.53153153153153,
+        "percent_covered_display": "82",
+        "missing_lines": 41,
+        "excluded_lines": 0
+      },
+      "src/cli_agent_orchestrator/services/admission_monitor.py": {
+        "covered_lines": 479,
+        "num_statements": 517,
+        "percent_covered": 92.64990328820116,
+        "percent_covered_display": "93",
+        "missing_lines": 38,
+        "excluded_lines": 4
+      },
+      "src/cli_agent_orchestrator/services/admission_settings.py": {
+        "covered_lines": 157,
+        "num_statements": 164,
+        "percent_covered": 95.73170731707317,
+        "percent_covered_display": "96",
+        "missing_lines": 7,
+        "excluded_lines": 3
+      },
+      "src/cli_agent_orchestrator/services/inbox_admission_runtime.py": {
+        "covered_lines": 327,
+        "num_statements": 427,
+        "percent_covered": 76.5807962529274,
+        "percent_covered_display": "77",
+        "missing_lines": 100,
+        "excluded_lines": 30
+      },
+      "src/cli_agent_orchestrator/services/root_control_activation.py": {
+        "covered_lines": 157,
+        "num_statements": 191,
+        "percent_covered": 82.19895287958116,
+        "percent_covered_display": "82",
+        "missing_lines": 34,
+        "excluded_lines": 0
+      }
+    },
+    "package_percent": 32.272053454875326,
+    "scope": "1004 selected cases; not whole-project acceptance"
+  },
+  "scope": {
+    "file_mode_default_compatibility": true,
+    "postgres_source_explicit_and_no_fallback": true,
+    "profile_store_server_bound": true,
+    "no_new_aggregate_worker_ceiling": true,
+    "no_credentials_generated_or_renewed": true,
+    "no_global_install": true,
+    "productive_authority_installed": false,
+    "provider_quota_accepted": false,
+    "Root_funding_producer_accepted": false,
+    "T015_destination_capacity_accepted": false,
+    "M1_M2_M3_accepted": false,
+    "UI_accepted": false,
+    "whole_project_acceptance": false,
+    "remaining_original_gates": [
+      "T013",
+      "T014",
+      "T015",
+      "T016",
+      "T018",
+      "T019",
+      "T020",
+      "T021",
+      "T023"
+    ]
+  },
+  "private_receipts": "/home/felni/.cache/caos-policy-control-20261104"
+}

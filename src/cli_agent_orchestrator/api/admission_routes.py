@@ -11,6 +11,11 @@ from cli_agent_orchestrator.clients.admission_bootstrap_repository import (
     EnvelopeNotFound,
     EnvelopeRevisionConflict,
 )
+from cli_agent_orchestrator.clients.admission_policy_repository import (
+    PolicyNotFound,
+    PolicyRevisionConflict,
+    PolicyWriteNotStarted,
+)
 from cli_agent_orchestrator.clients.admission_repository import (
     SharedAdmissionDenied,
     SharedCapacityUnavailable,
@@ -42,6 +47,13 @@ from cli_agent_orchestrator.models.admission_control import (
     SharedPreparationAbortResult,
     SharedWitnessReleaseRequest,
     SharedWitnessReleaseResult,
+)
+from cli_agent_orchestrator.models.admission_policy_control import (
+    AdmissionPolicyHistory,
+    AdmissionPolicyRecord,
+    AdmissionPolicyRevision,
+    AdmissionPolicyState,
+    AdmissionPolicyUpdate,
 )
 from cli_agent_orchestrator.security.auth import (
     SCOPE_ADMIN,
@@ -305,3 +317,100 @@ async def diagnostics(
 
 
 router.include_router(_diagnostics_router)
+
+_POLICY_EXPECTED = (*_EXPECTED, PolicyRevisionConflict, PolicyNotFound, PolicyWriteNotStarted)
+
+
+class PolicyValidationRoute(FixedValidationRoute):
+    validation_error_code: ClassVar[str] = "invalid_admission_policy"
+
+
+_policy_router = APIRouter(route_class=PolicyValidationRoute)
+
+
+def policy_error(error: Exception) -> HTTPException:
+    if isinstance(error, PolicyRevisionConflict):
+        return failure(409, "policy_revision_conflict")
+    if isinstance(error, PolicyNotFound):
+        return failure(404, "policy_not_found")
+    return failure(503, "policy_control_unavailable")
+
+
+@_policy_router.get("/policy", response_model=AdmissionPolicyState)
+async def get_policy(
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+) -> AdmissionPolicyState:
+    try:
+        result = await runtime(request).policy_status(principal=principal)
+    except _POLICY_EXPECTED as error:
+        raise policy_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@_policy_router.put("/policy", response_model=AdmissionPolicyRecord)
+async def update_policy(
+    body: AdmissionPolicyUpdate,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+) -> AdmissionPolicyRecord:
+    try:
+        result = await runtime(request).policy_update(principal=principal, body=body)
+    except _POLICY_EXPECTED as error:
+        raise policy_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@_policy_router.post("/policy/revoke", response_model=AdmissionPolicyRecord)
+async def revoke_policy(
+    body: AdmissionPolicyRevision,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+) -> AdmissionPolicyRecord:
+    try:
+        result = await runtime(request).policy_revoke(principal=principal, body=body)
+    except _POLICY_EXPECTED as error:
+        raise policy_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@_policy_router.post("/policy/seed", response_model=AdmissionPolicyRecord)
+async def seed_policy(
+    body: AdmissionPolicyRevision,
+    request: Request,
+    response: Response,
+    principal: Principal = Depends(operator),
+) -> AdmissionPolicyRecord:
+    try:
+        result = await runtime(request).policy_seed(principal=principal, body=body)
+    except _POLICY_EXPECTED as error:
+        raise policy_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@_policy_router.get("/policy/history", response_model=AdmissionPolicyHistory)
+async def policy_history(
+    request: Request,
+    response: Response,
+    limit: int = Query(default=50, ge=1, le=100),
+    before_revision: int | None = Query(default=None, ge=1, le=2**63 - 1),
+    principal: Principal = Depends(operator),
+) -> AdmissionPolicyHistory:
+    try:
+        result = await runtime(request).policy_history(
+            principal=principal, limit=limit, before_revision=before_revision
+        )
+    except _POLICY_EXPECTED as error:
+        raise policy_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+router.include_router(_policy_router)

@@ -1,0 +1,226 @@
+"""Real HTTP/JWKS/PostgreSQL and shared typed SDK, without resource authority."""
+
+import os
+import socket
+import threading
+import time
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import asdict, replace
+from test.conftest import mint_test_token
+from test.fixtures.cao_server import _JWKSServer
+from test.postgres.test_admission_bootstrap import resource_target
+from uuid import uuid4
+
+import httpx
+import psutil
+import pytest
+import uvicorn
+from fastapi import FastAPI
+from psycopg import sql
+
+from cli_agent_orchestrator.api.admission_routes import router
+from cli_agent_orchestrator.clients.admission_bootstrap_repository import ResourceEnvelopeRepository
+from cli_agent_orchestrator.clients.admission_bootstrap_schema import RESOURCE_ENVELOPE_TABLE
+from cli_agent_orchestrator.clients.admission_policy_repository import AdmissionPolicyRepository
+from cli_agent_orchestrator.clients.admission_policy_schema import ADMISSION_POLICY_MIGRATIONS
+from cli_agent_orchestrator.clients.admission_policy_sdk import AdmissionPolicyClient
+from cli_agent_orchestrator.clients.postgres import connect
+from cli_agent_orchestrator.clients.postgres.migrations import migrate_component
+from cli_agent_orchestrator.models.admission_policy_control import (
+    AdmissionPolicyRevision,
+    AdmissionPolicyUpdate,
+    AdmissionPolicyValues,
+)
+from cli_agent_orchestrator.models.resource_envelope import EnvelopeClaims
+from cli_agent_orchestrator.services.admission_bootstrap import (
+    ResourceBootstrap,
+    capture_server_binding,
+)
+from cli_agent_orchestrator.services.admission_monitor import AdmissionMonitor
+from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy
+from cli_agent_orchestrator.services.admission_postgres import PostgresPressureSampler
+from cli_agent_orchestrator.services.admission_settings import AdmissionPolicyLoader
+from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
+from cli_agent_orchestrator.services.inbox_admission_runtime import InboxAdmissionRuntime
+from cli_agent_orchestrator.services.inbox_service import InboxService
+from cli_agent_orchestrator.services.local_peer_identity import LocalProcessIdentity
+
+pytestmark = pytest.mark.postgres
+
+
+def test_real_http_sdk_policy_revision_seed_history_revocation(
+    resource_target, auth_enabled_env, rsa_keys, monkeypatch, tmp_path
+):
+    target = resource_target
+    migrate_component(target, ADMISSION_POLICY_MIGRATIONS)
+    policy_repository = AdmissionPolicyRepository(
+        profile_id=str(uuid4()), target_supplier=lambda: target
+    )
+    identity = LocalProcessIdentity(
+        str(uuid4()),
+        str(uuid4()),
+        os.getpid(),
+        psutil.Process().create_time(),
+        "owned-resource-control-test",
+        "127.0.0.1",
+        0,
+        "test-only-public-identity",
+    )
+    repository = ResourceEnvelopeRepository(target_supplier=lambda: target)
+    bootstrap = ResourceBootstrap(
+        repository=repository,
+        binding_supplier=lambda selected: capture_server_binding(
+            selected, identity_supplier=lambda: identity
+        ),
+        instance_supplier=lambda: identity.instance_id,
+    )
+    owner, control = DeliveryAdmission.with_storage_control(AdmissionPolicy())
+    monitor = AdmissionMonitor(
+        owner,
+        storage_control=control,
+        policy_loader=AdmissionPolicyLoader(repository=policy_repository),
+        bootstrap=bootstrap,
+        postgres=PostgresPressureSampler(target_supplier=lambda: target),
+        scope_id="owned-native-http-control",
+        local_storage_capacity=lambda: 4,
+    )
+    seed_file = tmp_path / "policy.json"
+    seed_file.write_text('{"version":1,"policy":{"cpu_per_delivery_millicores":600}}')
+    seed_file.chmod(0o600)
+    value = InboxAdmissionRuntime(
+        InboxService(),
+        monitor=monitor,
+        bootstrap=bootstrap,
+        policy_repository=policy_repository,
+        policy_file=seed_file,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app):
+        await value.start()
+        try:
+            yield
+        finally:
+            await value.stop()
+
+    app = FastAPI(lifespan=lifespan)
+    app.state.inbox_admission_runtime = value
+    app.include_router(router)
+    jwks = _JWKSServer(rsa_keys[1])
+    listener = socket.socket()
+    thread = None
+    server = None
+    try:
+        jwks.start()
+        monkeypatch.setenv("CAO_AUTH_JWKS_URI", jwks.url)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False))
+        thread = threading.Thread(target=lambda: server.run(sockets=[listener]), daemon=True)
+        thread.start()
+        deadline = time.monotonic() + 30
+        while not server.started and thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started, "owned HTTP server did not start"
+        admin = {
+            "Authorization": "Bearer " + mint_test_token(rsa_keys[0], subject="native-operator")
+        }
+        reader = {
+            "Authorization": "Bearer "
+            + mint_test_token(rsa_keys[0], scopes="cao:read", subject="native-reader")
+        }
+        # Coverage is deliberately unproven. Registration must not turn it into
+        # permission to admit input; neither this test nor /proc proves ancestors.
+        claims = EnvelopeClaims(1024**3, 1000, 4, False, False)
+        path = "/admission/resource-envelope"
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{port}", timeout=30, trust_env=False
+        ) as client:
+            route = "/admission/policy"
+            assert client.get(route).status_code == 401
+            assert client.get(route, headers=reader).status_code == 403
+            sdk = AdmissionPolicyClient(
+                client, lambda: admin["Authorization"].removeprefix("Bearer ")
+            )
+            assert sdk.get().persisted is None
+            first = sdk.seed(AdmissionPolicyRevision(expected_revision=0))
+            assert first.revision == 1 and first.policy.cpu_per_delivery_millicores == 600
+            http = client.get(route, headers=admin)
+            assert http.status_code == 200 and http.headers["cache-control"] == "no-store"
+            assert sdk.get().persisted.model_dump(mode="json") == http.json()["persisted"]
+            assert sdk.get().applied_revision is None  # No physical resource authority.
+            conflict = client.put(route, headers=admin, json={"expected_revision": 0, "policy": {}})
+            assert conflict.status_code == 409
+            second = sdk.update(
+                AdmissionPolicyUpdate(
+                    expected_revision=1,
+                    policy=AdmissionPolicyValues(cpu_per_delivery_millicores=900),
+                )
+            )
+            assert second.revision == 2 and second.policy.cpu_per_delivery_millicores == 900
+            assert second.actor_principal_id == first.actor_principal_id
+            revoked = sdk.revoke(AdmissionPolicyRevision(expected_revision=2))
+            assert revoked.revision == 3 and revoked.active is False
+            assert revoked.policy == second.policy
+            history = sdk.history(limit=2)
+            assert [r.revision for r in history.entries] == [3, 2]
+            assert history.next_before_revision == 2
+            assert [r.revision for r in sdk.history(before_revision=2).entries] == [1]
+            assert owner.snapshot(now=time.monotonic()).available_slots == 0
+            assert not monitor._authority_state.uncertain
+            no_owner = replace(target, migration_user=None, migration_secret_file=None)
+            value._policy_repository = AdmissionPolicyRepository(
+                profile_id=policy_repository.profile_id, target_supplier=lambda: no_owner
+            )
+            rejected = client.put(route, headers=admin, json={"expected_revision": 3, "policy": {}})
+            assert rejected.status_code == 503
+            assert not monitor._authority_state.uncertain
+            assert sdk.get().persisted.revision == 3
+            assert monitor.refresh().reason != "authority_uncertain"
+
+            def lose_commit_reply(selected, readonly=False):
+                connection = connect(selected, readonly=readonly)
+                if not readonly:
+                    original_transaction = connection.transaction
+
+                    @contextmanager
+                    def committed_without_reply():
+                        with original_transaction() as actual:
+                            yield actual
+                        raise OSError("private-commit-reply-canary")
+
+                    connection.transaction = committed_without_reply
+                return connection
+
+            value._policy_repository = AdmissionPolicyRepository(
+                profile_id=policy_repository.profile_id,
+                target_supplier=lambda: target,
+                connect_factory=lose_commit_reply,
+            )
+            uncertain = client.put(
+                route, headers=admin, json={"expected_revision": 3, "policy": {}}
+            )
+            assert uncertain.status_code == 503 and "canary" not in uncertain.text
+            assert monitor._authority_state.uncertain
+            # The actual commit can be inspected; it never authorizes an automatic replay.
+            assert sdk.get().persisted.revision == 4
+            assert (
+                client.put(
+                    route, headers=admin, json={"expected_revision": 4, "policy": {}}
+                ).status_code
+                == 503
+            )
+            assert policy_repository.read_latest(target).revision == 4
+        saved = policy_repository.read_latest(target)
+        assert saved is not None and saved.revision == 4 and saved.active
+        assert len(policy_repository.history(target).entries) == 4
+    finally:
+        if server is not None:
+            server.should_exit = True
+        if thread is not None:
+            thread.join(timeout=60)
+            assert not thread.is_alive(), "owned HTTP worker did not physically retire"
+        listener.close()
+        jwks.stop()
+    assert value.retired and monitor.retired

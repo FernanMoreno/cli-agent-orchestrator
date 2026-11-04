@@ -221,3 +221,8 @@ El contrato público procede de RootDeploymentCommand, RootDeploymentActivation 
 
 
 **2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).
+
+
+## T022 persistent policy (implementation contract)
+
+`AdmissionPolicyValues` contains the nine normalized policy tunables; `AdmissionPolicyRecord` adds profile UUID, revision, active, actor hash and database timestamp. `AdmissionPolicyUpdate` and `AdmissionPolicyRevision` carry CAS expectations. `AdmissionPolicyState` distinguishes persisted from actually applied; `AdmissionPolicyHistory` is bounded descending keyset pagination. The new main-store admission_policy component keys immutable history by `(profile_id,revision)`; scope is the configured store/schema plus base profile UUID, independent of process generations. See [contract](contracts/admission-policy-control.md).

@@ -1,5 +1,11 @@
 # Claude Code: análisis y pendientes
 
+**2026-11-04 · T022: política PostgreSQL, API y SDK validados opt-in.**
+
+Configuración versionada por perfil/store, CAS/audit admin, lector runtime sin DML y contratos compartidos con SDK HTTP. Bootstrap Root previo a SQL separado de la política vigente; recomprobación antes de publicar y revisión aplicada distinta de guardada. Rechazos previos a escritura requieren prueba positiva; un commit con respuesta perdida se consulta sin replay ni borrado de incertidumbre.
+
+**1.004 pruebas aprobadas**,10 advertencias:829 IDs anteriores conservados+90 casos nuevos+85 existentes adicionales. Tipos478, arquitectura5/0,21Python/12fuentes archivo-exactos y PostgreSQL0/0/0. Fase dirigida14 casos,8 con PostgreSQL real, incluidos HTTP/JWKS/SDK y reutilización de la sesión Root. Sin nuevas credenciales/login, autoridad productiva, cuotas, M1/M2/M3 o aceptación global. T023 interfaz real está en implementación aislada; nueve gates originales siguen abiertos. [Validación](../specs/041-resource-aware-network-admission/validation-policy-control.json), [composición](../specs/041-resource-aware-network-admission/composition-policy-control.md).
+
 **2026-11-04 · perfil/signer Root y recibos de broker validados por componente.**
 
 El perfil y el compositor son estrictos e inertes; la credencial externa se valida bajo cargo antes de SQL/issuer. La asignación elástica usa leases/recibos tipados y conserva reconcile sin repetir efectos ante ambigüedad. No persiste release_token ni interpreta HTTP200/404 como cierre.

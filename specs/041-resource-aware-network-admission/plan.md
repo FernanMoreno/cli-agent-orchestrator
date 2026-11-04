@@ -682,3 +682,13 @@ Reproducción/TDD antes de cambiar consumo: leases dict/bool/list actualmente pa
 
 
 **2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).
+
+
+## T022 delivery plan — 2026-11-04
+
+Agree pure `models/admission_policy_control.py` contract first. Independently implement `clients/admission_policy_schema.py` and `clients/admission_policy_repository.py` with additive migration registration/ACL, and `clients/admission_policy_sdk.py` using identical DTOs, in isolated worktrees. Lead composes source loader, monitor freshness, Root bootstrap, owned runtime and authenticated routes. Verify private Graphify impact against source before mutations. TDD focused codecs/ownership then serialize real PostgreSQL and relevant regression; review composition, types, final diff and durable knowledge before publishing accepted main changes. Do not mark original T022 complete until connected API/SDK acceptance passes.
+
+
+## T023 delivery plan
+
+After source-verified web Graphify impact, implement independent lossless policy API client/decoder hook and Settings UI in separate worktrees with agreed DTOs. Integrate into main after T022 source acceptance. Preserve central browserFetch and existing Settings controls. Verify typed protocol, human review/CAS/conflict/history/unsupported browser/remote-context guards, frontend regression/build, actual authenticated browser→HTTP→PostgreSQL roundtrip, architecture/composition and durable evidence. Generated build output is not source acceptance. No model/physical-capacity/global claims from UI tests.

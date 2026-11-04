@@ -204,3 +204,30 @@ Si el cierre del descriptor Root falla o no se demuestra, conservar el mismo han
 
 
 **2026-11-04 · componentes H24d y T015.R.1 validados.** Perfil Root estricto/assembler inerte, signer externo/trust compartido con CLI y preflight financiado antes de SQL/issuer. Leases del broker y recibos de retirada tipados; ambigüedad conserva reconcile sin replay ni token persistido. 829 pruebas aprobadas/10 advertencias/61 módulos:748 IDs conservados+40 Root+16 broker nuevos+25 existentes adicionales. Cinco recorridos Root/PG reales, tipos474, arquitectura5/0,13 Python/7 fuentes archivo-exactos y PostgreSQL limpio. Broker HTTP simulado y presupuestos/grants de fixture: H24D-05, T015/T016, autoridad productiva, cuotas y diez gates globales siguen abiertos. [Validación](validation-profile-elastic-broker.json), [composición](composition-profile-elastic-broker.md).
+
+
+## T022 operator policy (validated opt-in)
+
+Provision the new `admission_policy` component using the existing explicit main-store migration workflow; runtime reads do not migrate or promote credentials. Keep the runtime role read-only on policy history. Set `CAO_ADMISSION_POLICY_STORE=postgres` in trusted deployment configuration. A missing row starts admission unknown; an authenticated administrator can create revision1. No resource authority is created by selecting this source. Root also requires its private bootstrap policy for the pre-SQL phase; that file never substitutes for the database after activation.
+
+Use caller-owned credentials/transport with the shared HTTP SDK:
+
+```python
+import httpx
+from cli_agent_orchestrator.clients.admission_policy_sdk import AdmissionPolicyClient
+from cli_agent_orchestrator.models.admission_policy_control import (
+    AdmissionPolicyUpdate, AdmissionPolicyValues,
+)
+
+# operator_token is the caller's existing verified-admin token supplier.
+with httpx.Client(base_url=api_url, timeout=30) as transport:
+    policy = AdmissionPolicyClient(transport, operator_token)
+    current = policy.get()
+    expected = current.persisted.revision if current.persisted is not None else 0
+    candidate = AdmissionPolicyValues(cpu_per_delivery_millicores=500)
+    # Review the entire normalized candidate before this explicit replacement.
+    saved = policy.update(AdmissionPolicyUpdate(expected_revision=expected, policy=candidate))
+    history = policy.history(limit=20)
+```
+
+A conflict requires explicit read/review, never blind replay. An uncertain write requires status inspection. Compare saved and applied revisions separately; unknown applied state does not attest capacity. Seed is a separate explicit admin action at revision zero from the configured server-private source; SDK requests contain no filesystem path. UI integration remains T023.

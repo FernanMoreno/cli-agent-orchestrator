@@ -8,11 +8,15 @@ import os
 import threading
 import time
 from concurrent.futures import Future
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Generic, Literal, Protocol, TypeVar, overload
 from uuid import uuid4
 
+from cli_agent_orchestrator.clients.admission_policy_repository import (
+    AdmissionPolicyRepository,
+    PolicyRevisionConflict,
+)
 from cli_agent_orchestrator.clients.postgres import DatabaseTarget
 from cli_agent_orchestrator.clients.storage_admission import storage_process_current
 from cli_agent_orchestrator.models.admission_control import (
@@ -24,6 +28,14 @@ from cli_agent_orchestrator.models.admission_domains import (
     SharedDebtCursor,
     SharedDebtPage,
     SharedReleaseReceipt,
+)
+from cli_agent_orchestrator.models.admission_policy_control import (
+    AdmissionPolicyHistory,
+    AdmissionPolicyRecord,
+    AdmissionPolicyRevision,
+    AdmissionPolicyState,
+    AdmissionPolicyUpdate,
+    AdmissionPolicyValues,
 )
 from cli_agent_orchestrator.models.resource_envelope import (
     EnvelopeClaims,
@@ -46,6 +58,8 @@ from cli_agent_orchestrator.services.admission_policy import AdmissionPolicy
 from cli_agent_orchestrator.services.admission_postgres import PostgresPressureSampler
 from cli_agent_orchestrator.services.admission_settings import (
     AdmissionPolicyLoader,
+    configured_policy_loader,
+    parse_operator_policy,
     read_private_operator_policy,
 )
 from cli_agent_orchestrator.services.delivery_admission import DeliveryAdmission
@@ -102,9 +116,13 @@ class InboxAdmissionRuntime:
         drain_timeout_s: float | None = None,
         shared_repository: SharedResourceRepository | None = None,
         recovery_repository: ResourceRecoveryRepository | None = None,
+        policy_repository: AdmissionPolicyRepository | None = None,
+        policy_file: Path | None = None,
     ):
         if recovery_repository is not None and shared_repository is None:
             raise ValueError("resource recovery requires shared admission composition")
+        self._policy_repository = policy_repository
+        self._policy_file = policy_file
         self._pid = os.getpid()
         self._terminal_closing = False
         self.inbox = inbox
@@ -258,6 +276,93 @@ class InboxAdmissionRuntime:
         wrapped = asyncio.wrap_future(call.future)
         wrapped.add_done_callback(lambda future: None if future.cancelled() else future.exception())
         return await asyncio.shield(wrapped)
+
+    def _policy_control(self) -> AdmissionPolicyRepository:
+        if self._policy_repository is None:
+            raise AdmissionRuntimeUnavailable("persistent policy control is unavailable")
+        return self._policy_repository
+
+    async def policy_status(self, *, principal: object) -> AdmissionPolicyState:
+        def read() -> AdmissionPolicyState:
+            repository = self._policy_control()
+            return AdmissionPolicyState(
+                persisted=repository.read_latest(repository.resolve_target()),
+                applied_revision=self.monitor.applied_policy_revision,
+            )
+
+        return await self._execute(principal, read, mutating=False)
+
+    async def policy_history(
+        self, *, principal: object, limit: int = 50, before_revision: int | None = None
+    ) -> AdmissionPolicyHistory:
+        def read() -> AdmissionPolicyHistory:
+            repository = self._policy_control()
+            return repository.history(
+                repository.resolve_target(), limit=limit, before_revision=before_revision
+            )
+
+        return await self._execute(principal, read, mutating=False)
+
+    async def policy_update(
+        self, *, principal: object, body: AdmissionPolicyUpdate
+    ) -> AdmissionPolicyRecord:
+        actor = ResourceBootstrap._administrator(principal)
+        if type(body) is not AdmissionPolicyUpdate:
+            raise ValueError("invalid policy update")
+
+        def write() -> AdmissionPolicyRecord:
+            repository = self._policy_control()
+            return repository.append(
+                repository.resolve_target(),
+                policy=body.policy,
+                expected_revision=body.expected_revision,
+                principal_id=actor,
+            )
+
+        return await self._execute(principal, write, mutating=True)
+
+    async def policy_revoke(
+        self, *, principal: object, body: AdmissionPolicyRevision
+    ) -> AdmissionPolicyRecord:
+        actor = ResourceBootstrap._administrator(principal)
+        if type(body) is not AdmissionPolicyRevision:
+            raise ValueError("invalid policy revision")
+
+        def write() -> AdmissionPolicyRecord:
+            repository = self._policy_control()
+            return repository.revoke(
+                repository.resolve_target(),
+                expected_revision=body.expected_revision,
+                principal_id=actor,
+            )
+
+        return await self._execute(principal, write, mutating=True)
+
+    async def policy_seed(
+        self, *, principal: object, body: AdmissionPolicyRevision
+    ) -> AdmissionPolicyRecord:
+        if type(body) is not AdmissionPolicyRevision or body.expected_revision != 0:
+            ResourceBootstrap._administrator(principal)
+            raise PolicyRevisionConflict("policy seed requires an empty history")
+
+        def read_seed() -> AdmissionPolicyValues:
+            self._policy_control()
+            if self._policy_file is None:
+                raise AdmissionRuntimeUnavailable("policy bootstrap source is unavailable")
+            configuration = parse_operator_policy(read_private_operator_policy(self._policy_file))
+            return AdmissionPolicyValues(
+                **asdict(configuration.policy),
+                postgres_reserve_percent=configuration.postgres.reserve_percent,
+                postgres_statement_timeout_ms=configuration.postgres.statement_timeout_ms,
+                sample_interval_s=configuration.sample_interval_s,
+                healthy_samples_before_growth=configuration.healthy_samples_before_growth,
+            )
+
+        # Validate the immutable seed snapshot before entering the mutation barrier.
+        policy = await self._execute(principal, read_seed, mutating=False)
+        return await self.policy_update(
+            principal=principal, body=AdmissionPolicyUpdate(expected_revision=0, policy=policy)
+        )
 
     async def attest(
         self, *, principal: object, claims: EnvelopeClaims, expected_revision: int
@@ -594,14 +699,17 @@ def runtime_from_environment(
     mode = os.environ.get("CAO_ADMISSION_MODE", "local")
     if mode not in {"local", "shared"}:
         raise ValueError("admission mode must be local or shared")
-    if "CAO_ADMISSION_POLICY_FILE" not in os.environ:
+    selected = os.environ.get("CAO_ADMISSION_POLICY_STORE", "file")
+    if selected not in {"file", "postgres"}:
+        raise ValueError("invalid admission policy store")
+    value = os.environ.get("CAO_ADMISSION_POLICY_FILE")
+    path = None if value is None else Path(value)
+    if path is not None and (not value or not value.strip() or not path.is_absolute()):
+        raise ValueError("admission policy requires an absolute private source path")
+    if selected == "file" and path is None:
         if mode == "shared":
             raise ValueError("shared admission requires a private operator policy")
         return None
-    value = os.environ["CAO_ADMISSION_POLICY_FILE"]
-    path = Path(value)
-    if not value.strip() or not path.is_absolute():
-        raise ValueError("admission policy requires an absolute private source path")
     from cli_agent_orchestrator.security.auth import is_auth_enabled
 
     if not is_auth_enabled():
@@ -610,9 +718,14 @@ def runtime_from_environment(
         raise AdmissionRuntimeUnavailable("process storage ownership is unavailable")
     owner, storage_control = DeliveryAdmission.with_storage_control(AdmissionPolicy())
     bootstrap = bootstrap_factory() if bootstrap_factory is not None else ResourceBootstrap()
+    if selected == "file":
+        assert path is not None
+        loader = AdmissionPolicyLoader(source=lambda: read_private_operator_policy(path))
+    else:
+        loader = configured_policy_loader(path)
     monitor = AdmissionMonitor(
         owner,
-        policy_loader=AdmissionPolicyLoader(source=lambda: read_private_operator_policy(path)),
+        policy_loader=loader,
         storage_control=storage_control,
         bootstrap=bootstrap,
         postgres=_PROCESS_PRESSURE,
@@ -622,6 +735,16 @@ def runtime_from_environment(
     # Deployment selection is not enrollment or authority. Construction errors
     # abort startup; shared mode must never quietly return a local-only owner.
     repository = bootstrap.shared_repository() if mode == "shared" else None
+    if loader.persistent:
+        return InboxAdmissionRuntime(
+            inbox,
+            monitor=monitor,
+            bootstrap=bootstrap,
+            shared_repository=repository,
+            recovery_repository=repository,
+            policy_repository=loader.repository,
+            policy_file=path,
+        )
     return InboxAdmissionRuntime(
         inbox,
         monitor=monitor,

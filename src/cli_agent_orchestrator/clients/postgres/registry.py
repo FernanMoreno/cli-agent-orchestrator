@@ -10,6 +10,9 @@ def component_migrations(scope="main"):
         from cli_agent_orchestrator.clients.admission_bootstrap_schema import (
             RESOURCE_ENVELOPE_MIGRATIONS,
         )
+        from cli_agent_orchestrator.clients.admission_policy_schema import (
+            ADMISSION_POLICY_MIGRATIONS,
+        )
         from cli_agent_orchestrator.clients.admission_schema import RESOURCE_ADMISSION_MIGRATIONS
         from cli_agent_orchestrator.clients.database import CORE_MIGRATIONS
         from cli_agent_orchestrator.clients.interaction_repository import INTERACTION_MIGRATIONS
@@ -41,6 +44,7 @@ def component_migrations(scope="main"):
             runtime_channel_migrations(),
             WORK_POSTGRES_MIGRATIONS,
             RESOURCE_ENVELOPE_MIGRATIONS,
+            ADMISSION_POLICY_MIGRATIONS,
             RESOURCE_ADMISSION_MIGRATIONS,
             SQL_OPENING_MIGRATIONS,
             import_receipt_migrations("main"),
